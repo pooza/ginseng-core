@@ -24,7 +24,7 @@ module Ginseng
       return [
         File.join('/etc', Package.name),
         File.join('/usr/local/etc', Package.name),
-        File.join(Environment.dir, 'config'),
+        File.join(env_name.constantize.dir, 'config'),
       ]
     end
 
@@ -35,7 +35,7 @@ module Ginseng
     def basenames
       return [
         'application',
-        Environment.hostname,
+        env_name.constantize.hostname,
         'local',
       ]
     end
@@ -56,6 +56,12 @@ module Ginseng
         values[prefix.downcase] = node
       end
       return values
+    end
+
+    private
+
+    def env_name
+      return 'Ginseng::Environment'
     end
   end
 end
