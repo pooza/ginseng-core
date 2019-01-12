@@ -1,19 +1,16 @@
-lib = File.expand_path('lib', __dir__)
-$LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require 'ginseng'
+require 'yaml'
+package = YAML.load_file(File.join(__dir__, 'config/application.yaml'))['package']
 
 Gem::Specification.new do |spec|
-  spec.name = Ginseng::Package.name
-  spec.version = Ginseng::Package.version
-  spec.authors = ['Tatsuya Koishi']
-  spec.email = ['tkoishi@b-shock.co.jp']
+  spec.name = 'ginseng-core'
+  spec.version = package['version']
+  spec.authors = package['authors']
+  spec.email = package['email']
   spec.summary = 'ginseng core libraries'
   spec.description = 'ginseng core libraries'
-  spec.homepage = Ginseng::Package.url
+  spec.homepage = package['url']
   spec.license = 'MIT'
-  spec.metadata['homepage_uri'] = Ginseng::Package.url
-  spec.metadata['source_code_uri'] = 'https://github.com/pooza/ginseng-core.git'
-  spec.metadata['changelog_uri'] = 'https://github.com/pooza/ginseng-core/CHANGELOG.md'
+  spec.metadata['homepage_uri'] = package['url']
   spec.require_paths = ['lib']
 
   spec.add_development_dependency 'activesupport'
