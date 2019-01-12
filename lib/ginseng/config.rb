@@ -24,7 +24,7 @@ module Ginseng
       return [
         File.join('/etc', Package.name),
         File.join('/usr/local/etc', Package.name),
-        File.join(environment_class.constantize.dir, 'config'),
+        File.join(Config.environment_class.constantize.dir, 'config'),
       ]
     end
 
@@ -35,7 +35,7 @@ module Ginseng
     def basenames
       return [
         'application',
-        environment_class.constantize.hostname,
+        Config.environment_class.constantize.hostname,
         'local',
       ]
     end
@@ -58,7 +58,7 @@ module Ginseng
       return values
     end
 
-    def environment_class
+    def self.environment_class
       return 'Ginseng::Environment'
     end
   end
