@@ -18,6 +18,7 @@ module Ginseng
   autoload :Logger
   autoload :Package
   autoload :Renderer
+  autoload :Sinatra
 
   autoload_under 'error' do
     autoload :ConfigError
