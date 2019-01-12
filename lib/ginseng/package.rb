@@ -1,15 +1,15 @@
 module Ginseng
-  module Package
+  class Package
     def self.name
       return 'ginseng-core'
     end
 
     def self.version
-      return Config.instance['/package/version']
+      return config_class.constantize.instance['/package/version']
     end
 
     def self.url
-      return Config.instance['/package/url']
+      return config_class.constantize.instance['/package/url']
     end
 
     def self.full_name
@@ -18,6 +18,10 @@ module Ginseng
 
     def self.user_agent
       return "#{name}/#{version} (#{url})"
+    end
+
+    def self.config_class
+      return 'Ginseng::Config'
     end
   end
 end
