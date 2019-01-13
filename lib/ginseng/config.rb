@@ -3,6 +3,7 @@ require 'singleton'
 
 module Ginseng
   class Config < Hash
+    include Package
     include Singleton
 
     def initialize
@@ -24,7 +25,7 @@ module Ginseng
       return [
         File.join('/etc', Package.name),
         File.join('/usr/local/etc', Package.name),
-        File.join(Config.environment_class.constantize.dir, 'config'),
+        File.join(environment_class.constantize.dir, 'config'),
       ]
     end
 
@@ -35,7 +36,7 @@ module Ginseng
     def basenames
       return [
         'application',
-        Config.environment_class.constantize.hostname,
+        environment_class.constantize.hostname,
         'local',
       ]
     end
@@ -56,10 +57,6 @@ module Ginseng
         values[prefix.downcase] = node
       end
       return values
-    end
-
-    def self.environment_class
-      return 'Ginseng::Environment'
     end
   end
 end

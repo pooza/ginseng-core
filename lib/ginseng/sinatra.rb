@@ -3,14 +3,16 @@ require 'json'
 
 module Ginseng
   class Sinatra < Sinatra::Base
+    include Package
+
     def initialize
       super
-      @config = Sinatra.config_class.constantize.instance
+      @config = config_class.constantize.instance
       @logger = Logger.new
       @logger.info({
         message: 'starting...',
         server: {port: @config['/thin/port']},
-        version: Sinatra.package_class.constantize.version,
+        version: package_class.constantize.version,
       })
     end
 
@@ -34,7 +36,7 @@ module Ginseng
     end
 
     get '/about' do
-      @renderer.message = Sinatra.package_class.constantize.full_name
+      @renderer.message = package_class.constantize.full_name
       return @renderer.to_s
     end
 
@@ -54,14 +56,6 @@ module Ginseng
       Slack.broadcast(e.to_h)
       @logger.error(e.to_h)
       return @renderer.to_s
-    end
-
-    def self.config_class
-      return 'Ginseng::Config'
-    end
-
-    def self.package_class
-      return 'Ginseng::Package'
     end
   end
 end

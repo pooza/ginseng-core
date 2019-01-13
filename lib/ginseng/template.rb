@@ -2,8 +2,10 @@ require 'erb'
 
 module Ginseng
   class Template
+    include Package
+
     def initialize(name)
-      @path = File.join(Template.environment_class.constantize.dir, 'views', "#{name}.erb")
+      @path = File.join(environment_class.constantize.dir, 'views', "#{name}.erb")
       @erb = ERB.new(File.read(@path), nil, '-')
       @params = {}.with_indifferent_access
     end
@@ -19,10 +21,6 @@ module Ginseng
 
     def to_s
       return @erb.result(binding)
-    end
-
-    def self.environment_class
-      return 'Ginseng::Environment'
     end
   end
 end
