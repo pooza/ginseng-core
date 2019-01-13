@@ -1,11 +1,12 @@
 module Ginseng
   class Renderer
+    include Package
     attr_accessor :status
 
     def initialize
       @status = 200
-      @config = Config.instance
-      @logger = Logger.new
+      @config = config_class.constantize.instance
+      @logger = logger_class.constantize.new
     end
 
     def type

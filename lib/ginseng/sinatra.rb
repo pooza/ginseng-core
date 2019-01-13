@@ -8,7 +8,7 @@ module Ginseng
     def initialize
       super
       @config = config_class.constantize.instance
-      @logger = Logger.new
+      @logger = logger_class.constantize.new
       @logger.info({
         message: 'starting...',
         server: {port: @config['/thin/port']},
