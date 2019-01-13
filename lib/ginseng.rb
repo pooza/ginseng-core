@@ -20,6 +20,7 @@ module Ginseng
   autoload :Renderer
   autoload :Sinatra
   autoload :Slack
+  autoload :Template
 
   autoload_under 'error' do
     autoload :ConfigError
