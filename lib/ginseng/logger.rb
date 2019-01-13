@@ -3,8 +3,10 @@ require 'syslog/logger'
 
 module Ginseng
   class Logger < Syslog::Logger
+    include Package
+
     def initialize
-      super(Package.name)
+      super(package_class.constantize.name)
     end
 
     def info(message)
