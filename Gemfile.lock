@@ -1,7 +1,16 @@
 PATH
   remote: .
   specs:
-    ginseng-core (1.0.5)
+    ginseng-core (1.0.6)
+      activesupport
+      addressable
+      bundler (< 2.0)
+      httparty
+      rake
+      rubocop
+      sinatra
+      syslog-logger
+      test-unit
 
 GEM
   remote: https://rubygems.org/
@@ -65,16 +74,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
-  activesupport
-  addressable
-  bundler (< 2.0)
   ginseng-core!
-  httparty
-  rake
-  rubocop
-  sinatra
-  syslog-logger
-  test-unit
 
 BUNDLED WITH
    1.17.3

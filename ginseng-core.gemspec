@@ -13,13 +13,13 @@ Gem::Specification.new do |spec|
   spec.metadata['homepage_uri'] = package['url']
   spec.require_paths = ['lib']
 
-  spec.add_development_dependency 'activesupport'
-  spec.add_development_dependency 'addressable'
-  spec.add_development_dependency 'bundler', '<2.0'
-  spec.add_development_dependency 'httparty'
-  spec.add_development_dependency 'rake'
-  spec.add_development_dependency 'rubocop'
-  spec.add_development_dependency 'sinatra'
-  spec.add_development_dependency 'syslog-logger'
-  spec.add_development_dependency 'test-unit'
+  spec.add_dependency 'activesupport'
+  spec.add_dependency 'addressable'
+  spec.add_dependency 'bundler', '<2.0'
+  spec.add_dependency 'httparty'
+  spec.add_dependency 'rake'
+  spec.add_dependency 'rubocop'
+  spec.add_dependency 'sinatra'
+  spec.add_dependency 'syslog-logger'
+  spec.add_dependency 'test-unit'
 end
