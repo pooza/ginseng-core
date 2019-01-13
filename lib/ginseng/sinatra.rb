@@ -24,7 +24,7 @@ module Ginseng
 
     before do
       @logger.info({request: {path: request.path, params: @params}})
-      @renderer = JSONRenderer.new
+      @renderer = default_renderer_class.constantize.new
       @headers = request.env.select{ |k, v| k.start_with?('HTTP_')}
       @body = request.body.read.to_s
       before_post if request.request_method == 'POST'
@@ -41,7 +41,7 @@ module Ginseng
     end
 
     not_found do
-      @renderer = JSONRenderer.new
+      @renderer = default_renderer_class.constantize.new
       @renderer.status = 404
       @renderer.message = NotFoundError.new("Resource #{request.path} not found.").to_h
       return @renderer.to_s
@@ -49,13 +49,17 @@ module Ginseng
 
     error do |e|
       e = Error.create(e)
-      @renderer = JSONRenderer.new
+      @renderer = default_renderer_class.constantize.new
       @renderer.status = e.status
       @renderer.message = e.to_h.delete_if{ |k, v| k == :backtrace}
       @renderer.message['error'] = e.message
       Slack.broadcast(e.to_h)
       @logger.error(e.to_h)
       return @renderer.to_s
+    end
+
+    def default_renderer_class
+      return 'Ginseng::JSONRenderer'
     end
   end
 end
