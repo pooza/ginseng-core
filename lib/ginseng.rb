@@ -3,10 +3,11 @@ require 'active_support/core_ext'
 require 'active_support/dependencies/autoload'
 
 ActiveSupport::Inflector.inflections do |inflect|
-  inflect.acronym 'JSON'
-  inflect.acronym 'URL'
-  inflect.acronym 'URI'
   inflect.acronym 'DSN'
+  inflect.acronym 'JSON'
+  inflect.acronym 'URI'
+  inflect.acronym 'URL'
+  inflect.acronym 'XML'
 end
 
 module Ginseng
@@ -34,5 +35,6 @@ module Ginseng
 
   autoload_under 'renderer' do
     autoload :JSONRenderer
+    autoload :XMLRenderer
   end
 end
