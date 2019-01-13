@@ -12,6 +12,10 @@ module Ginseng
       return 'Ginseng::Config'
     end
 
+    def logger_class
+      return 'Ginseng::Logger'
+    end
+
     def self.name
       return 'ginseng-core'
     end
