@@ -18,6 +18,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'bundler', '<2.0'
   spec.add_dependency 'httparty'
   spec.add_dependency 'rake'
+  spec.add_dependency 'rest-client'
   spec.add_dependency 'rubocop'
   spec.add_dependency 'sinatra'
   spec.add_dependency 'syslog-logger'

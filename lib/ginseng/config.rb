@@ -23,8 +23,8 @@ module Ginseng
 
     def dirs
       return [
-        File.join('/etc', Package.name),
-        File.join('/usr/local/etc', Package.name),
+        File.join('/etc', package_class.constantize.name),
+        File.join('/usr/local/etc', package_class.constantize.name),
         File.join(environment_class.constantize.dir, 'config'),
       ]
     end
