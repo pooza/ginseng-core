@@ -17,6 +17,7 @@ module Ginseng
   autoload :Environment
   autoload :Error
   autoload :Logger
+  autoload :Mastodon
   autoload :Package
   autoload :Renderer
   autoload :Sinatra
