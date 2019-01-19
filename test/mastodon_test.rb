@@ -26,6 +26,10 @@ module Ginseng
       assert_true(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).is_a?(Integer))
     end
 
+    def test_upload_remote_resource
+      assert_true(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').is_a?(Integer))
+    end
+
     def test_create_tag
       assert_equal(Mastodon.create_tag('宮本佳那子'), '#宮本佳那子')
       assert_equal(Mastodon.create_tag('宮本 佳那子'), '#宮本_佳那子')

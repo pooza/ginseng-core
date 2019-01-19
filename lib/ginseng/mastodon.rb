@@ -43,6 +43,18 @@ module Ginseng
       return JSON.parse(response.body)['id'].to_i
     end
 
+    def upload_remote_resource(uri)
+      path = File.join(
+        environment_class.constantize.dir,
+        'tmp/media',
+        Digest::SHA1.hexdigest(uri),
+      )
+      File.write(path, fetch(uri))
+      return upload(path)
+    ensure
+      File.unlink(path) if File.exist?(path)
+    end
+
     def self.create_tag(word)
       return '#' + word.strip.gsub(/[^[:alnum:]]+/, '_').sub(/^_/, '').sub(/_$/, '')
     end
