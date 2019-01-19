@@ -17,17 +17,17 @@ module Ginseng
     end
 
     def before_post
-      @params = JSON.parse(@body)
+      @params = JSON.parse(@body).with_indifferent_access
     rescue JSON::ParserError
-      @params = params.clone
+      @params = params.clone.with_indifferent_access
     end
 
     before do
-      @logger.info({request: {path: request.path, params: @params}})
       @renderer = default_renderer_class.constantize.new
       @headers = request.env.select{ |k, v| k.start_with?('HTTP_')}
       @body = request.body.read.to_s
       before_post if request.request_method == 'POST'
+      @logger.info({request: {path: request.path, params: @params}})
     end
 
     after do
