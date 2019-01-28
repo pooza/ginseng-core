@@ -9,6 +9,10 @@ module Ginseng
       assert_true(@mastodon.is_a?(Mastodon))
     end
 
+    def test_uri
+      assert_true(@mastodon.uri.is_a?(Addressable::URI))
+    end
+
     def test_toot
       r = @mastodon.toot('文字列からトゥート')
       assert_true(r.is_a?(HTTParty::Response))
