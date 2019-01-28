@@ -8,6 +8,7 @@ module Ginseng
   class Mastodon
     include Package
     attr_reader :token
+    attr_reader :uri
 
     def initialize(uri, token = nil)
       @uri = Addressable::URI.parse(uri)
