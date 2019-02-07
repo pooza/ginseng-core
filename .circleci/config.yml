@@ -7,6 +7,9 @@ jobs:
     steps:
       - checkout
       - run:
+          name: install bundler
+          command: gem install bundler -v '<2' 
+      - run:
           name: install dependencies
           command: bundle install
       - run:
@@ -15,3 +18,6 @@ jobs:
       - run:
           name: bundle check
           command: bundle check
+      - run:
+          name: check fresh gems
+          command: bundle exec bin/check_fresh_gems.rb
