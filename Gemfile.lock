@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ginseng-core (1.0.14)
+    ginseng-core (1.0.16)
       activesupport
       addressable
       bundler (< 2.0)
