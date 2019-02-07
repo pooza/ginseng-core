@@ -11,7 +11,7 @@ environment = Ginseng::Environment.dir
 desc 'test'
 task :test do
   require 'test/unit'
-  Dir.glob(File.join(environment, 'test/*')).each do |t|
+  Dir.glob(File.join(environment.dir, 'test/*')).each do |t|
     require t
   end
 end
