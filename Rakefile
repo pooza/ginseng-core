@@ -6,10 +6,12 @@ ENV['SSL_CERT_FILE'] ||= File.join(dir, 'cert/cacert.pem')
 require 'bundler/setup'
 require 'ginseng'
 
+environment = Ginseng::Environment.dir
+
 desc 'test'
 task :test do
   require 'test/unit'
-  Dir.glob(File.join(Ginseng::Environment.dir, 'test/*')).each do |t|
+  Dir.glob(File.join(environment, 'test/*')).each do |t|
     require t
   end
 end
