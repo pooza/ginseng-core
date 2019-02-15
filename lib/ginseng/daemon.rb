@@ -3,10 +3,10 @@ require 'daemon_spawn'
 module Ginseng
   class Daemon < DaemonSpawn::Base
     def initialize(opts = {})
-      @logger = Logger.new
-      @config = Config.instance
+      @logger = logger_class.constantize.new
+      @config = config_class.constantize.instance
       opts[:application] ||= classname
-      opts[:working_dir] ||= Environment.dir
+      opts[:working_dir] ||= environment_class.constantize.dir
       super(opts)
     end
 
