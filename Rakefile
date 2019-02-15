@@ -57,3 +57,30 @@ namespace :repos do
   desc 'check cert/gems'
   task check: ['cert:check', 'bundle:check']
 end
+
+namespaces = [:thin]
+apps = []
+
+namespaces.each do |ns|
+  app = "#{ns.to_s.camelize}Daemon"
+  apps.push(app)
+
+  namespace ns do
+    [:start, :stop].each do |action|
+      desc "#{action} #{app}"
+      task action do
+        sh "#{File.join(environment.dir, 'bin', "#{ns}_daemon.rb")} #{action}"
+      rescue => e
+        STDERR.puts "#{e.class} #{ns}:#{action} #{e.message}"
+      end
+    end
+
+    desc "restart #{app}"
+    task restart: [:stop, :start]
+  end
+end
+
+[:start, :stop, :restart].each do |action|
+  desc "#{action} #{apps.join('/')}"
+  task action => namespaces.map{ |ns| "#{ns}:#{action}"}
+end
