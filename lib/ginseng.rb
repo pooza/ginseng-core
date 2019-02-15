@@ -14,6 +14,7 @@ module Ginseng
   extend ActiveSupport::Autoload
 
   autoload :Config
+  autoload :Daemon
   autoload :Environment
   autoload :Error
   autoload :Logger
@@ -32,6 +33,10 @@ module Ginseng
     autoload :NotFoundError
     autoload :RedisError
     autoload :RequestError
+  end
+
+  autoload_under 'daemon' do
+    autoload :ThinDaemon
   end
 
   autoload_under 'renderer' do
