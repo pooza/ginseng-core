@@ -14,6 +14,14 @@ module Ginseng
       return File.expand_path('../..', __dir__)
     end
 
+    def self.test
+      ENV['TEST'] = Package.full_name
+      require 'test/unit'
+      Dir.glob(File.join(dir, 'test/*')).each do |t|
+        require t
+      end
+    end
+
     def self.ip_address
       udp = UDPSocket.new
       udp.connect('128.0.0.0', 7)
@@ -25,6 +33,12 @@ module Ginseng
     def self.platform
       return 'Debian' if File.executable?('/usr/bin/apt-get')
       return `uname`.chomp
+    end
+
+    def self.test?
+      return ENV['TEST'].present?
+    rescue
+      return false
     end
 
     def self.cron?

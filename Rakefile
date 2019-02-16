@@ -10,10 +10,7 @@ environment = Ginseng::Environment
 
 desc 'test'
 task :test do
-  require 'test/unit'
-  Dir.glob(File.join(environment.dir, 'test/*')).each do |t|
-    require t
-  end
+  environment.test
 end
 
 namespace :cert do
