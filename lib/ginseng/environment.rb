@@ -1,4 +1,5 @@
 require 'socket'
+require 'httparty'
 
 module Ginseng
   class Environment
@@ -12,14 +13,6 @@ module Ginseng
 
     def self.dir
       return File.expand_path('../..', __dir__)
-    end
-
-    def self.test
-      ENV['TEST'] = Package.full_name
-      require 'test/unit'
-      Dir.glob(File.join(dir, 'test/*')).each do |t|
-        require t
-      end
     end
 
     def self.ip_address
@@ -45,6 +38,16 @@ module Ginseng
       return ENV['CRON'].present?
     rescue
       return false
+    end
+
+    def self.cert_fresh?
+      Dir.chdir(dir)
+      return `git status`.include?('cacert.pem') == false
+    end
+
+    def self.gem_fresh?
+      Dir.chdir(dir)
+      return `git status`.include?('Gemfile.lock') == false
     end
 
     def self.uid
