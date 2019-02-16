@@ -6,8 +6,8 @@ module Ginseng
     end
 
     def test_new
-      assert_true(@renderer.is_a?(Renderer))
-      assert_true(@renderer.is_a?(JSONRenderer))
+      assert(@renderer.is_a?(Renderer))
+      assert(@renderer.is_a?(JSONRenderer))
     end
 
     def test_type

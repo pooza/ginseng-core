@@ -6,32 +6,32 @@ module Ginseng
     end
 
     def test_new
-      assert_true(@mastodon.is_a?(Mastodon))
+      assert(@mastodon.is_a?(Mastodon))
     end
 
     def test_uri
-      assert_true(@mastodon.uri.is_a?(Addressable::URI))
+      assert(@mastodon.uri.is_a?(Addressable::URI))
     end
 
     def test_toot
       r = @mastodon.toot('文字列からトゥート')
-      assert_true(r.is_a?(HTTParty::Response))
+      assert(r.is_a?(HTTParty::Response))
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>文字列からトゥート</p>')
 
       r = @mastodon.toot({status: 'ハッシュからプライベートなトゥート', visibility: 'private'})
-      assert_true(r.is_a?(HTTParty::Response))
+      assert(r.is_a?(HTTParty::Response))
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>ハッシュからプライベートなトゥート</p>')
       assert_equal(r.parsed_response['visibility'], 'private')
     end
 
     def test_upload
-      assert_true(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).is_a?(Integer))
+      assert(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).is_a?(Integer))
     end
 
     def test_upload_remote_resource
-      assert_true(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').is_a?(Integer))
+      assert(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').is_a?(Integer))
     end
 
     def test_create_tag

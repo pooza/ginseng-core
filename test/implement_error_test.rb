@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert_true(@error.is_a?(ImplementError))
+      assert(@error.is_a?(ImplementError))
     end
 
     def test_status

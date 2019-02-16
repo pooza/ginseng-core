@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert_true(@error.is_a?(NotFoundError))
+      assert(@error.is_a?(NotFoundError))
     end
 
     def test_status
