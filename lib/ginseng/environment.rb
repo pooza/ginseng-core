@@ -1,4 +1,5 @@
 require 'socket'
+require 'httparty'
 
 module Ginseng
   class Environment
@@ -27,10 +28,26 @@ module Ginseng
       return `uname`.chomp
     end
 
+    def self.test?
+      return ENV['TEST'].present?
+    rescue
+      return false
+    end
+
     def self.cron?
       return ENV['CRON'].present?
     rescue
       return false
+    end
+
+    def self.cert_fresh?
+      Dir.chdir(dir)
+      return `git status`.include?('cacert.pem') == false
+    end
+
+    def self.gem_fresh?
+      Dir.chdir(dir)
+      return `git status`.include?('Gemfile.lock') == false
     end
 
     def self.uid

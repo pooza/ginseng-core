@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert_true(@error.is_a?(DatabaseError))
+      assert(@error.is_a?(DatabaseError))
     end
 
     def test_status

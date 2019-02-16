@@ -5,8 +5,8 @@ module Ginseng
     end
 
     def test_new
-      assert_true(@logger.is_a?(Logger))
-      assert_true(@logger.is_a?(Syslog::Logger))
+      assert(@logger.is_a?(Logger))
+      assert(@logger.is_a?(Syslog::Logger))
     end
   end
 end

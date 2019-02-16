@@ -5,7 +5,7 @@ module Ginseng
     end
 
     def test_instance
-      assert_true(@config.is_a?(Config))
+      assert(@config.is_a?(Config))
     end
 
     def test_version

@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert_true(@error.is_a?(Error))
+      assert(@error.is_a?(Error))
     end
 
     def test_status
@@ -19,7 +19,7 @@ module Ginseng
       assert_equal(h[:class], 'Ginseng::Error')
       assert_equal(h[:message], 'hoge')
       assert_equal(h[:source_class], 'RuntimeError')
-      assert_true(h[:backtrace].is_a?(Array))
+      assert(h[:backtrace].is_a?(Array))
     end
   end
 end
