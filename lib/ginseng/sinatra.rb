@@ -24,7 +24,7 @@ module Ginseng
 
     before do
       @renderer = default_renderer_class.constantize.new
-      @headers = request.env.select{ |k, v| k.start_with?('HTTP_')}
+      @headers = request.env.select{|k, v| k.start_with?('HTTP_')}
       @body = request.body.read.to_s
       before_post if request.request_method == 'POST'
       @logger.info({request: {path: request.path, params: @params}})
@@ -51,7 +51,7 @@ module Ginseng
       e = Error.create(e)
       @renderer = default_renderer_class.constantize.new
       @renderer.status = e.status
-      @renderer.message = e.to_h.delete_if{ |k, v| k == :backtrace}
+      @renderer.message = e.to_h.delete_if{|k, v| k == :backtrace}
       @renderer.message['error'] = e.message
       Slack.broadcast(e.to_h) unless e.status == 404
       @logger.error(e.to_h)
