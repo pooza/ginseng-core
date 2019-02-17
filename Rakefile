@@ -12,7 +12,7 @@ task test: ['ginseng:core:test']
 
 [:start, :stop, :restart].each do |action|
   desc "#{action} all"
-  task action => ["thin:#{action}"]
+  task action => ["ginseng:core:thin:#{action}"]
 end
 
 Dir.glob(File.join(Ginseng::Environment.dir, 'lib/task/*.rb')).each do |f|
