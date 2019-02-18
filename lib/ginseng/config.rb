@@ -34,9 +34,8 @@ module Ginseng
     end
 
     def basenames
-      r = ['application']
+      r = ['application', 'local', environment_class.constantize.hostname])
       r.push('test') if environment_class.constantize.test?
-      r.concat(['local', environment_class.constantize.hostname])
       return r
     end
 
