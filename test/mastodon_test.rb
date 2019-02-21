@@ -13,6 +13,15 @@ module Ginseng
       assert(@mastodon.uri.is_a?(Addressable::URI))
     end
 
+    def test_mulukhiya?
+      assert_false(@mastodon.mulukhiya?)
+      assert_false(@mastodon.mulukhiya_enable?)
+      @mastodon.mulukhiya_enable = true
+      assert(@mastodon.mulukhiya?)
+      assert(@mastodon.mulukhiya_enable?)
+      @mastodon.mulukhiya_enable = false
+    end
+
     def test_toot
       r = @mastodon.toot('文字列からトゥート')
       assert(r.is_a?(HTTParty::Response))
