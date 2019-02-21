@@ -9,11 +9,19 @@ module Ginseng
     include Package
     attr_reader :token
     attr_reader :uri
+    attr_accessor :mulukhiya_enable
 
     def initialize(uri, token = nil)
       @uri = Addressable::URI.parse(uri)
       @token = token
+      @mulukhiya_enable = false
     end
+
+    def mulukhiya_enable?
+      return @mulukhiya_enable || false
+    end
+
+    alias mulukhiya? mulukhiya_enable?
 
     def fetch_toot(id)
       return fetch(create_uri("/api/v1/statuses/#{id}"))
@@ -21,15 +29,13 @@ module Ginseng
 
     def toot(body)
       body = {status: body.to_s} unless body.is_a?(Hash)
-      return HTTParty.post(create_uri, {
-        body: body.to_json,
-        headers: {
-          'Content-Type' => 'application/json',
-          'User-Agent' => package_class.constantize.user_agent,
-          'Authorization' => "Bearer #{@token}",
-          'X-Mulukhiya' => package_class.constantize.full_name,
-        },
-      })
+      headers = {
+        'Content-Type' => 'application/json',
+        'User-Agent' => package_class.constantize.user_agent,
+        'Authorization' => "Bearer #{@token}",
+      }
+      headers['X-Mulukhiya'] = package_class.constantize.full_name unless mulukhiya_enable?
+      return HTTParty.post(create_uri, {body: body.to_json, headers: headers})
     end
 
     def upload(path)
