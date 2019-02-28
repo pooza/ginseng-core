@@ -1,6 +1,7 @@
 require 'active_support'
 require 'active_support/core_ext'
 require 'active_support/dependencies/autoload'
+require 'ginseng/monkey_patches'
 
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'DSN'

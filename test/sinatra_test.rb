@@ -23,6 +23,7 @@ module Ginseng
       header 'User-Agent', Package.user_agent
       get '/not_found'
       assert_false(last_response.ok?)
+      assert_equal(last_response.status, 404)
     end
   end
 end
