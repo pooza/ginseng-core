@@ -12,5 +12,13 @@ module Ginseng
       @template[:output] = 2
       assert_equal(@template.to_s, "body2\n")
     end
+
+    def test_params=
+      assert(@template.params.is_a?(Hash))
+      @template.params = {'output' => 3, 'body3' => 'body3'}
+      assert_equal(@template.to_s, "body3\n")
+      @template.params = {output: 3, body3: 'body3!'}
+      assert_equal(@template.to_s, "body3!\n")
+    end
   end
 end
