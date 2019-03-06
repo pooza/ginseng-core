@@ -13,9 +13,8 @@ namespace :cert do
 
   desc 'update cert'
   task :update do
-    require 'httparty'
     puts "fetch #{path}"
-    File.write(path, HTTParty.get(config['/cert/url']))
+    File.write(path, HTTP.new.get(config['/cert/url']))
   end
 
   desc 'check cert'

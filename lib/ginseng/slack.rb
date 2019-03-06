@@ -1,5 +1,4 @@
 require 'addressable/uri'
-require 'httparty'
 require 'json'
 
 module Ginseng
@@ -12,12 +11,8 @@ module Ginseng
 
     def say(message, type = :json)
       message = JSON.pretty_generate(message) if type == :json
-      return HTTParty.post(@url, {
+      return HTTP.new.post(@url, {
         body: {text: message}.to_json,
-        headers: {
-          'Content-Type' => 'application/json',
-          'User-Agent' => package_class.constantize.user_agent,
-        },
       })
     end
 
