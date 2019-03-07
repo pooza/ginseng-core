@@ -12,7 +12,8 @@ module Ginseng
     def get(uri, options = {})
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
-      return HTTParty.get(uri, options)
+      uri = Addressable::URI.parse(uri.to_s) unless uri.is_a?(Addressable::URI)
+      return HTTParty.get(uri.normalize, options)
     rescue => e
       raise GatewayError, e.message
     end
@@ -21,15 +22,17 @@ module Ginseng
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       options[:headers]['Content-Type'] ||= 'application/json'
-      return HTTParty.post(uri, options)
+      uri = Addressable::URI.parse(uri.to_s) unless uri.is_a?(Addressable::URI)
+      return HTTParty.post(uri.normalize, options)
     rescue => e
       raise GatewayError, e.message
     end
 
     def upload(uri, file, headers = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
+      uri = Addressable::URI.parse(uri.to_s) unless uri.is_a?(Addressable::URI)
       headers['User-Agent'] ||= user_agent
-      return RestClient.post(uri.to_s, {file: file}, headers)
+      return RestClient.post(uri.normalize.to_s, {file: file}, headers)
     rescue => e
       raise GatewayError, e.message
     end
