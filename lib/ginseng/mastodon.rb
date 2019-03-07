@@ -13,7 +13,7 @@ module Ginseng
       @uri = Addressable::URI.parse(uri)
       @token = token
       @mulukhiya_enable = false
-      @http = HTTP.new
+      @http = http_class.constantize.new
     end
 
     def mulukhiya_enable?

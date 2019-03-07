@@ -11,7 +11,7 @@ module Ginseng
 
     def say(message, type = :json)
       message = JSON.pretty_generate(message) if type == :json
-      return HTTP.new.post(@url, {
+      return http_class.constantize.new.post(@url, {
         body: {text: message}.to_json,
       })
     end

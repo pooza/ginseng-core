@@ -16,6 +16,10 @@ module Ginseng
       return 'Ginseng::Logger'
     end
 
+    def http_class
+      return 'Ginseng::HTTP'
+    end
+
     def self.name
       return 'ginseng-core'
     end
