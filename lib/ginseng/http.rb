@@ -1,5 +1,6 @@
 require 'httparty'
 require 'rest-client'
+require 'addressable/uri'
 
 module Ginseng
   class HTTP
