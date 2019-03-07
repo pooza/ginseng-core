@@ -6,6 +6,7 @@ require 'ginseng/monkey_patches'
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'DSN'
   inflect.acronym 'JSON'
+  inflect.acronym 'HTTP'
   inflect.acronym 'URI'
   inflect.acronym 'URL'
   inflect.acronym 'XML'
@@ -18,6 +19,7 @@ module Ginseng
   autoload :Daemon
   autoload :Environment
   autoload :Error
+  autoload :HTTP
   autoload :Logger
   autoload :Mastodon
   autoload :Package

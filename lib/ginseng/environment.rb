@@ -1,5 +1,4 @@
 require 'socket'
-require 'httparty'
 
 module Ginseng
   class Environment
