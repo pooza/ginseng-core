@@ -34,9 +34,11 @@ module Ginseng
     end
 
     def basenames
-      r = ['application', 'local', environment_class.constantize.hostname]
-      r.push('test') if environment_class.constantize.test?
-      return r
+      return [
+        'application',
+        'local',
+        environment_class.constantize.hostname,
+      ]
     end
 
     def [](key)
