@@ -1,20 +1,27 @@
 module Ginseng
   class Error < StandardError
     attr_accessor :source_class
+    attr_accessor :package
+
+    def initialize(message)
+      @config = Config.instance
+      @package = Package.name
+      super(message)
+    end
 
     def status
       return 500
     end
 
     def to_h
-      h = {class: self.class.name, message: message}
+      h = {package: package, class: self.class.name, message: message}
       h[:source_class] = @source_class if @source_class
       h[:backtrace] = backtrace[0..backtrace_level] if backtrace
       return h
     end
 
     def backtrace_level
-      return Config.instance['/error/backtrace/level']
+      return @config['/error/backtrace/level']
     end
 
     def self.create(src)
