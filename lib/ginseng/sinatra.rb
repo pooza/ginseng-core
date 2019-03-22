@@ -58,6 +58,8 @@ module Ginseng
       return @renderer.to_s
     end
 
+    private
+
     def default_renderer_class
       return 'Ginseng::JSONRenderer'
     end
