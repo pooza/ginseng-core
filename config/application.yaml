@@ -1,5 +1,5 @@
 package:
-  version: 1.2.3
+  version: 1.2.4
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -7,3 +7,6 @@ package:
     - tkoishi@b-shock.co.jp
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
+error:
+  backtrace:
+    level: 5

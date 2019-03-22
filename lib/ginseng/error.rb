@@ -9,8 +9,12 @@ module Ginseng
     def to_h
       h = {class: self.class.name, message: message}
       h[:source_class] = @source_class if @source_class
-      h[:backtrace] = backtrace[0..5] if backtrace
+      h[:backtrace] = backtrace[0..backtrace_level] if backtrace
       return h
+    end
+
+    def backtrace_level
+      return Config.instance['/error/backtrace/level']
     end
 
     def self.create(src)
