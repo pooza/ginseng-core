@@ -18,7 +18,7 @@ module Ginseng
       return nil unless response['items'].present?
       return response['items'].first
     rescue => e
-      raise Ginseng::GatewayError, "動画#{id}の情報が取得できません。(#{e.message})"
+      raise Ginseng::GatewayError, "invalid video '#{id}' (#{e.message})"
     end
 
     def create_uri(type)
