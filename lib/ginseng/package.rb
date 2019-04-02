@@ -1,23 +1,31 @@
 module Ginseng
   module Package
+    def module_name
+      return 'Ginseng'
+    end
+
     def environment_class
-      return 'Ginseng::Environment'
+      return "#{module_name}::Environment"
     end
 
     def package_class
-      return 'Ginseng::Package'
+      return "#{module_name}::Package"
     end
 
     def config_class
-      return 'Ginseng::Config'
+      return "#{module_name}::Config"
     end
 
     def logger_class
-      return 'Ginseng::Logger'
+      return "#{module_name}::Logger"
     end
 
     def http_class
-      return 'Ginseng::HTTP'
+      return "#{module_name}::HTTP"
+    end
+
+    def you_tube_service_class
+      return "#{module_name}::YouTubeService"
     end
 
     def self.name

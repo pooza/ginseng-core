@@ -10,3 +10,6 @@ cert:
 error:
   backtrace:
     level: 5
+youtube:
+  urls:
+    videos: https://www.googleapis.com/youtube/v3/videos
