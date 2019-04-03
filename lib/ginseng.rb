@@ -46,4 +46,12 @@ module Ginseng
     autoload :JSONRenderer
     autoload :XMLRenderer
   end
+
+  autoload_under 'service' do
+    autoload :YouTubeService
+  end
+
+  autoload_under 'uri' do
+    autoload :VideoURI
+  end
 end
