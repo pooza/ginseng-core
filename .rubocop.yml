@@ -124,3 +124,6 @@ Metrics/CyclomaticComplexity:
 
 Metrics/PerceivedComplexity:
   Max: 10
+
+Naming/RescuedExceptionsVariableName:
+  PreferredName: e
