@@ -12,7 +12,7 @@ namespace :cert do
   desc 'check cert'
   task :check do
     unless Ginseng::Environment.cert_fresh?
-      STDERR.puts "'#{path}' is not fresh."
+      warn "'#{path}' is not fresh."
       exit 1
     end
   end
