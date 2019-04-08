@@ -10,11 +10,16 @@ module Ginseng
     end
 
     def info(message)
-      super(message.to_json)
+      super(create_message(message).to_json)
     end
 
     def error(message)
-      super(message.to_json)
+      super(create_message(message).to_json)
+    end
+
+    def create_message(src)
+      return Error.create(src).to_h if src.is_a?(StandardError)
+      return src
     end
   end
 end
