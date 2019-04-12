@@ -23,10 +23,16 @@ module Ginseng
       end
     end
 
-    def self.broadcast(message)
-      all do |slack|
-        slack.say(message)
+    def self.broadcast(src)
+      if src.is_a?(StandardError)
+        e = Error.create(src)
+        return false unless e.broadcastable
+        src = e.to_h
       end
+      all do |slack|
+        slack.say(src)
+      end
+      return true
     end
   end
 end

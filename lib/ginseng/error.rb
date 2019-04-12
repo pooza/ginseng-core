@@ -13,6 +13,10 @@ module Ginseng
       return 500
     end
 
+    def broadcastable
+      return true
+    end
+
     def to_h
       h = {package: package, class: self.class.name, message: message}
       h[:source_class] = @source_class if @source_class

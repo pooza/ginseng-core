@@ -3,5 +3,9 @@ module Ginseng
     def status
       return 404
     end
+
+    def broadcastable
+      return false
+    end
   end
 end
