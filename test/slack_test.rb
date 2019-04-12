@@ -13,8 +13,8 @@ module Ginseng
     end
 
     def test_broadcast
-        assert(Slack.broadcast('ok'))
-        assert_false(Slack.broadcast(NotFoundError.new('404')))
+      assert(Slack.broadcast('ok'))
+      assert_false(Slack.broadcast(NotFoundError.new('404')))
     end
   end
 end
