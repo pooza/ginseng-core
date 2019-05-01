@@ -26,7 +26,7 @@ module Ginseng
     def self.broadcast(src)
       if src.is_a?(StandardError)
         e = Error.create(src)
-        return false unless e.broadcastable
+        return false unless e.broadcastable?
         src = e.to_h
       end
       all do |slack|
