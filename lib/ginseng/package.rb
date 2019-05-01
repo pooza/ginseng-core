@@ -16,6 +16,10 @@ module Ginseng
       return "#{module_name}::Config"
     end
 
+    def template_class
+      return "#{module_name}::Template"
+    end
+
     def logger_class
       return "#{module_name}::Logger"
     end

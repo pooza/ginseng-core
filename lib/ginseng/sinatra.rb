@@ -4,6 +4,7 @@ require 'json'
 module Ginseng
   class Sinatra < Sinatra::Base
     include Package
+    set :root, Environment.dir
 
     def initialize
       super

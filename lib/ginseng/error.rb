@@ -13,7 +13,7 @@ module Ginseng
       return 500
     end
 
-    def broadcastable
+    def broadcastable?
       return true
     end
 

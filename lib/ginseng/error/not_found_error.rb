@@ -4,7 +4,7 @@ module Ginseng
       return 404
     end
 
-    def broadcastable
+    def broadcastable?
       return false
     end
   end

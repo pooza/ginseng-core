@@ -4,8 +4,10 @@ require 'active_support/dependencies/autoload'
 require 'ginseng/monkey_patches'
 
 ActiveSupport::Inflector.inflections do |inflect|
+  inflect.acronym 'CSS'
   inflect.acronym 'DSN'
   inflect.acronym 'JSON'
+  inflect.acronym 'HTML'
   inflect.acronym 'HTTP'
   inflect.acronym 'URI'
   inflect.acronym 'URL'
@@ -35,6 +37,7 @@ module Ginseng
     autoload :ImplementError
     autoload :NotFoundError
     autoload :RedisError
+    autoload :RenderError
     autoload :RequestError
   end
 
@@ -43,6 +46,8 @@ module Ginseng
   end
 
   autoload_under 'renderer' do
+    autoload :CSSRenderer
+    autoload :HTMLRenderer
     autoload :JSONRenderer
     autoload :XMLRenderer
   end
