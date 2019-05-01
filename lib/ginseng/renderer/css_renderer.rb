@@ -2,9 +2,11 @@ require 'sass'
 
 module Ginseng
   class CSSRenderer < Renderer
+    include Package
+
     def template=(name)
       @template = Sass::Engine.new(
-        File.read(File.join(Environment.dir, "views/#{name}.sass")),
+        File.read(File.join(environment_class.constantize.dir, "views/#{name}.sass")),
       )
     end
 

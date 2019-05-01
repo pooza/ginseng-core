@@ -1,8 +1,10 @@
 module Ginseng
   class HTMLRenderer < Renderer
+    include Package
+
     def template=(name)
       name.sub!(/\.html/i, '')
-      @template = Template.new("#{name}.html")
+      @template = template_class.constantize.new("#{name}.html")
     end
 
     def []=(key, value)
