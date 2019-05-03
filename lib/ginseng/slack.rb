@@ -7,13 +7,21 @@ module Ginseng
 
     def initialize(url)
       @url = Addressable::URI.parse(url)
+      @http = http_class.constantize.new
     end
 
     def say(message, type = :json)
-      message = JSON.pretty_generate(message) if type == :json
-      return http_class.constantize.new.post(@url, {
-        body: {text: message}.to_json,
-      })
+      return @http.post(@url, {body: create_body(message, type)})
+    end
+
+    def create_body(message, type = :json)
+      case type
+      when :json
+        message = {text: JSON.pretty_generate(message)}
+      when :text
+        message = {text: message}
+      end
+      return message.to_json
     end
 
     def self.all
