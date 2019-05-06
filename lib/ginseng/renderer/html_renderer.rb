@@ -1,3 +1,5 @@
+require 'erb'
+
 module Ginseng
   class HTMLRenderer < Renderer
     include Package
@@ -9,7 +11,7 @@ module Ginseng
 
     def []=(key, value)
       raise RenderError, 'Template file undefined' unless @template
-      @template[key] = value
+      @template[key] = ERB::Util.html_escape(value)
     end
 
     def type

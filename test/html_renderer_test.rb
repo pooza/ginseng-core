@@ -17,6 +17,8 @@ module Ginseng
 
     def test_to_s
       assert_equal(@renderer.to_s.gsub(/\s/, ''), '<!doctypehtml><htmllang="ja"><body>aaa</body></html>')
+      @renderer[:content] = '<div></div>'
+      assert_equal(@renderer.to_s.gsub(/\s/, ''), '<!doctypehtml><htmllang="ja"><body>aaa&lt;div&gt;&lt;/div&gt;</body></html>')
     end
   end
 end
