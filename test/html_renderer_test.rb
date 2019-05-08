@@ -16,9 +16,17 @@ module Ginseng
     end
 
     def test_to_s
-      assert_equal(@renderer.to_s.gsub(/\s/, ''), '<!doctypehtml><htmllang="ja"><body>aaa</body></html>')
+      @renderer[:mode] = 'string'
       @renderer[:content] = '<div></div>'
-      assert_equal(@renderer.to_s.gsub(/\s/, ''), '<!doctypehtml><htmllang="ja"><body>aaa&lt;div&gt;&lt;/div&gt;</body></html>')
+      assert_equal(@renderer.to_s, "<!doctype html>\n<html lang=\"ja\">\n<body>\n&lt;div&gt;&lt;/div&gt;\n</body>\n</html>\n")
+
+      @renderer[:mode] = 'array'
+      @renderer[:content] = ['aaa', '<div></div>']
+      assert_equal(@renderer.to_s, "<!doctype html>\n<html lang=\"ja\">\n<body>\naaa<br>\n&lt;div&gt;&lt;/div&gt;<br>\n</body>\n</html>\n")
+
+      @renderer[:mode] = 'hash'
+      @renderer[:content] = {a: '<div></div>'}
+      assert_equal(@renderer.to_s, "<!doctype html>\n<html lang=\"ja\">\n<body>\na &lt;div&gt;&lt;/div&gt;<br>\n</body>\n</html>\n")
     end
   end
 end
