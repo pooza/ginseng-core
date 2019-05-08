@@ -5,9 +5,9 @@ module Ginseng
     include Package
 
     def template=(name)
-      @template = Sass::Engine.new(
-        File.read(File.join(environment_class.constantize.dir, "views/#{name}.sass")),
-      )
+      path = File.join(environment_class.constantize.dir, "views/#{name}.sass")
+      raise RenderError, "Template file #{name} not found" unless File.exist?(path)
+      @template = Sass::Engine.new(File.read(path))
     end
 
     def type
