@@ -1,15 +1,18 @@
 require 'erb'
+require 'digest/sha1'
 
 module Ginseng
   class HTMLRenderer < Renderer
     include Package
 
     def template=(name)
+      @content = nil
       name.sub!(/\.html$/, '')
       @template = template_class.constantize.new("#{name}.html")
     end
 
     def []=(key, value)
+      @content = nil
       raise RenderError, 'Template file undefined' unless @template
       @template[key] = escape(value)
     end
@@ -20,7 +23,23 @@ module Ginseng
 
     def to_s
       raise RenderError, 'Template file undefined' unless @template
-      return @template.to_s.gsub(/^\s+/, '')
+      unless @content
+        @content = @template.to_s
+        storage = {}
+        ['pre', 'textarea'].each do |element|
+          pattern = Regexp.new("<#{element}.*?>.*?</\s*?#{element}.*?>", Regexp::MULTILINE)
+          @template.to_s.match(pattern) do |matched|
+            key = Digest::SHA1.hexdigest(matched[0])
+            storage[key] = matched[0]
+            @content.sub!(matched[0], key)
+          end
+        end
+        @content.gsub!(/^\s+/, '')
+        storage.map do |k, v|
+          @content.sub!(k, v)
+        end
+      end
+      return @content
     end
 
     private
