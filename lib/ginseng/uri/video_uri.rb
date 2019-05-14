@@ -6,7 +6,7 @@ module Ginseng
 
     def initialize(options = {})
       super(options)
-      @service = you_tube_service_class.constantize.new
+      @service = you_tube_service_class.new
     end
 
     def id

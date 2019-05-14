@@ -13,7 +13,7 @@ module Ginseng
       @uri = Addressable::URI.parse(uri)
       @token = token
       @mulukhiya_enable = false
-      @http = http_class.constantize.new
+      @http = http_class.new
     end
 
     def mulukhiya_enable?
@@ -29,7 +29,7 @@ module Ginseng
     def toot(body)
       body = {status: body.to_s} unless body.is_a?(Hash)
       headers = {'Authorization' => "Bearer #{@token}"}
-      headers['X-Mulukhiya'] = package_class.constantize.full_name unless mulukhiya_enable?
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
       return @http.post(create_uri, {body: body.to_json, headers: headers})
     end
 
@@ -44,7 +44,7 @@ module Ginseng
 
     def upload_remote_resource(uri)
       path = File.join(
-        environment_class.constantize.dir,
+        environment_class.dir,
         'tmp/media',
         Digest::SHA1.hexdigest(uri),
       )

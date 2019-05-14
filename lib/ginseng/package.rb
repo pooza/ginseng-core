@@ -5,31 +5,31 @@ module Ginseng
     end
 
     def environment_class
-      return "#{module_name}::Environment"
+      return "#{module_name}::Environment".constantize
     end
 
     def package_class
-      return "#{module_name}::Package"
+      return "#{module_name}::Package".constantize
     end
 
     def config_class
-      return "#{module_name}::Config"
+      return "#{module_name}::Config".constantize
     end
 
     def template_class
-      return "#{module_name}::Template"
+      return "#{module_name}::Template".constantize
     end
 
     def logger_class
-      return "#{module_name}::Logger"
+      return "#{module_name}::Logger".constantize
     end
 
     def http_class
-      return "#{module_name}::HTTP"
+      return "#{module_name}::HTTP".constantize
     end
 
     def you_tube_service_class
-      return "#{module_name}::YouTubeService"
+      return "#{module_name}::YouTubeService".constantize
     end
 
     def self.name

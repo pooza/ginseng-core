@@ -8,12 +8,12 @@ module Ginseng
 
     def initialize
       super
-      @config = config_class.constantize.instance
-      @logger = logger_class.constantize.new
+      @config = config_class.instance
+      @logger = logger_class.new
       @logger.info({
         message: 'starting...',
         server: {port: @config['/thin/port']},
-        version: package_class.constantize.version,
+        version: package_class.version,
       })
     end
 
@@ -37,7 +37,7 @@ module Ginseng
     end
 
     get '/about' do
-      @renderer.message = package_class.constantize.full_name
+      @renderer.message = package_class.full_name
       return @renderer.to_s
     end
 

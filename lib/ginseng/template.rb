@@ -6,7 +6,7 @@ module Ginseng
     attr_reader :params
 
     def initialize(name)
-      path = File.join(environment_class.constantize.dir, dir, "#{name}.erb")
+      path = File.join(environment_class.dir, dir, "#{name}.erb")
       raise RenderError, "Template file #{name} not found" unless File.exist?(path)
       @erb = ERB.new(File.read(path), nil, '-')
       @params = {}.with_indifferent_access
