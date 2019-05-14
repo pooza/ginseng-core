@@ -23,9 +23,9 @@ module Ginseng
 
     def dirs
       return [
-        File.join('/etc', package_class.constantize.name),
-        File.join('/usr/local/etc', package_class.constantize.name),
-        File.join(environment_class.constantize.dir, 'config'),
+        File.join('/etc', package_class.name),
+        File.join('/usr/local/etc', package_class.name),
+        File.join(environment_class.dir, 'config'),
       ]
     end
 
@@ -37,7 +37,7 @@ module Ginseng
       return [
         'application',
         'local',
-        environment_class.constantize.hostname,
+        environment_class.hostname,
       ]
     end
 

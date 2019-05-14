@@ -5,8 +5,8 @@ module Ginseng
 
     def initialize
       @status = 200
-      @config = config_class.constantize.instance
-      @logger = logger_class.constantize.new
+      @config = config_class.instance
+      @logger = logger_class.new
     end
 
     def type

@@ -27,7 +27,7 @@ module Ginseng
     def root_uri
       unless @uri
         @uri = Addressable::URI.new
-        @uri.host = environment_class.constantize.hostname
+        @uri.host = environment_class.hostname
         @uri.scheme = 'http'
         @uri.port = @config['/thin/port']
       end

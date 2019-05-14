@@ -8,7 +8,7 @@ module Ginseng
     def template=(name)
       @content = nil
       name.sub!(/\.html$/, '')
-      @template = template_class.constantize.new("#{name}.html")
+      @template = template_class.new("#{name}.html")
     end
 
     def []=(key, value)

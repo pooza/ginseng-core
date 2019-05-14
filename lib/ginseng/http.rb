@@ -39,7 +39,7 @@ module Ginseng
     end
 
     def user_agent
-      return package_class.constantize.user_agent
+      return package_class.user_agent
     end
   end
 end

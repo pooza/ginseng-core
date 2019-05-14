@@ -6,7 +6,7 @@ module Ginseng
     include Package
 
     def initialize
-      super(package_class.constantize.name)
+      super(package_class.name)
     end
 
     def info(message)

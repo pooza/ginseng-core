@@ -7,7 +7,7 @@ module Ginseng
 
     def initialize(url)
       @url = Addressable::URI.parse(url)
-      @http = http_class.constantize.new
+      @http = http_class.new
     end
 
     def say(message, type = :json)

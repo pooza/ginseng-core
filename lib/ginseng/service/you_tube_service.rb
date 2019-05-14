@@ -3,8 +3,8 @@ module Ginseng
     include Package
 
     def initialize
-      @config = config_class.constantize.instance
-      @http = http_class.constantize.new
+      @config = config_class.instance
+      @http = http_class.new
     end
 
     def lookup_video(id)
