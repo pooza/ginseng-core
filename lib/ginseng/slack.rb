@@ -1,5 +1,6 @@
 require 'addressable/uri'
 require 'json'
+require 'yaml'
 
 module Ginseng
   class Slack
@@ -10,12 +11,14 @@ module Ginseng
       @http = http_class.new
     end
 
-    def say(message, type = :json)
+    def say(message, type = :yaml)
       return @http.post(@url, {body: create_body(message, type)})
     end
 
-    def create_body(message, type = :json)
+    def create_body(message, type = :yaml)
       case type
+      when :yaml
+        message = {text: YAML.dump(message)}
       when :json
         message = {text: JSON.pretty_generate(message)}
       when :text
