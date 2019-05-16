@@ -8,7 +8,7 @@ module Ginseng
     def initialize(name)
       path = File.join(environment_class.dir, dir, "#{name}.erb")
       raise RenderError, "Template file #{name} not found" unless File.exist?(path)
-      @erb = ERB.new(File.read(path), nil, '-')
+      @erb = ERB.new(File.read(path), {trim_mode: '-'})
       @params = {}.with_indifferent_access
     end
 
