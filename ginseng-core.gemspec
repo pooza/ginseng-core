@@ -16,6 +16,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'activesupport'
   spec.add_dependency 'addressable'
   spec.add_dependency 'bundler'
+  spec.add_dependency 'csv'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
   spec.add_dependency 'rack-test'
