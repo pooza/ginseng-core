@@ -5,6 +5,7 @@ module Ginseng
     end
 
     def test_lookup_video
+      return if ENV['CI'].present?
       video = @service.lookup_video('uFfsTeExwbQ')
       assert_true(video.is_a?(Hash))
       assert_true(video.present?)
