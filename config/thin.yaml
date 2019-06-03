@@ -1,4 +1,0 @@
-timeout: 30
-port: 3014
-environment: production
-rackup: lib/initializer/config.ru

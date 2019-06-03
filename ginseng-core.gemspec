@@ -6,10 +6,10 @@ Gem::Specification.new do |spec|
   spec.version = package['version']
   spec.authors = package['authors']
   spec.email = package['email']
-  spec.summary = 'ginseng core libraries'
-  spec.description = 'ginseng core libraries'
+  spec.summary = package['description']
+  spec.description = package['description']
   spec.homepage = package['url']
-  spec.license = 'MIT'
+  spec.license = package['license']
   spec.metadata['homepage_uri'] = package['url']
   spec.require_paths = ['lib']
 
@@ -19,13 +19,9 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'csv'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
-  spec.add_dependency 'rack-test'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
   spec.add_dependency 'rubocop'
-  spec.add_dependency 'sass'
-  spec.add_dependency 'sinatra'
   spec.add_dependency 'syslog-logger'
   spec.add_dependency 'test-unit'
-  spec.add_dependency 'thin'
 end
