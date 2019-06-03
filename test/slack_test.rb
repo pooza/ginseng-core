@@ -1,12 +1,14 @@
 module Ginseng
   class SlackTest < Test::Unit::TestCase
     def test_all
+      return if ENV['CI'].present?
       Slack.all do |slack|
         assert(slack.is_a?(Slack))
       end
     end
 
     def test_create_message
+      return if ENV['CI'].present?
       slack = Slack.all.first
       assert_equal(slack.create_body('hoge', :text), %({"text":"hoge"}))
       assert_equal(slack.create_body({a: 'fuga'}, :json), %({"text":"{\\n  \\"a\\": \\"fuga\\"\\n}"}))
@@ -15,6 +17,7 @@ module Ginseng
     end
 
     def test_say
+      return if ENV['CI'].present?
       Slack.all do |slack|
         assert_equal(slack.say({text: 'say YAML'}).code, 200)
         assert_equal(slack.say({text: 'say JSON'}, :json).code, 200)
@@ -24,6 +27,7 @@ module Ginseng
     end
 
     def test_broadcast
+      return if ENV['CI'].present?
       assert(Slack.broadcast({message: 'OK'}))
       assert_false(Slack.broadcast(NotFoundError.new('404')))
     end
