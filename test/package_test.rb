@@ -1,3 +1,5 @@
+# encoding: UTF-8
+
 module Ginseng
   class PackageTest < Test::Unit::TestCase
     def test_name

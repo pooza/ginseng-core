@@ -1,4 +1,3 @@
-# encoding: UTF-8
 namespace :ginseng do
   namespace :core do
     task :test do

@@ -1,3 +1,5 @@
+# encoding: UTF-8
+
 module Ginseng
   class IntegerTest < Test::Unit::TestCase
     def setup

@@ -1,3 +1,5 @@
+# encoding: UTF-8
+
 module Ginseng
   class DatabaseErrorTest < Test::Unit::TestCase
     def setup
