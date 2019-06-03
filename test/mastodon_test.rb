@@ -3,6 +3,8 @@ module Ginseng
     def setup
       @config = Config.instance
       @mastodon = Mastodon.new(@config['/mastodon/url'], @config['/mastodon/token'])
+    rescue Ginseng::ConfigError
+      @mastodon = Mastodon.new(@config['/mastodon/url'])
     end
 
     def test_new
