@@ -25,8 +25,6 @@ module Ginseng
   autoload :Logger
   autoload :Mastodon
   autoload :Package
-  autoload :Renderer
-  autoload :Sinatra
   autoload :Slack
   autoload :Template
 
@@ -39,17 +37,6 @@ module Ginseng
     autoload :RedisError
     autoload :RenderError
     autoload :RequestError
-  end
-
-  autoload_under 'daemon' do
-    autoload :ThinDaemon
-  end
-
-  autoload_under 'renderer' do
-    autoload :CSSRenderer
-    autoload :HTMLRenderer
-    autoload :JSONRenderer
-    autoload :XMLRenderer
   end
 
   autoload_under 'service' do
