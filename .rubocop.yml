@@ -14,10 +14,6 @@ Style/DoubleNegation:
 Style/FormatStringToken:
   EnforcedStyle: template
 
-Style/Encoding:
-  Exclude:
-    - test/*
-
 Layout/IndentFirstHashElement:
   EnforcedStyle: consistent
 

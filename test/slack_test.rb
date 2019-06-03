@@ -1,5 +1,3 @@
-# encoding: UTF-8
-
 module Ginseng
   class SlackTest < Test::Unit::TestCase
     def test_all

@@ -1,5 +1,3 @@
-# encoding: UTF-8
-
 module Ginseng
   class ConfigTest < Test::Unit::TestCase
     def setup

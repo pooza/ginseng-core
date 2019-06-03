@@ -1,5 +1,3 @@
-# encoding: UTF-8
-
 module Ginseng
   class RenderErrorTest < Test::Unit::TestCase
     def setup

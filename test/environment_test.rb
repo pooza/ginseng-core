@@ -1,5 +1,3 @@
-# encoding: UTF-8
-
 module Ginseng
   class EnvironmentTest < Test::Unit::TestCase
     def test_name

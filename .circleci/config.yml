@@ -3,7 +3,7 @@ jobs:
   build:
     docker:
       - image: circleci/ruby:2.6.3
-    working_directory: ~/repos
+    working_directory: ~/ginseng-core
     steps:
       - checkout
       - run:

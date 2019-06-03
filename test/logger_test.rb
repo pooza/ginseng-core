@@ -1,5 +1,3 @@
-# encoding: UTF-8
-
 module Ginseng
   class LoggerTest < Test::Unit::TestCase
     def setup
