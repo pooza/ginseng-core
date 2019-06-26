@@ -12,7 +12,7 @@ module Ginseng
     end
 
     def test_uri
-      assert(@mastodon.uri.is_a?(Addressable::URI))
+      assert(@mastodon.uri.is_a?(URI))
     end
 
     def test_mulukhiya?

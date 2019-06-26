@@ -27,6 +27,7 @@ module Ginseng
   autoload :Package
   autoload :Slack
   autoload :Template
+  autoload :URI
 
   autoload_under 'error' do
     autoload :ConfigError

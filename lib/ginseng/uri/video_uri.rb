@@ -1,7 +1,5 @@
-require 'addressable/uri'
-
 module Ginseng
-  class VideoURI < Addressable::URI
+  class VideoURI < URI
     include Package
 
     def initialize(options = {})

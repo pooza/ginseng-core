@@ -1,4 +1,3 @@
-require 'addressable/uri'
 require 'json'
 require 'yaml'
 
@@ -7,7 +6,7 @@ module Ginseng
     include Package
 
     def initialize(url)
-      @url = Addressable::URI.parse(url)
+      @url = URI.parse(url)
       @http = http_class.new
     end
 

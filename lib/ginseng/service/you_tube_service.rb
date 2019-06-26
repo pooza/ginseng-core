@@ -22,7 +22,7 @@ module Ginseng
     end
 
     def create_uri(type)
-      return Addressable::URI.parse(@config["/youtube/urls/#{type}"])
+      return URI.parse(@config["/youtube/urls/#{type}"])
     end
 
     def api_key
