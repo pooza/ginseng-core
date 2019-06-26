@@ -1,4 +1,3 @@
-require 'addressable/uri'
 require 'json'
 
 module Ginseng
@@ -9,7 +8,7 @@ module Ginseng
     end
 
     def test_get
-      uri = Addressable::URI.parse(@config['/mastodon/url'])
+      uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/about'
       r = @http.get(uri)
       assert_equal(r.code, 200)
@@ -17,7 +16,7 @@ module Ginseng
 
     def test_post
       return if ENV['CI'].present?
-      uri = Addressable::URI.parse(@config['/mastodon/url'])
+      uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/statuses'
       r = @http.post(uri, {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
@@ -28,7 +27,7 @@ module Ginseng
 
     def test_upload
       return if ENV['CI'].present?
-      uri = Addressable::URI.parse(@config['/mastodon/url'])
+      uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/media'
       r = @http.upload(uri, File.join(Environment.dir, 'images/pooza.png'), {
         'Authorization' => "Bearer #{@config['/mastodon/token']}",

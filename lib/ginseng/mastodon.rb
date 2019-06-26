@@ -1,4 +1,3 @@
-require 'addressable/uri'
 require 'digest/sha1'
 require 'json'
 
@@ -10,7 +9,7 @@ module Ginseng
     attr_accessor :mulukhiya_enable
 
     def initialize(uri, token = nil)
-      @uri = Addressable::URI.parse(uri)
+      @uri = URI.parse(uri)
       @token = token
       @mulukhiya_enable = false
       @http = http_class.new
