@@ -25,7 +25,7 @@ module Ginseng
     end
 
     def test_toot
-      return if ENV['CI'].present?
+      return if Environment.ci?
       r = @mastodon.toot('文字列からトゥート')
       assert(r.is_a?(HTTParty::Response))
       assert_equal(r.response.code, '200')
@@ -39,12 +39,12 @@ module Ginseng
     end
 
     def test_upload
-      return if ENV['CI'].present?
+      return if Environment.ci?
       assert(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).is_a?(Integer))
     end
 
     def test_upload_remote_resource
-      return if ENV['CI'].present?
+      return if Environment.ci?
       assert(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').is_a?(Integer))
     end
 
