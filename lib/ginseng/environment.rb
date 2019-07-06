@@ -1,4 +1,5 @@
 require 'socket'
+require 'time'
 
 module Ginseng
   class Environment
@@ -47,6 +48,10 @@ module Ginseng
     def self.gem_fresh?
       Dir.chdir(dir)
       return `git status`.include?('Gemfile.lock') == false
+    end
+
+    def self.tz
+      return Time.now.strftime('%:z')
     end
 
     def self.uid
