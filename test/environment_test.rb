@@ -17,11 +17,15 @@ module Ginseng
     end
 
     def test_test?
-      assert(Environment.test?)
+      assert_equal(Environment.test?, ENV['TEST'].present?)
+    end
+
+    def test_ci?
+      assert_equal(Environment.ci?, ENV['CI'].present?)
     end
 
     def test_cron?
-      assert_false(Environment.cron?)
+      assert_equal(Environment.cron?, ENV['CRON'].present?)
     end
 
     def test_uid

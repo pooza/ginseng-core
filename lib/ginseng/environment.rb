@@ -28,6 +28,12 @@ module Ginseng
       return `uname`.chomp
     end
 
+    def self.ci?
+      return ENV['CI'].present?
+    rescue
+      return false
+    end
+
     def self.test?
       return ENV['TEST'].present?
     rescue

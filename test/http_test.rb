@@ -15,7 +15,7 @@ module Ginseng
     end
 
     def test_post
-      return if ENV['CI'].present?
+      return if Environment.ci?
       uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/statuses'
       r = @http.post(uri, {
@@ -26,7 +26,7 @@ module Ginseng
     end
 
     def test_upload
-      return if ENV['CI'].present?
+      return if Environment.ci?
       uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/media'
       r = @http.upload(uri, File.join(Environment.dir, 'images/pooza.png'), {
