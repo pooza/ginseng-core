@@ -16,11 +16,17 @@ jobs:
           name: run RuboCop
           command: bundle exec rubocop
       - run:
-          name: update repository
-          command: bundle exec rake repos:update
+          name: update gem
+          command: bundle exec rake bundle:update
       - run:
-          name: check repository
-          command: bundle exec rake repos:check
+          name: check gem
+          command: bundle exec rake bundle:check
+      - run:
+          name: update cert
+          command: bundle exec rake cert:update
+      - run:
+          name: check cert
+          command: bundle exec rake cert:check
       - run:
           name: run test
-          command: CI=1 bundle exec rake test
+          command: bundle exec rake test
