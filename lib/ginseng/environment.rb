@@ -29,7 +29,9 @@ module Ginseng
     end
 
     def self.ci?
-      return ENV['CI'].present?
+      return true if ENV['CI'].present?
+      return true if ENV['CIRCLECI'].present?
+      return false
     rescue
       return false
     end
