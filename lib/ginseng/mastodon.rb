@@ -25,19 +25,20 @@ module Ginseng
       return @http.get(create_uri("/api/v1/statuses/#{id}"))
     end
 
-    def toot(body)
+    def toot(body, params = {})
       body = {status: body.to_s} unless body.is_a?(Hash)
-      headers = {'Authorization' => "Bearer #{@token}"}
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
       return @http.post(create_uri, {body: body.to_json, headers: headers})
     end
 
-    def upload(path)
-      response = @http.upload(
-        create_uri('/api/v1/media'),
-        path,
-        {'Authorization' => "Bearer #{@token}"},
-      )
+    def upload(path, params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      response = @http.upload(create_uri('/api/v1/media'), path, headers)
+      return response if params[:response] == :raw
       return JSON.parse(response.body)['id'].to_i
     end
 
