@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ginseng-core (1.4.4)
+    ginseng-core (1.4.5)
       activesupport
       addressable
       bundler
@@ -47,7 +47,7 @@ GEM
     parallel (1.17.0)
     parser (2.6.3.0)
       ast (~> 2.4.0)
-    power_assert (1.1.4)
+    power_assert (1.1.5)
     public_suffix (3.1.1)
     rainbow (3.0.0)
     rake (12.3.3)
@@ -55,7 +55,7 @@ GEM
       http-cookie (>= 1.0.2, < 2.0)
       mime-types (>= 1.16, < 4.0)
       netrc (~> 0.8)
-    rubocop (0.73.0)
+    rubocop (0.74.0)
       jaro_winkler (~> 1.5.1)
       parallel (~> 1.10)
       parser (>= 2.6)

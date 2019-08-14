@@ -22,7 +22,7 @@ module Ginseng
 
     def test_count
       return if Environment.ci?
-      assert(@uri.count.is_a?(Integer))
+      assert(@uri.count.positive?)
       assert(@uri.count.present?)
     end
   end

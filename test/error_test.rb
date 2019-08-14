@@ -17,7 +17,7 @@ module Ginseng
     end
 
     def test_backtrace_level
-      assert(@error.backtrace_level.is_a?(Integer))
+      assert(@error.backtrace_level.positive?)
     end
 
     def test_status
