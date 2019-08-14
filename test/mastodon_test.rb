@@ -3,8 +3,7 @@ module Ginseng
     def setup
       @config = Config.instance
       @mastodon = Mastodon.new(@config['/mastodon/url'], @config['/mastodon/token'])
-    rescue Ginseng::ConfigError
-      @mastodon = Mastodon.new(@config['/mastodon/url'])
+      @toot_id = @config['/mastodon/test_toot']
     end
 
     def test_new
@@ -40,12 +39,22 @@ module Ginseng
 
     def test_upload
       return if Environment.ci?
-      assert(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).is_a?(Integer))
+      assert(@mastodon.upload(File.join(Environment.dir, 'images/pooza.png')).positive?)
+    end
+
+    def test_favourite
+      return if Environment.ci?
+      assert_equal(@mastodon.favourite(@toot_id).code, 200)
+    end
+
+    def test_reblog
+      return if Environment.ci?
+      assert_equal(@mastodon.reblog(@toot_id).code, 200)
     end
 
     def test_upload_remote_resource
       return if Environment.ci?
-      assert(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').is_a?(Integer))
+      assert(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').positive?)
     end
 
     def test_create_tag

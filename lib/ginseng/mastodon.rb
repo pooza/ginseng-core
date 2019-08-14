@@ -4,7 +4,6 @@ require 'json'
 module Ginseng
   class Mastodon
     include Package
-    attr_reader :token
     attr_reader :uri
     attr_accessor :token
     attr_accessor :mulukhiya_enable

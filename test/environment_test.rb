@@ -29,11 +29,11 @@ module Ginseng
     end
 
     def test_uid
-      assert(Environment.uid.is_a?(Integer))
+      assert(Environment.uid.positive?)
     end
 
     def test_gid
-      assert(Environment.gid.is_a?(Integer))
+      assert(Environment.gid.positive?)
     end
   end
 end

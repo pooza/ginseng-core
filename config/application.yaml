@@ -16,5 +16,6 @@ youtube:
   urls:
     videos: https://www.googleapis.com/youtube/v3/videos
 mastodon:
-  url:
-    https://mstdn.b-shock.org/
+  url: https://mstdn.b-shock.org/
+  token: test
+  test_toot: 0
