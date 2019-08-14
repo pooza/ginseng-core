@@ -46,9 +46,7 @@ module Ginseng
 
     def self.start(opts, args)
       living_daemons = find(opts).select(&:alive?)
-      if living_daemons.any?
-        raise "#{daemon.app_name} already started! PIDS: #{living_daemons.map(&:pid).join(', ')}"
-      end
+      raise "Already started! PIDS: #{living_daemons.map(&:pid).join(', ')}" if living_daemons.any?
       build(opts).map do |daemon|
         unless File.writable?(File.dirname(daemon.pid_file))
           raise "Unable to write PID file to #{daemon.pid_file}"
