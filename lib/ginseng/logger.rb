@@ -1,4 +1,3 @@
-require 'yajl'
 require 'syslog/logger'
 
 module Ginseng
@@ -10,11 +9,11 @@ module Ginseng
     end
 
     def info(message)
-      super(Yajl.dump(create_message(message)))
+      super(create_message(message).to_json)
     end
 
     def error(message)
-      super(Yajl.dump(create_message(message)))
+      super(create_message(message).to_json)
     end
 
     def create_message(src)

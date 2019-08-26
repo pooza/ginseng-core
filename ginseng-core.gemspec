@@ -24,5 +24,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'rubocop'
   spec.add_dependency 'syslog-logger'
   spec.add_dependency 'test-unit'
-  spec.add_dependency 'yajl'
+  spec.add_dependency 'yajl-ruby'
 end

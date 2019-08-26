@@ -1,5 +1,3 @@
-require 'json'
-
 module Ginseng
   class HTTPTest < Test::Unit::TestCase
     def setup

@@ -1,5 +1,4 @@
 require 'digest/sha1'
-require 'json'
 
 module Ginseng
   class Mastodon

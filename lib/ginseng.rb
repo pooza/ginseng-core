@@ -2,6 +2,8 @@ require 'active_support'
 require 'active_support/core_ext'
 require 'active_support/dependencies/autoload'
 require 'ginseng/monkey_patches'
+require 'yajl'
+require 'yajl/json_gem'
 
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'CSS'
