@@ -19,7 +19,7 @@ module Ginseng
     def test_say
       return if Environment.ci?
       Slack.all do |slack|
-        assert_equal(slack.say({text: 'say YAML'}).code, 200)
+        assert_equal(slack.say(text: 'say YAML').code, 200)
         assert_equal(slack.say({text: 'say JSON'}, :json).code, 200)
         assert_equal(slack.say('say text', :text).code, 200)
         assert_equal(slack.say({text: 'say hash', attachments: [{image_url: 'https://images-na.ssl-images-amazon.com/images/I/519zZO6YAVL.jpg'}]}, :hash).code, 200)
@@ -28,7 +28,7 @@ module Ginseng
 
     def test_broadcast
       return if Environment.ci?
-      assert(Slack.broadcast({message: 'OK'}))
+      assert(Slack.broadcast(message: 'OK'))
       assert_false(Slack.broadcast(NotFoundError.new('404')))
     end
   end

@@ -12,7 +12,7 @@ module Ginseng
 
     def start(args)
       IO.popen(cmd).each_line do |line|
-        @logger.info({daemon: app_name, output: line.chomp})
+        @logger.info(daemon: app_name, output: line.chomp)
       end
     end
 

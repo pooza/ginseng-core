@@ -30,7 +30,7 @@ module Ginseng
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>文字列からトゥート</p>')
 
-      r = @mastodon.toot({status: 'ハッシュからプライベートなトゥート', visibility: 'private'})
+      r = @mastodon.toot(status: 'ハッシュからプライベートなトゥート', visibility: 'private')
       assert(r.is_a?(HTTParty::Response))
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>ハッシュからプライベートなトゥート</p>')
