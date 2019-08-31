@@ -38,9 +38,7 @@ module Ginseng
         return false unless e.broadcastable?
         src = e.to_h
       end
-      all do |slack|
-        slack.say(src)
-      end
+      all.map{|v| v.say(src)}
       return true
     end
   end
