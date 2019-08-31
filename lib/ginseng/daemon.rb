@@ -2,6 +2,8 @@ require 'daemon_spawn'
 
 module Ginseng
   class Daemon < DaemonSpawn::Base
+    include Package
+
     def initialize(opts = {})
       @logger = logger_class.new
       @config = config_class.instance
