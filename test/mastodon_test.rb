@@ -52,6 +52,13 @@ module Ginseng
       assert_equal(@mastodon.reblog(@toot_id).code, 200)
     end
 
+    def test_search
+      return if Environment.ci?
+      assert_equal(@mastodon.search('pooza').code, 200)
+      assert_equal(@mastodon.search('pooza', {version: 'v1'}).code, 200)
+      assert_equal(@mastodon.search('pooza', {version: 'v2'}).code, 200)
+    end
+
     def test_upload_remote_resource
       return if Environment.ci?
       assert(@mastodon.upload_remote_resource('https://www.b-shock.co.jp/images/ota-m.gif').positive?)
