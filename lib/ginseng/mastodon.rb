@@ -81,8 +81,10 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      version = params[:version] || 'v2'
+      params.delete(:version)
       params[:q] = keyword
-      uri = create_uri('/api/v2/search')
+      uri = create_uri("/api/#{version}/search")
       uri.query_values = params
       return @http.get(uri, {headers: headers})
     end
