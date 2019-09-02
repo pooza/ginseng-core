@@ -27,7 +27,7 @@ module Ginseng
     end
 
     def child_pid
-      raise 0
+      return 0
     end
 
     def motd
