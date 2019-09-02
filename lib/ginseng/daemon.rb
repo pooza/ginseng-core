@@ -27,7 +27,7 @@ module Ginseng
     end
 
     def child_pid
-      raise Ginseng::ImplementError, "'#{__method__}' not implemented"
+      raise 0
     end
 
     def motd
