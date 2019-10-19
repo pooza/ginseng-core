@@ -134,3 +134,7 @@ Metrics/PerceivedComplexity:
 
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
+
+Security/MarshalLoad:
+  Exclude:
+    - lib/ginseng/lib.rb

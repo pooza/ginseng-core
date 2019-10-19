@@ -24,10 +24,12 @@ module Ginseng
   autoload :Environment
   autoload :Error
   autoload :HTTP
+  autoload :Lib
   autoload :Logger
   autoload :Mastodon
   autoload :Package
   autoload :Slack
+  autoload :TagContainer
   autoload :Template
   autoload :URI
 
