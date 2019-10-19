@@ -95,6 +95,10 @@ Metrics/LineLength:
   Exclude:
     - test/*
 
+Style/IfUnlessModifier:
+  Exclude:
+    - test/*
+
 Style/AsciiComments:
   Enabled: false
 
@@ -130,3 +134,7 @@ Metrics/PerceivedComplexity:
 
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
+
+Security/MarshalLoad:
+  Exclude:
+    - lib/ginseng/lib.rb

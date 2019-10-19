@@ -55,7 +55,6 @@ module Ginseng
     def test_search
       return if Environment.ci?
       assert_equal(@mastodon.search('pooza').code, 200)
-      assert_equal(@mastodon.search('pooza', {version: 'v1'}).code, 200)
       assert_equal(@mastodon.search('pooza', {version: 'v2'}).code, 200)
     end
 
