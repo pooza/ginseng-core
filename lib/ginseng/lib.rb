@@ -19,8 +19,8 @@ module Ginseng
     end
 
     def corrupted?
-      return false unless Marshal.load(File.read(path)).is_a?(Array)
-      return true
+      return true unless Marshal.load(File.read(path)).is_a?(Array)
+      return false
     rescue TypeError, Errno::ENOENT => e
       @logger.error(lib: self.class.to_s, path: path, message: e.message)
       return true
