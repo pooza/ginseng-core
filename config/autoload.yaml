@@ -1,0 +1,4 @@
+inflections:
+  http: HTTP
+  uri: URI
+  video_uri: VideoURI
