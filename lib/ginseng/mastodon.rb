@@ -109,6 +109,36 @@ module Ginseng
       })
     end
 
+    def filters(params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      return @http.get(create_uri('/api/v1/filters'), {headers: headers})
+    end
+
+    def register_filter(params)
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      return @http.post(create_uri('/api/v1/filters'), {
+        body: {
+          phrase: params[:phrase],
+          context: params[:context] || [:home, :public],
+        }.to_json,
+        headers: headers,
+      })
+    end
+
+    def unregister_filter(id, params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      return @http.delete(create_uri("/api/v1/filters/#{id}"), {
+        body: '{}',
+        headers: headers,
+      })
+    end
+
     def create_uri(href = '/api/v1/statuses')
       uri = self.uri.clone
       uri.path = href
