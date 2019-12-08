@@ -24,6 +24,14 @@ module Ginseng
       return HTTParty.post(uri.normalize, options)
     end
 
+    def delete(uri, options = {})
+      options[:headers] ||= {}
+      options[:headers]['User-Agent'] ||= user_agent
+      options[:headers]['Content-Type'] ||= 'application/json'
+      uri = URI.parse(uri.to_s) unless uri.is_a?(URI)
+      return HTTParty.delete(uri.normalize, options)
+    end
+
     def upload(uri, file, headers = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
       uri = URI.parse(uri.to_s) unless uri.is_a?(URI)
