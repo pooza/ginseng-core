@@ -12,8 +12,7 @@ module Ginseng
 
   def self.loader
     config = YAML.load_file(File.join(dir, 'config/autoload.yaml'))
-    loader = Zeitwerk::Loader.new
-    loader.enable_reloading
+    loader = Zeitwerk::Loader.for_gem
     loader.inflector.inflect(config['inflections'])
     loader.push_dir(File.join(dir, 'lib'))
     loader.setup
