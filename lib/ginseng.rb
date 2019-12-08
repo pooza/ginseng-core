@@ -42,6 +42,7 @@ module Ginseng
     autoload :RedisError
     autoload :RenderError
     autoload :RequestError
+    autoload :ValidateError
   end
 
   autoload_under 'service' do
