@@ -1,0 +1,27 @@
+module Ginseng
+  class CommandLineTest < Test::Unit::TestCase
+    def setup
+      @command = CommandLine.new
+    end
+
+    def test_args
+      @command.args = []
+      assert_equal(@command.args, [])
+      @command.args = ['ffmpeg', File.join(Environment.dir, 'sample/poyke.mp4')]
+      assert_equal(@command.args[0], 'ffmpeg')
+    end
+
+    def test_to_s
+      @command.args = ['ls', 'a b', '"x"']
+      assert_equal(@command.to_s, 'ls a\\ b \\"x\\"')
+    end
+
+    def test_exec
+      @command.args = ['ls', '/']
+      @command.exec
+      assert(@command.status.zero?)
+      assert(@command.stdout.present?)
+      assert(@command.stderr.blank?)
+    end
+  end
+end
