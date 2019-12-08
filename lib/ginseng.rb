@@ -19,6 +19,7 @@ end
 module Ginseng
   extend ActiveSupport::Autoload
 
+  autoload :CommandLine
   autoload :Config
   autoload :Daemon
   autoload :Environment
