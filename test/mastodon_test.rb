@@ -67,6 +67,7 @@ module Ginseng
       assert_equal(Mastodon.create_tag('宮本佳那子'), '#宮本佳那子')
       assert_equal(Mastodon.create_tag('宮本 佳那子'), '#宮本_佳那子')
       assert_equal(Mastodon.create_tag('宮本 佳那子 '), '#宮本_佳那子')
+      assert_equal(Mastodon.create_tag('#宮本 佳那子 '), '#宮本_佳那子')
     end
   end
 end

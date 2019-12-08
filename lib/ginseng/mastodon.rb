@@ -154,7 +154,7 @@ module Ginseng
     end
 
     def self.create_tag(word)
-      return '#' + word.strip.gsub(/[^[:alnum:]]+/, '_').sub(/^_/, '').sub(/_$/, '')
+      return '#' + word.strip.gsub(/[^[:alnum:]]+/, '_').gsub(/(^[_#]+|_$)/, '')
     end
   end
 end
