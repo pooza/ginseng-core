@@ -32,11 +32,12 @@ module Ginseng
       return HTTParty.delete(uri.normalize, options)
     end
 
-    def upload(uri, file, headers = {})
+    def upload(uri, file, headers = {}, body = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
       uri = URI.parse(uri.to_s) unless uri.is_a?(URI)
       headers['User-Agent'] ||= user_agent
-      return RestClient.post(uri.normalize.to_s, {file: file}, headers)
+      body[:file] = file
+      return RestClient.post(uri.normalize.to_s, body, headers)
     end
 
     def user_agent
