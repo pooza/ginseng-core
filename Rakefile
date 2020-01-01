@@ -5,6 +5,6 @@ ENV['BUNDLE_GEMFILE'] ||= File.join(dir, 'Gemfile')
 require 'bundler/setup'
 require 'ginseng'
 
-Dir.glob(File.join(Ginseng::Environment.dir, 'lib/task/*.rb')).each do |f|
+Dir.glob(File.join(Ginseng::Environment.dir, 'lib/task/*.rb')).sort.each do |f|
   require f
 end

@@ -11,7 +11,7 @@ module Ginseng
     end
 
     def concat(words)
-      words.map{|v| push(v)} if words.is_a?(Array)
+      words.map {|v| push(v)} if words.is_a?(Array)
     end
 
     def body=(body)
@@ -35,7 +35,7 @@ module Ginseng
         end
         @tags.uniq!
         @tags.compact!
-        @tags.delete_if{|v| @body =~ create_pattern(v)} if @body
+        @tags.delete_if {|v| @body =~ create_pattern(v)} if @body
       end
       return @tags
     end
