@@ -38,7 +38,7 @@ module Ginseng
         return false unless e.broadcastable?
         src = e.to_h
       end
-      all.map{|v| v.say(src)}
+      all.map {|v| v.say(src)}
       return true
     end
   end
