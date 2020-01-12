@@ -5,15 +5,15 @@ module Ginseng
     end
 
     def test_hostname
-      assert(Environment.hostname.is_a?(String))
+      assert_kind_of(String, Environment.hostname)
     end
 
     def test_ip_address
-      assert(Environment.ip_address.is_a?(String))
+      assert_kind_of(String, Environment.ip_address)
     end
 
     def test_ip_platform
-      assert(Environment.platform.is_a?(String))
+      assert_kind_of(String, Environment.platform)
     end
 
     def test_test?

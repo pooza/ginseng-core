@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert(@error.is_a?(Error))
+      assert_kind_of(Error, @error)
     end
 
     def test_package
@@ -29,7 +29,7 @@ module Ginseng
       assert_equal(h[:class], 'Ginseng::Error')
       assert_equal(h[:message], 'hoge')
       assert_equal(h[:source_class], 'RuntimeError')
-      assert(h[:backtrace].is_a?(Array))
+      assert_kind_of(Array, h[:backtrace])
     end
   end
 end

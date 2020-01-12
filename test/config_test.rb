@@ -5,7 +5,13 @@ module Ginseng
     end
 
     def test_instance
-      assert(@config.is_a?(Config))
+      assert_kind_of(Config, @config)
+    end
+
+    def test_config_error
+      assert_raise(ConfigError) do
+        @config['/xxxxx']
+      end
     end
 
     def test_version

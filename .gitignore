@@ -6,3 +6,4 @@ Thumbs.db
 .fuse*
 config/local.*
 .sass-cache
+Gemfile.lock

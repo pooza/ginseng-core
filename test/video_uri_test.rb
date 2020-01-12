@@ -11,7 +11,7 @@ module Ginseng
 
     def test_data
       return if Environment.ci?
-      assert(@uri.data.is_a?(Hash))
+      assert_kind_of(Hash, @uri.data)
       assert(@uri.data.present?)
     end
 

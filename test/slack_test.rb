@@ -3,7 +3,7 @@ module Ginseng
     def test_all
       return if Environment.ci?
       Slack.all do |slack|
-        assert(slack.is_a?(Slack))
+        assert_kind_of(Slack, slack)
       end
     end
 

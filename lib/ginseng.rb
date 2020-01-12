@@ -53,4 +53,8 @@ module Ginseng
   autoload_under 'uri' do
     autoload :VideoURI
   end
+
+  autoload_under 'dsn' do
+    autoload :RedisDSN
+  end
 end

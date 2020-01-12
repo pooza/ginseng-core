@@ -30,7 +30,7 @@ module Ginseng
     def create_tags
       unless @tags
         @tags = map do |tag|
-          tag.gsub!(/\s/, '') unless tag =~ /^[a-z0-9\s]+$/i
+          tag.gsub!(/\s/, '') unless /^[a-z0-9\s]+$/i.match?(tag)
           Mastodon.create_tag(tag)
         end
         @tags.uniq!
@@ -63,7 +63,7 @@ module Ginseng
     private
 
     def create_pattern(tag)
-      tag = Mastodon.create_tag(tag) unless tag =~ /^#/
+      tag = Mastodon.create_tag(tag) unless /^#/.match?(tag)
       return Regexp.new("#{tag}([^[:word:]]|$)")
     end
   end

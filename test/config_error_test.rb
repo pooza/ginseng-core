@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert(@error.is_a?(ConfigError))
+      assert_kind_of(ConfigError, @error)
     end
 
     def test_status

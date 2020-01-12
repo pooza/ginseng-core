@@ -7,11 +7,11 @@ module Ginseng
     end
 
     def test_new
-      assert(@mastodon.is_a?(Mastodon))
+      assert_kind_of(Mastodon, @mastodon)
     end
 
     def test_uri
-      assert(@mastodon.uri.is_a?(URI))
+      assert_kind_of(URI, @mastodon.uri)
     end
 
     def test_mulukhiya?
@@ -26,12 +26,12 @@ module Ginseng
     def test_toot
       return if Environment.ci?
       r = @mastodon.toot('文字列からトゥート')
-      assert(r.is_a?(HTTParty::Response))
+      assert_kind_of(HTTParty::Response, r)
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>文字列からトゥート</p>')
 
       r = @mastodon.toot(status: 'ハッシュからプライベートなトゥート', visibility: 'private')
-      assert(r.is_a?(HTTParty::Response))
+      assert_kind_of(HTTParty::Response, r)
       assert_equal(r.response.code, '200')
       assert_equal(r.parsed_response['content'], '<p>ハッシュからプライベートなトゥート</p>')
       assert_equal(r.parsed_response['visibility'], 'private')

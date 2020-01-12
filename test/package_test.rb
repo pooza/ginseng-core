@@ -5,19 +5,19 @@ module Ginseng
     end
 
     def test_version
-      assert(Package.version.is_a?(String))
+      assert_kind_of(String, Package.version)
     end
 
     def test_url
-      assert(Package.url.is_a?(String))
+      assert_kind_of(String, Package.url)
     end
 
     def test_full_name
-      assert(Package.full_name.is_a?(String))
+      assert_kind_of(String, Package.full_name)
     end
 
     def test_user_agent
-      assert(Package.user_agent.is_a?(String))
+      assert_kind_of(String, Package.user_agent)
     end
   end
 end
