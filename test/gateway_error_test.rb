@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert(@error.is_a?(GatewayError))
+      assert_kind_of(GatewayError, @error)
     end
 
     def test_status

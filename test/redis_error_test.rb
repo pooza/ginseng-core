@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert(@error.is_a?(RedisError))
+      assert_kind_of(RedisError, @error)
     end
 
     def test_status

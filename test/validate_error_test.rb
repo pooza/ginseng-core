@@ -7,7 +7,7 @@ module Ginseng
     end
 
     def test_create
-      assert(@error.is_a?(ValidateError))
+      assert_kind_of(ValidateError, @error)
     end
 
     def test_status

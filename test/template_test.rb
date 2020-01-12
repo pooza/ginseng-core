@@ -6,6 +6,12 @@ module Ginseng
       @template[:body2] = 'body2'
     end
 
+    def test_template_error
+      assert_raise(RenderError) do
+        Template.new('not_exist')
+      end
+    end
+
     def test_to_s
       @template[:output] = 1
       assert_equal(@template.to_s, "body1\n")
@@ -14,7 +20,7 @@ module Ginseng
     end
 
     def test_params=
-      assert(@template.params.is_a?(Hash))
+      assert_kind_of(Hash, @template.params)
       @template.params = {'output' => 3, 'body3' => 'body3'}
       assert_equal(@template.to_s, "body3\n")
       @template.params = {output: 3, body3: 'body3!'}
