@@ -13,7 +13,7 @@ module Ginseng
     end
 
     def start(args)
-      IO.popen(cmd).each_line do |line|
+      IO.popen(cmd, {err: [:child, :out]}).each_line do |line|
         @logger.info(daemon: app_name, output: line.chomp)
       end
     end
