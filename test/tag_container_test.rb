@@ -1,8 +1,11 @@
 module Ginseng
   class TagContainerTest < Test::Unit::TestCase
     def setup
-      @config = Config.instance
       @container = TagContainer.new
+    end
+
+    def test_push
+      assert_equal(@container.push(111), ['111'])
     end
 
     def test_create_tags
