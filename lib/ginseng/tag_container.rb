@@ -7,7 +7,7 @@ module Ginseng
 
     def push(word)
       @tags = nil
-      super(word.sub(/^#/, ''))
+      return super(word.to_s.sub(/^#/, ''))
     end
 
     def concat(words)
