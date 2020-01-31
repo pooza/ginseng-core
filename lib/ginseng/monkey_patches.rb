@@ -6,11 +6,6 @@ class Integer
 end
 
 class String
-  def ellipsize!(length)
-    replace(ellipsize(length))
-    return self
-  end
-
   def ellipsize(length)
     i = 0
     str = ''
@@ -23,5 +18,26 @@ class String
       str += c
     end
     return str
+  end
+
+  def ellipsize!(length)
+    replace(ellipsize(length))
+    return self
+  end
+end
+
+class Hash
+  def deep_merge(target)
+    raise ArgumentError 'Not Hash' unless target.is_a?(Hash)
+    dest = clone || {}
+    target.each do |k, v|
+      dest[k] = v.is_a?(Hash) ? dest[k].deep_merge(v) : v
+    end
+    return dest.compact
+  end
+
+  def deep_merge!(target)
+    replace(deep_merge(target))
+    return self
   end
 end
