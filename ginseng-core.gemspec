@@ -1,5 +1,5 @@
 require 'yaml'
-package = YAML.load_file(File.join(__dir__, 'config/application.yaml'))['package']
+package = YAML.load_file(File.join(__dir__, 'config/lib.yaml'))['package']
 
 Gem::Specification.new do |spec|
   spec.name = 'ginseng-core'

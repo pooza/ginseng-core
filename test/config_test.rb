@@ -8,6 +8,13 @@ module Ginseng
       assert_kind_of(Config, @config)
     end
 
+    def test_raw
+      assert_kind_of(Hash, @config.raw)
+      @config.raw.each do |k, v|
+        assert_kind_of(Hash, v)
+      end
+    end
+
     def test_config_error
       assert_raise(ConfigError) do
         @config['/xxxxx']
