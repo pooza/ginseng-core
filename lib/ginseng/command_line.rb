@@ -8,6 +8,7 @@ module Ginseng
     attr_reader :stdout
     attr_reader :stderr
     attr_reader :status
+    attr_reader :pid
 
     def initialize(args = [])
       @logger = logger_class.new
@@ -29,9 +30,9 @@ module Ginseng
       start = Time.now
       result = Open3.capture3(to_s)
       seconds = Time.now - start
-      @stdout = result[0].to_s
-      @stderr = result[1].to_s
-      @status = result[2].to_i
+      @stdout, @stderr, @status = result
+      @pid = @status.pid
+      @status = @status.to_i
       if @status.zero?
         @logger.info(command: to_s, status: @status, seconds: seconds)
       else
