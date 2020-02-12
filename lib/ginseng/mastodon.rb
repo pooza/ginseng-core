@@ -12,6 +12,7 @@ module Ginseng
       @token = token
       @mulukhiya_enable = false
       @http = http_class.new
+      @config = config_class.instance
     end
 
     def mulukhiya_enable?
@@ -77,6 +78,16 @@ module Ginseng
 
     alias boost reblog
 
+    def bookmark(id, params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      return @http.post(create_uri("/api/v1/statuses/#{id}/bookmark"), {
+        body: '{}',
+        headers: headers,
+      })
+    end
+
     def search(keyword, params = {})
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
@@ -108,6 +119,35 @@ module Ginseng
         headers: headers,
       })
     end
+
+    def announcements(params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      return @http.get(create_uri('/api/v1/announcements'), {headers: headers})
+    end
+
+    def followers(params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      id = params[:id] || @config['/mastodon/account/id']
+      uri = create_uri("/api/v1/accounts/#{id}/followers")
+      uri.query_values = {limit: @config['/mastodon/followers/limit']}
+      return @http.get(uri, {headers: headers})
+    end
+
+    def followees(params = {})
+      headers = params[:headers] || {}
+      headers['Authorization'] ||= "Bearer #{@token}"
+      headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
+      id = params[:id] || @config['/mastodon/account/id']
+      uri = create_uri("/api/v1/accounts/#{id}/following")
+      uri.query_values = {limit: @config['/mastodon/followees/limit']}
+      return @http.get(uri, {headers: headers})
+    end
+
+    alias following followees
 
     def filters(params = {})
       headers = params[:headers] || {}
