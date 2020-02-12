@@ -52,6 +52,21 @@ module Ginseng
       assert_equal(@mastodon.reblog(@toot_id).code, 200)
     end
 
+    def test_announcements
+      return if Environment.ci?
+      assert_equal(@mastodon.announcements.code, 200)
+    end
+
+    def test_followers
+      return if Environment.ci?
+      assert_equal(@mastodon.followers.code, 200)
+    end
+
+    def test_followees
+      return if Environment.ci?
+      assert_equal(@mastodon.followees.code, 200)
+    end
+
     def test_search
       return if Environment.ci?
       assert_equal(@mastodon.search('pooza').code, 200)

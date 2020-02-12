@@ -22,6 +22,7 @@ module Ginseng
       assert(@command.status.zero?)
       assert(@command.stdout.present?)
       assert(@command.stderr.blank?)
+      assert_kind_of(Integer, @command.pid)
     end
   end
 end

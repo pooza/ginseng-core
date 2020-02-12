@@ -1,5 +1,5 @@
 package:
-  version: 1.5.7
+  version: 1.5.8
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -19,5 +19,9 @@ mastodon:
   url: https://mstdn.b-shock.org/
   token: test
   test_toot: 0
+  followers:
+    limit: 500
+  followees:
+    limit: 500
   hashtag:
     pattern: (?:^|[^\/\)\w])#([[:word:]_]*[[:alpha:]_·][[:word:]_]*)

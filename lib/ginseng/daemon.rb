@@ -13,7 +13,7 @@ module Ginseng
     end
 
     def start(args)
-      IO.popen(cmd, {err: [:child, :out]}).each_line do |line|
+      IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
         @logger.info(daemon: app_name, output: line.chomp)
       end
     end
@@ -22,7 +22,7 @@ module Ginseng
       Process.kill('KILL', child_pid)
     end
 
-    def cmd
+    def command
       raise Ginseng::ImplementError, "'#{__method__}' not implemented"
     end
 
