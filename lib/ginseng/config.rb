@@ -64,12 +64,7 @@ module Ginseng
     end
 
     def self.deep_merge(src, target)
-      raise ArgumentError 'Not Hash' unless target.is_a?(Hash)
-      dest = (src.clone || {}).with_indifferent_access
-      target.each do |k, v|
-        dest[k] = v.is_a?(Hash) ? deep_merge(dest[k], v) : v
-      end
-      return dest.compact
+      return Hash.deep_merge(src, target).with_indifferent_access
     end
   end
 end
