@@ -12,22 +12,23 @@ module Ginseng
       super(opts)
     end
 
+    def name
+      return self.class.to_s.split('::').last.sub(/Daemon$/, '').underscore
+    end
+
     def start(args)
+      save_config
       IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
         @logger.info(daemon: app_name, output: line.chomp)
       end
     end
 
     def stop
-      Process.kill('KILL', child_pid)
+      Process.kill('KILL', 0)
     end
 
     def command
       raise Ginseng::ImplementError, "'#{__method__}' not implemented"
-    end
-
-    def child_pid
-      return 0
     end
 
     def motd
@@ -59,6 +60,28 @@ module Ginseng
         end
         puts daemon.motd
       end
+    end
+
+    private
+
+    def save_config
+      config = @config.raw['application'].dig(name)
+      if values = @config.raw['local']&.dig(name)
+        config.deep_merge!(values)
+      end
+      File.write(config_cache_path, config.to_yaml)
+    end
+
+    def config_cache_path
+      return File.join(environment_class.dir, "tmp/cache/#{name}.yaml")
+    end
+
+    def master_config_path
+      return File.join(environment_class.dir, 'config/application.yaml')
+    end
+
+    def local_config_path
+      return File.join(environment_class..dir, 'config/local.yaml')
     end
   end
 end
