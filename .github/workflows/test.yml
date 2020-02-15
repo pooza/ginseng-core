@@ -20,13 +20,11 @@ jobs:
           bundle exec rake bundle:check
       - name: cert check
         run: |
-          gem install bundler
           bundle exec rake cert:update
           bundle exec rake cert:check
       - name: Run lint
         run: |
           bundle exec rubocop
-          bundle exec rake erb:check
       - name: Run test
         run: |
           bundle exec rake test
