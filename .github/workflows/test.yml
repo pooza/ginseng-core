@@ -1,0 +1,32 @@
+name: test
+on:
+  - push
+env:
+  CI: "true"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: ${{ matrix.ruby }}
+    strategy:
+      matrix:
+        ruby:
+          - ruby:2.6
+          - ruby:2.7
+    steps:
+      - uses: actions/checkout@v2
+      - name: bundle install
+        run: |
+          gem install bundler
+          bundle install --jobs 4 --retry 3
+          bundle exec rake bundle:update
+          bundle exec rake bundle:check
+      - name: cert check
+        run: |
+          bundle exec rake cert:update
+          bundle exec rake cert:check
+      - name: Run lint
+        run: |
+          bundle exec rubocop
+      - name: Run test
+        run: |
+          bundle exec rake test

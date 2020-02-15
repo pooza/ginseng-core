@@ -20,7 +20,7 @@ module Ginseng
         end
       end
       basenames.reverse_each do |key|
-        update(Config.flatten('', @raw[key])) if @raw[key]
+        update(@raw[key].flatten) if @raw[key]
       end
     end
 
@@ -52,15 +52,7 @@ module Ginseng
     end
 
     def self.flatten(prefix, node)
-      values = {}
-      if node.is_a?(Hash)
-        node.each do |key, value|
-          values.update(Config.flatten("#{prefix}/#{key}", value))
-        end
-      else
-        values[prefix.downcase] = node
-      end
-      return values
+      return Hash.flatten(prefix, node)
     end
 
     def self.deep_merge(src, target)
