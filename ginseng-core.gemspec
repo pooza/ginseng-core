@@ -22,8 +22,10 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
   spec.add_dependency 'syslog-logger'
-  spec.add_dependency 'test-unit'
   spec.add_dependency 'unicode'
   spec.add_dependency 'yajl-ruby'
   spec.add_dependency 'zeitwerk'
+  spec.add_development_dependency 'rubocop'
+  spec.add_development_dependency 'rubocop-performance'
+  spec.add_development_dependency 'test-unit'
 end
