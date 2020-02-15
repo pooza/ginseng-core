@@ -92,7 +92,7 @@ Style/IdenticalConditionalBranches:
   Exclude:
     - test/*
 
-Metrics/LineLength:
+Layout/LineLength:
   Max: 100
   Exclude:
     - test/*
@@ -137,6 +137,6 @@ Metrics/PerceivedComplexity:
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
 
-Security/MarshalLoad:
+Style/ClassAndModuleChildren:
   Exclude:
-    - lib/ginseng/lib.rb
+    - lib/ginseng/patches.rb
