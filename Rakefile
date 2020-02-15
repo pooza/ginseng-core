@@ -5,6 +5,46 @@ ENV['BUNDLE_GEMFILE'] ||= File.join(dir, 'Gemfile')
 require 'bundler/setup'
 require 'ginseng'
 
-Dir.glob(File.join(Ginseng::Environment.dir, 'lib/task/*.rb')).sort.each do |f|
-  require f
+namespace :cert do
+  def path
+    return File.join(Ginseng::Environment.dir, 'cert/cacert.pem')
+  end
+
+  desc 'update cert'
+  task :update do
+    puts "fetch #{path}"
+    File.write(path, Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']))
+  end
+
+  desc 'check cert'
+  task :check do
+    unless Ginseng::Environment.cert_fresh?
+      warn "'#{path}' is not fresh."
+      exit 1
+    end
+  end
+end
+
+namespace :bundle do
+  desc 'update gems'
+  task :update do
+    sh 'bundle update'
+  end
+
+  desc 'check gems'
+  task :check do
+    unless Ginseng::Environment.gem_fresh?
+      warn 'gems is not fresh.'
+      exit 1
+    end
+  end
+end
+
+desc 'test all'
+task :test do
+  ENV['TEST'] = Ginseng::Package.name
+  require 'test/unit'
+  Dir.glob(File.join(Ginseng::Environment.dir, 'test/*')).sort.each do |t|
+    require t
+  end
 end
