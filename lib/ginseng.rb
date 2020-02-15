@@ -1,8 +1,16 @@
 require 'active_support'
 require 'active_support/core_ext'
 require 'zeitwerk'
+require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
+
+ActiveSupport::Inflector.inflections do |inflect|
+  inflect.acronym 'DSN'
+  inflect.acronym 'HTTP'
+  inflect.acronym 'URI'
+  inflect.acronym 'URL'
+end
 
 module Ginseng
   def self.dir
