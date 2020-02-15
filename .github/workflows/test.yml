@@ -6,12 +6,14 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    container: ${{ matrix.ruby }}
+    strategy:
+      matrix:
+        ruby:
+          - ruby:2.6
+          - ruby:2.7
     steps:
       - uses: actions/checkout@v2
-      - name: setup Ruby
-        uses: actions/setup-ruby@v1
-        with:
-          ruby-version: 2.7.x
       - name: bundle install
         run: |
           gem install bundler
