@@ -20,8 +20,11 @@ module Ginseng
       return if Environment.ci?
       Slack.all do |slack|
         assert_equal(slack.say(text: 'say YAML').code, 200)
+        sleep(1)
         assert_equal(slack.say({text: 'say JSON'}, :json).code, 200)
+        sleep(1)
         assert_equal(slack.say('say text', :text).code, 200)
+        sleep(1)
         assert_equal(slack.say({text: 'say hash', attachments: [{image_url: 'https://images-na.ssl-images-amazon.com/images/I/519zZO6YAVL.jpg'}]}, :hash).code, 200)
       end
     end
