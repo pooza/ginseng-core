@@ -132,3 +132,7 @@ Metrics/PerceivedComplexity:
 
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
+
+Style/ClassAndModuleChildren:
+  Exclude:
+    - lib/refines.rb
