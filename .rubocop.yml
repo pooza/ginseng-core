@@ -51,16 +51,6 @@ Metrics/ClassLength:
   Exclude:
     - test/*
 
-Naming/FileName:
-  Exclude:
-    - Rakefile.rb
-    - '**/Rakefile*.rb'
-
-Metrics/BlockLength:
-  Exclude:
-    - Rakefile.rb
-    - '**/Rakefile*.rb'
-
 Style/Documentation:
   Enabled: false
 
@@ -145,4 +135,4 @@ Naming/RescuedExceptionsVariableName:
 
 Style/ClassAndModuleChildren:
   Exclude:
-    - lib/ginseng/patches.rb
+    - lib/refines.rb

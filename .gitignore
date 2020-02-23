@@ -1,5 +1,4 @@
-/.bundle/
-/tmp/
+.bundle/
 .DS_Store
 Thumbs.db
 ._*
