@@ -4,6 +4,7 @@ require 'zeitwerk'
 require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
+require 'refines'
 
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'DSN'
@@ -13,6 +14,8 @@ ActiveSupport::Inflector.inflections do |inflect|
 end
 
 module Ginseng
+  using Refines
+
   def self.dir
     return File.expand_path('..', __dir__)
   end
