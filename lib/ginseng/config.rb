@@ -20,7 +20,7 @@ module Ginseng
         end
       end
       basenames.reverse_each do |key|
-        update(@raw[key].flatten) if @raw[key]
+        update(@raw[key].key_flatten) if @raw[key]
       end
     end
 
@@ -51,8 +51,8 @@ module Ginseng
       raise ConfigError, "'#{key}' not found"
     end
 
-    def self.flatten(prefix, node)
-      return Hash.flatten(prefix, node)
+    def self.key_flatten(prefix, node)
+      return Hash.key_flatten(prefix, node)
     end
 
     def self.deep_merge(src, target)

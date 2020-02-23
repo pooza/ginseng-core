@@ -36,12 +36,12 @@ module Refines
       return self
     end
 
-    def flatten(prefix = '')
-      return Hash.flatten(prefix, self)
+    def key_flatten(prefix = '')
+      return Hash.key_flatten(prefix, self)
     end
 
-    def flatten!(prefix = '')
-      replace(flatten(prefix))
+    def key_flatten!(prefix = '')
+      replace(key_flatten(prefix))
       return self
     end
 
@@ -54,11 +54,11 @@ module Refines
       return dest.compact
     end
 
-    def self.flatten(prefix, node)
+    def self.key_flatten(prefix, node)
       values = {}
       if node.is_a?(Hash)
         node.each do |key, value|
-          values.update(flatten("#{prefix}/#{key}", value))
+          values.update(key_flatten("#{prefix}/#{key}", value))
         end
       else
         values[prefix.downcase] = node
