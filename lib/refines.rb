@@ -66,4 +66,13 @@ module Refines
       return values
     end
   end
+
+  module ::Process
+    def self.alive?(pid)
+      kill(0, pid)
+      return true
+    rescue
+      return false
+    end
+  end
 end
