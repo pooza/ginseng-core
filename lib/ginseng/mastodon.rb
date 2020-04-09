@@ -12,6 +12,7 @@ module Ginseng
       @token = token
       @mulukhiya_enable = false
       @http = http_class.new
+      @http.base_uri = @uri
       @config = config_class.instance
     end
 
@@ -34,10 +35,11 @@ module Ginseng
     end
 
     def upload(path, params = {})
+      params[:version] ||= 1
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      response = @http.upload(create_uri('/api/v1/media'), path, headers)
+      response = @http.upload("/api/v#{params[:version]}/media", path, headers)
       return response if params[:response] == :raw
       return JSON.parse(response.body)['id'].to_i
     end
@@ -92,10 +94,9 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      version = params[:version] || 'v2'
-      params.delete(:version)
+      params[:version] ||= 2
       params[:q] = keyword
-      uri = create_uri("/api/#{version}/search")
+      uri = create_uri("/api/v#{params[:version]}/search")
       uri.query_values = params
       return @http.get(uri, {headers: headers})
     end
@@ -180,9 +181,7 @@ module Ginseng
     end
 
     def create_uri(href = '/api/v1/statuses')
-      uri = self.uri.clone
-      uri.path = href
-      return uri
+      return @http.create_uri(href)
     end
 
     def create_streaming_uri(stream = 'user')

@@ -70,7 +70,7 @@ module Ginseng
     def test_search
       return if Environment.ci?
       assert_equal(@mastodon.search('pooza').code, 200)
-      assert_equal(@mastodon.search('pooza', {version: 'v2'}).code, 200)
+      assert_equal(@mastodon.search('pooza', {version: 2}).code, 200)
     end
 
     def test_upload_remote_resource
