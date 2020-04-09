@@ -3,7 +3,6 @@ module Ginseng
     def setup
       @config = Config.instance
       @misskey = Misskey.new(@config['/misskey/url'], @config['/misskey/token'])
-      @note_id = @config['/misskey/test_note']
     end
 
     def test_new
