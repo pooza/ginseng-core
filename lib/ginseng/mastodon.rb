@@ -12,6 +12,7 @@ module Ginseng
       @token = token
       @mulukhiya_enable = false
       @http = http_class.new
+      @http.base_uri = @uri
       @config = config_class.instance
     end
 
@@ -22,7 +23,9 @@ module Ginseng
     alias mulukhiya? mulukhiya_enable?
 
     def fetch_toot(id)
-      return @http.get(create_uri("/api/v1/statuses/#{id}"))
+      response = @http.get("/api/v1/statuses/#{id}")
+      raise GatewayError, response['error'] if toot['error']
+      return response.parsed_response
     end
 
     def toot(body, params = {})
@@ -30,14 +33,15 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri, {body: body.to_json, headers: headers})
+      return @http.post('/api/v1/statuses', {body: body.to_json, headers: headers})
     end
 
     def upload(path, params = {})
+      params[:version] ||= 1
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      response = @http.upload(create_uri('/api/v1/media'), path, headers)
+      response = @http.upload("/api/v#{params[:version]}/media", path, headers)
       return response if params[:response] == :raw
       return JSON.parse(response.body)['id'].to_i
     end
@@ -58,7 +62,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri("/api/v1/statuses/#{id}/favourite"), {
+      return @http.post("/api/v1/statuses/#{id}/favourite", {
         body: '{}',
         headers: headers,
       })
@@ -70,7 +74,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri("/api/v1/statuses/#{id}/reblog"), {
+      return @http.post("/api/v1/statuses/#{id}/reblog", {
         body: '{}',
         headers: headers,
       })
@@ -82,7 +86,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri("/api/v1/statuses/#{id}/bookmark"), {
+      return @http.post("/api/v1/statuses/#{id}/bookmark", {
         body: '{}',
         headers: headers,
       })
@@ -92,10 +96,9 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      version = params[:version] || 'v2'
-      params.delete(:version)
+      params[:version] ||= 2
       params[:q] = keyword
-      uri = create_uri("/api/#{version}/search")
+      uri = create_uri("/api/v#{params[:version]}/search")
       uri.query_values = params
       return @http.get(uri, {headers: headers})
     end
@@ -104,7 +107,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri("/api/v1/accounts/#{id}/follow"), {
+      return @http.post("/api/v1/accounts/#{id}/follow", {
         body: '{}',
         headers: headers,
       })
@@ -114,7 +117,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri("/api/v1/accounts/#{id}/unfollow"), {
+      return @http.post("/api/v1/accounts/#{id}/unfollow", {
         body: '{}',
         headers: headers,
       })
@@ -124,7 +127,7 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.get(create_uri('/api/v1/announcements'), {headers: headers})
+      return @http.get('/api/v1/announcements', {headers: headers})
     end
 
     def followers(params = {})
@@ -153,14 +156,14 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.get(create_uri('/api/v1/filters'), {headers: headers})
+      return @http.get('/api/v1/filters', {headers: headers})
     end
 
     def register_filter(params)
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.post(create_uri('/api/v1/filters'), {
+      return @http.post('/api/v1/filters', {
         body: {
           phrase: params[:phrase],
           context: params[:context] || [:home, :public],
@@ -173,16 +176,14 @@ module Ginseng
       headers = params[:headers] || {}
       headers['Authorization'] ||= "Bearer #{@token}"
       headers['X-Mulukhiya'] = package_class.full_name unless mulukhiya_enable?
-      return @http.delete(create_uri("/api/v1/filters/#{id}"), {
+      return @http.delete("/api/v1/filters/#{id}", {
         body: '{}',
         headers: headers,
       })
     end
 
     def create_uri(href = '/api/v1/statuses')
-      uri = self.uri.clone
-      uri.path = href
-      return uri
+      return @http.create_uri(href)
     end
 
     def create_streaming_uri(stream = 'user')

@@ -1,11 +1,11 @@
 module Refines
-  class ::Integer
+  class ::Integer # rubocop:disable Style/ClassAndModuleChildren
     def commaize
       return to_s.gsub(/(\d)(?=(\d{3})+(?!\d))/, '\1,')
     end
   end
 
-  class ::String
+  class ::String # rubocop:disable Style/ClassAndModuleChildren
     def ellipsize(length)
       i = 0
       str = ''
@@ -26,7 +26,7 @@ module Refines
     end
   end
 
-  class ::Hash
+  class ::Hash # rubocop:disable Style/ClassAndModuleChildren
     def deep_merge(target)
       return Hash.deep_merge(self, target)
     end
@@ -67,7 +67,7 @@ module Refines
     end
   end
 
-  module ::Process
+  module ::Process # rubocop:disable Style/ClassAndModuleChildren
     def self.alive?(pid)
       kill(0, pid)
       return true

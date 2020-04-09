@@ -14,6 +14,10 @@ module Ginseng
 
     def error(message)
       super(create_message(message).to_json)
+      return unless message.is_a?(StandardError)
+      message.backtrace.each do |entry|
+        super('  ' + entry)
+      end
     end
 
     def create_message(src)
