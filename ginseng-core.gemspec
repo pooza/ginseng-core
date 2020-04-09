@@ -15,17 +15,18 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'activesupport'
   spec.add_dependency 'addressable'
-  spec.add_dependency 'bundler'
+  spec.add_dependency 'bundler', '>=2.0.0'
   spec.add_dependency 'csv'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
+  spec.add_dependency 'json', '>=2.3.0' # CVE-2020-10663
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
-  spec.add_dependency 'rubocop'
-  spec.add_dependency 'rubocop-performance'
+  spec.add_development_dependency 'rubocop'
+  spec.add_development_dependency 'rubocop-performance'
   spec.add_dependency 'syslog-logger'
   spec.add_dependency 'test-unit'
   spec.add_dependency 'unicode'
   spec.add_dependency 'yajl-ruby'
-  spec.add_dependency 'zeitwerk'
+  spec.add_dependency 'zeitwerk', '>=2.3.0'
 end
