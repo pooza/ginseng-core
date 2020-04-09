@@ -3,7 +3,6 @@ module Ginseng
     def setup
       @config = Config.instance
       @dolphin = Dolphin.new(@config['/dolphin/url'], @config['/dolphin/token'])
-      @note_id = @config['/dolphin/test_note']
     end
 
     def test_new
