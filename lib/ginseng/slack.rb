@@ -1,16 +1,19 @@
-require 'yaml'
-
 module Ginseng
   class Slack
     include Package
+    attr_reader :uri
 
-    def initialize(url)
-      @url = URI.parse(url)
+    def initialize(uri)
+      @uri = URI.parse(uri)
       @http = http_class.new
     end
 
+    alias url uri
+
     def say(message, type = :yaml)
-      return @http.post(@url, {body: create_body(message, type)})
+      r = @http.post(@uri, {body: create_body(message, type)})
+      raise GatewayError, "response #{r.code} (#{uri})" unless r.code == 200
+      return r
     end
 
     def create_body(message, type = :yaml)

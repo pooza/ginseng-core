@@ -1,4 +1,3 @@
-require 'yaml'
 require 'singleton'
 
 module Ginseng

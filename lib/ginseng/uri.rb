@@ -44,5 +44,11 @@ module Ginseng
       end
       return encoded.force_encoding(Encoding::UTF_8)
     end
+
+    def self.scan(text)
+      text.scan(%r{https?://[^\s[:cntrl:]]+}).each do |link|
+        yield URI.parse(link)
+      end
+    end
   end
 end
