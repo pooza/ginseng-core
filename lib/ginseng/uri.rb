@@ -46,7 +46,8 @@ module Ginseng
     end
 
     def self.scan(text)
-      text.scan(%r{https?://[^\s[:cntrl:]]+}).each do |link|
+      return enum_for(__method__, text) unless block_given?
+      return text.scan(%r{https?://[^\s[:cntrl:]]+}) do |link|
         yield URI.parse(link)
       end
     end

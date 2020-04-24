@@ -9,7 +9,7 @@ module Ginseng
       @config = config_class.instance
       opts[:application] ||= classname
       opts[:working_dir] ||= environment_class.dir
-      super(opts)
+      super
     end
 
     def name
@@ -28,7 +28,7 @@ module Ginseng
     end
 
     def command
-      raise Ginseng::ImplementError, "'#{__method__}' not implemented"
+      raise ImplementError, "'#{__method__}' not implemented"
     end
 
     def motd
@@ -58,7 +58,7 @@ module Ginseng
         fork do
           daemon.fork!(args)
         end
-        puts daemon.motd
+        puts daemon.motd + "\n"
       end
     end
 
@@ -74,14 +74,6 @@ module Ginseng
 
     def config_cache_path
       return File.join(environment_class.dir, "tmp/cache/#{name}.yaml")
-    end
-
-    def master_config_path
-      return File.join(environment_class.dir, 'config/application.yaml')
-    end
-
-    def local_config_path
-      return File.join(environment_class..dir, 'config/local.yaml')
     end
   end
 end
