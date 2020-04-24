@@ -46,9 +46,7 @@ module Ginseng
     end
 
     def self.scan(text)
-      text.scan(%r{https?://[^\s[:cntrl:]]+}).each do |link|
-        yield URI.parse(link)
-      end
+      return text.scan(%r{https?://[^\s[:cntrl:]]+}).map {|link| URI.parse(link)}
     end
   end
 end
