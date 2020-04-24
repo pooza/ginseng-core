@@ -3,6 +3,7 @@ module Ginseng
     def setup
       @http = HTTP.new
       @config = Config.instance
+      @config['/mastodon/url'] = 'https://st.mstdn.b-shock.org/'
     end
 
     def test_get
