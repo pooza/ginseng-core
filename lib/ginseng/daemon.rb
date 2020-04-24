@@ -9,7 +9,7 @@ module Ginseng
       @config = config_class.instance
       opts[:application] ||= classname
       opts[:working_dir] ||= environment_class.dir
-      super(opts)
+      super
     end
 
     def name

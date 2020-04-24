@@ -6,7 +6,7 @@ module Ginseng
     def initialize(message)
       @config = Config.instance
       @package = Package.name
-      super(message)
+      super
     end
 
     def status

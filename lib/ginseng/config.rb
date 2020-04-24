@@ -45,7 +45,7 @@ module Ginseng
     end
 
     def [](key)
-      value = super(key)
+      value = super
       return value unless value.nil?
       raise ConfigError, "'#{key}' not found"
     end
