@@ -3,7 +3,7 @@ module Ginseng
     include Package
 
     def initialize(options = {})
-      super(options)
+      super
       @service = you_tube_service_class.new
     end
 
