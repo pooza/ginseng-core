@@ -24,7 +24,6 @@ module Ginseng
     config = YAML.load_file(File.join(dir, 'config/autoload.yaml'))
     loader = Zeitwerk::Loader.for_gem
     loader.inflector.inflect(config['inflections'])
-    loader.collapse('lib/ginseng/*')
     loader.setup
     return loader
   end
