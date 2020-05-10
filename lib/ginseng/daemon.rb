@@ -55,10 +55,9 @@ module Ginseng
           raise "Unable to write PID file to #{daemon.pid_file}"
         end
         raise "#{daemon.app_name} is already running (PID #{daemon.pid})" if daemon.alive?
-        fork do
-          daemon.fork!(args)
-        end
-        puts daemon.motd + "\n"
+        fork {daemon.fork!(args)}
+        puts daemon.motd
+        puts ''
       end
     end
 
