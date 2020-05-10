@@ -27,14 +27,6 @@ module Ginseng
     loader.setup
     return loader
   end
-
-  def self.load_tasks
-    ENV['TEST'] = Package.name
-    require 'test/unit'
-    Dir.glob(File.join(dir, 'test/*')).sort.each do |t|
-      require t
-    end
-  end
 end
 
 Ginseng.loader.eager_load
