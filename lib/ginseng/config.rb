@@ -45,8 +45,16 @@ module Ginseng
     end
 
     def [](key)
-      value = super
-      return value unless value.nil?
+      keys = [key]
+      (raw['deprecated'] || []).each do |entry|
+        next unless entry['key'] == key
+        keys.concat(entry['aliases'])
+        break
+      end
+      keys.each do |k|
+        value = super(k)
+        return value unless value.nil?
+      end
       raise ConfigError, "'#{key}' not found"
     end
 
