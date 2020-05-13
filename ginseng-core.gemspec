@@ -16,7 +16,6 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'activesupport'
   spec.add_dependency 'addressable'
-  spec.add_dependency 'bundler', '>=2.0.0'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
   spec.add_dependency 'rake'
