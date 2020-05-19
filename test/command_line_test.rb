@@ -16,6 +16,14 @@ module Ginseng
       assert_equal(@command.to_s, 'ls a\\ b \\"x\\"')
     end
 
+    def test_dir
+      assert_nil(@command.dir)
+      @command.dir = '/etc'
+      @command.args = ['ls']
+      @command.exec
+      assert_equal(Dir.pwd, '/etc')
+    end
+
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
