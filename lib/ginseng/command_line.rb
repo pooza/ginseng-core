@@ -9,6 +9,7 @@ module Ginseng
     attr_reader :stderr
     attr_reader :status
     attr_reader :pid
+    attr_accessor :dir
 
     def initialize(args = [])
       @logger = logger_class.new
@@ -27,6 +28,7 @@ module Ginseng
     end
 
     def exec
+      Dir.chdir(dir) if dir
       start = Time.now
       result = Open3.capture3(to_s)
       seconds = Time.now - start

@@ -1,4 +1,5 @@
 require 'addressable/uri'
+require 'uri'
 
 module Ginseng
   class URI < Addressable::URI
@@ -50,6 +51,10 @@ module Ginseng
       return text.clone.scan(%r{https?://[^\s[:cntrl:]]+}) do |link|
         yield URI.parse(link)
       end
+    end
+
+    def self.decode(text)
+      return ::URI.decode_www_form_component(text)
     end
   end
 end
