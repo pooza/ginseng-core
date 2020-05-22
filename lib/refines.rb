@@ -24,6 +24,29 @@ module Refines
       replace(ellipsize(length))
       return self
     end
+
+    def nfkc
+      require 'unicode'
+      return Unicode.nfkc(self)
+    end
+
+    def nfkc!
+      replace(nfkc)
+      return self
+    end
+
+    def sanitize
+      require 'sanitize'
+      require 'nokogiri'
+      return Nokogiri::HTML.parse(
+        Sanitize.clean(self),
+      ).text
+    end
+
+    def sanitize!
+      replace(sanitize)
+      return self
+    end
   end
 
   class ::Hash # rubocop:disable Style/ClassAndModuleChildren
