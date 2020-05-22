@@ -13,7 +13,7 @@ module Ginseng
 
     def encrypt(plaintext, bit = 256)
       salt = create_salt
-      enc = create_aes(bit)
+      enc = OpenSSL::Cipher.new("AES-#{bit}-CBC")
       enc.encrypt
       keyiv = create_key_iv(password, salt, enc)
       enc.key = keyiv[:key]
@@ -26,7 +26,7 @@ module Ginseng
 
     def decrypt(joined, bit = 256)
       encrypted, salt = joined.split(GLUE).map {|v| decode_base64(v)}
-      dec = create_aes(bit)
+      dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
       dec.decrypt
       keyiv = create_key_iv(password, salt, dec)
       dec.key = keyiv[:key]
@@ -40,10 +40,6 @@ module Ginseng
 
     def create_salt
       return OpenSSL::Random.random_bytes(8)
-    end
-
-    def create_aes(bit)
-      return OpenSSL::Cipher::AES.new(bit, :CBC)
     end
 
     def create_key_iv(password, salt, aes)
