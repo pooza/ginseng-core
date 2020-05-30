@@ -75,7 +75,7 @@ module Ginseng
       message = {message: message.to_s} unless message.is_a?(Hash)
       message[:class] = self.class.to_s
       @logger.info(message)
-    rescue => e
+    rescue
       warn message.to_json
     end
   end
