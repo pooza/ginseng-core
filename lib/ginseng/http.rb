@@ -32,32 +32,51 @@ module Ginseng
     def get(uri, options = {})
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
-      return HTTParty.get(create_uri(uri).normalize, options)
+      uri = create_uri(uri.to_s) unless uri.is_a?(URI)
+      log(method: 'GET', url: uri.to_s)
+      return HTTParty.get(uri.normalize, options)
     end
 
     def post(uri, options = {})
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       options[:headers]['Content-Type'] ||= 'application/json'
-      return HTTParty.post(create_uri(uri).normalize, options)
+      uri = create_uri(uri.to_s) unless uri.is_a?(URI)
+      log(method: 'POST', url: uri.to_s)
+      return HTTParty.post(uri.normalize, options)
     end
 
     def delete(uri, options = {})
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       options[:headers]['Content-Type'] ||= 'application/json'
-      return HTTParty.delete(create_uri(uri).normalize, options)
+      uri = create_uri(uri.to_s) unless uri.is_a?(URI)
+      log(method: 'DELETE', url: uri.to_s)
+      return HTTParty.delete(uri.normalize, options)
     end
 
     def upload(uri, file, headers = {}, body = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
       headers['User-Agent'] ||= user_agent
       body[:file] = file
-      return RestClient.post(create_uri(uri).normalize.to_s, body, headers)
+      uri = create_uri(uri.to_s) unless uri.is_a?(URI)
+      log(method: 'POST', type: 'multipart/form-data', url: uri.to_s)
+      return RestClient.post(uri.normalize.to_s, body, headers)
     end
 
     def user_agent
       return package_class.user_agent
+    end
+
+    private
+
+    def log(message)
+      @logger ||= logger_class.new
+      message = {message: message.to_s} unless message.is_a?(Hash)
+      message[:class] = self.class.to_s
+      @logger.info(message)
+    rescue
+      warn message.to_json
     end
   end
 end
