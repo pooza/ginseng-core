@@ -76,7 +76,7 @@ module Ginseng
       message[:class] = self.class.to_s
       @logger.info(message)
     rescue => e
-      warn e.message
+      warn message.to_json
     end
   end
 end
