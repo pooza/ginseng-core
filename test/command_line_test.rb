@@ -32,5 +32,12 @@ module Ginseng
       assert(@command.stderr.blank?)
       assert_kind_of(Integer, @command.pid)
     end
+
+    def test_env
+      @command.env = {HOGE: 'fugafuga'}
+      @command.args = ['env']
+      @command.exec
+      assert(@command.stdout.include?('HOGE=fugafuga'))
+    end
   end
 end
