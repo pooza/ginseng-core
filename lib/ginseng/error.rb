@@ -1,7 +1,6 @@
 module Ginseng
   class Error < StandardError
-    attr_accessor :source_class
-    attr_accessor :package
+    attr_accessor :source_class, :package
 
     def initialize(message)
       @config = Config.instance
