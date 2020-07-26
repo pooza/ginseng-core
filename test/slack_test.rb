@@ -16,16 +16,16 @@ module Ginseng
       assert_equal(slack.create_body({text: 'hoge'}, :hash), %({"text":"hoge"}))
     end
 
-    def test_say
+    def test_post
       return if Environment.ci?
       Slack.all do |slack|
-        assert_equal(slack.say(text: 'say YAML').code, 200)
+        assert_equal(slack.post(text: 'post YAML').code, 200)
         sleep(1)
-        assert_equal(slack.say({text: 'say JSON'}, :json).code, 200)
+        assert_equal(slack.post({text: 'post JSON'}, :json).code, 200)
         sleep(1)
-        assert_equal(slack.say('say text', :text).code, 200)
+        assert_equal(slack.post('post text', :text).code, 200)
         sleep(1)
-        assert_equal(slack.say({text: 'say hash', attachments: [{image_url: 'https://images-na.ssl-images-amazon.com/images/I/519zZO6YAVL.jpg'}]}, :hash).code, 200)
+        assert_equal(slack.post({text: 'post hash', attachments: [{image_url: 'https://images-na.ssl-images-amazon.com/images/I/519zZO6YAVL.jpg'}]}, :hash).code, 200)
       end
     end
 
