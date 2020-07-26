@@ -4,12 +4,8 @@ require 'shellwords'
 module Ginseng
   class CommandLine
     include Package
-    attr_reader :args
-    attr_reader :stdout
-    attr_reader :stderr
-    attr_reader :status
-    attr_reader :pid
-    attr_reader :env
+    attr_reader :args, :stdout, :stderr, :status, :pid, :env
+
     attr_accessor :dir
 
     def initialize(args = [])

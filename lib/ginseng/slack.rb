@@ -10,11 +10,13 @@ module Ginseng
 
     alias url uri
 
-    def say(message, type = :yaml)
+    def post(message, type = :yaml)
       r = @http.post(@uri, {body: create_body(message, type)})
       raise GatewayError, "response #{r.code} (#{uri})" unless r.code == 200
       return r
     end
+
+    alias say post
 
     def create_body(message, type = :yaml)
       case type

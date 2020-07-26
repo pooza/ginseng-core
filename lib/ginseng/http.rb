@@ -41,6 +41,9 @@ module Ginseng
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       options[:headers]['Content-Type'] ||= 'application/json'
+      if options[:headers]['Content-Type'] == 'application/json' && options[:body].is_a?(Hash)
+        options[:body] = options.to_json
+      end
       uri = create_uri(uri.to_s) unless uri.is_a?(URI)
       log(method: 'POST', url: uri.to_s)
       return HTTParty.post(uri.normalize, options)
