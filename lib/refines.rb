@@ -90,6 +90,12 @@ module Refines
     end
   end
 
+  class ::NilClass # rubocop:disable Style/ClassAndModuleChildren
+    def empty?
+      return true
+    end
+  end
+
   module ::Process # rubocop:disable Style/ClassAndModuleChildren
     def self.alive?(pid)
       kill(0, pid)
