@@ -1,8 +1,10 @@
 module Ginseng
   class Error < StandardError
     attr_accessor :source_class, :package
+    attr_reader :raw_message
 
     def initialize(message)
+      @raw_message = message
       @config = Config.instance
       @package = Package.name
       super
