@@ -16,7 +16,7 @@ module Ginseng
       super(create_message(message).to_json)
       return unless message.is_a?(StandardError)
       message.backtrace.each do |entry|
-        super('  ' + entry)
+        super("  #{entry}")
       end
     end
 
