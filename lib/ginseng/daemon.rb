@@ -18,12 +18,14 @@ module Ginseng
 
     def start(args)
       save_config
+      @logger.info(daemon: app_name, version: package_class.version, message: 'start')
       IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
         @logger.info(daemon: app_name, output: line.chomp)
       end
     end
 
     def stop
+      @logger.info(daemon: app_name, version: package_class.version, message: 'stop')
       Process.kill('KILL', 0)
     end
 
@@ -64,7 +66,7 @@ module Ginseng
     private
 
     def save_config
-      config = @config.raw['application'].dig(name)
+      config = @config.raw['application'][name]
       if values = @config.raw['local']&.dig(name)
         config.deep_merge!(values)
       end
