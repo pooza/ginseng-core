@@ -4,7 +4,7 @@ require 'zeitwerk'
 require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
-require 'refines'
+require 'ginseng/refines'
 
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'DSN'
