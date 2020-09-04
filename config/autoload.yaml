@@ -1,5 +1,0 @@
-inflections:
-  http: HTTP
-  redis_dsn: RedisDSN
-  uri: URI
-  video_uri: VideoURI
