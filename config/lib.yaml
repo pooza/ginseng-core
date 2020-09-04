@@ -11,7 +11,7 @@ test:
   filters:
     - name: ci
       cases:
-        - slack
+        - slack_test
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
