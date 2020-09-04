@@ -1,5 +1,5 @@
 module Ginseng
-  class CiTestCaseFilter < TestCaseFilter
+  class CITestCaseFilter < TestCaseFilter
     include Package
 
     def active?
