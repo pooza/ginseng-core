@@ -1,5 +1,5 @@
 module Ginseng
-  class RequestErrorTest < Test::Unit::TestCase
+  class RequestErrorTest < TestCase
     def setup
       raise RequestError, 'hoge'
     rescue => e

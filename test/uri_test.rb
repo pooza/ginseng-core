@@ -1,5 +1,5 @@
 module Ginseng
-  class URITest < Test::Unit::TestCase
+  class URITest < TestCase
     def setup
       @uri = URI.parse('https://whattosay.net/2018/11/27/【nhk】ネット利用だけでも契約すべきなのか？/')
     end

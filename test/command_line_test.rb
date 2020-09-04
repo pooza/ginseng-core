@@ -1,5 +1,5 @@
 module Ginseng
-  class CommandLineTest < Test::Unit::TestCase
+  class CommandLineTest < TestCase
     def setup
       @command = CommandLine.new
     end

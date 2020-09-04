@@ -1,5 +1,5 @@
 module Ginseng
-  class ImplementErrorTest < Test::Unit::TestCase
+  class ImplementErrorTest < TestCase
     def setup
       raise ImplementError, 'hoge'
     rescue => e

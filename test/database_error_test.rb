@@ -1,5 +1,5 @@
 module Ginseng
-  class DatabaseErrorTest < Test::Unit::TestCase
+  class DatabaseErrorTest < TestCase
     def setup
       raise DatabaseError, 'hoge'
     rescue => e

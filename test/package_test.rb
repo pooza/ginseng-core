@@ -1,5 +1,5 @@
 module Ginseng
-  class PackageTest < Test::Unit::TestCase
+  class PackageTest < TestCase
     def test_name
       assert_equal(Package.name, 'ginseng-core')
     end

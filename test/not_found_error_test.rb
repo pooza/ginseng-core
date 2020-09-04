@@ -1,5 +1,5 @@
 module Ginseng
-  class NotFoundErrorTest < Test::Unit::TestCase
+  class NotFoundErrorTest < TestCase
     def setup
       raise NotFoundError, 'hoge'
     rescue => e

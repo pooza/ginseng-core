@@ -1,5 +1,5 @@
 module Ginseng
-  class AuthErrorTest < Test::Unit::TestCase
+  class AuthErrorTest < TestCase
     def setup
       raise AuthError, 'hoge'
     rescue => e

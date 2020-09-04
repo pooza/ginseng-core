@@ -1,5 +1,5 @@
 module Ginseng
-  class HTTPTest < Test::Unit::TestCase
+  class HTTPTest < TestCase
     def setup
       @http = HTTP.new
       @config = Config.instance

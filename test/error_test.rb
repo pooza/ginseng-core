@@ -1,5 +1,5 @@
 module Ginseng
-  class ErrorTest < Test::Unit::TestCase
+  class ErrorTest < TestCase
     def setup
       raise 'hoge'
     rescue => e

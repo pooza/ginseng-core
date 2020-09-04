@@ -1,14 +1,12 @@
 module Ginseng
-  class SlackTest < Test::Unit::TestCase
+  class SlackTest < TestCase
     def test_all
-      return if Environment.ci?
       Slack.all do |slack|
         assert_kind_of(Slack, slack)
       end
     end
 
     def test_create_message
-      return if Environment.ci?
       slack = Slack.all.first
       assert_equal(slack.create_body('hoge', :text), %({"text":"hoge"}))
       assert_equal(slack.create_body({a: 'fuga'}, :json), %({"text":"{\\n  \\"a\\": \\"fuga\\"\\n}"}))
@@ -17,7 +15,6 @@ module Ginseng
     end
 
     def test_post
-      return if Environment.ci?
       Slack.all do |slack|
         assert_equal(slack.post(text: 'post YAML').code, 200)
         sleep(1)
@@ -30,7 +27,6 @@ module Ginseng
     end
 
     def test_broadcast
-      return if Environment.ci?
       assert(Slack.broadcast(message: 'OK'))
       assert_false(Slack.broadcast(NotFoundError.new('404')))
     end

@@ -1,5 +1,5 @@
 module Ginseng
-  class HashTest < Test::Unit::TestCase
+  class HashTest < TestCase
     def setup
       @hash = {a: 1, b: {c: 2, d: 3}}
     end

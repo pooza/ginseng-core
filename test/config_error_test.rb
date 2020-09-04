@@ -1,5 +1,5 @@
 module Ginseng
-  class ConfigErrorTest < Test::Unit::TestCase
+  class ConfigErrorTest < TestCase
     def setup
       raise ConfigError, 'hoge'
     rescue => e

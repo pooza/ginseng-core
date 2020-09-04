@@ -1,5 +1,5 @@
 module Ginseng
-  class CryptTest < Test::Unit::TestCase
+  class CryptTest < TestCase
     def setup
       @crypt = Crypt.new
     end
