@@ -1,5 +1,5 @@
 module Ginseng
-  class RedisDSNTest < Test::Unit::TestCase
+  class RedisDSNTest < TestCase
     def setup
       @dsn = RedisDSN.parse('redis://localhost:6379/1')
     end

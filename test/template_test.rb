@@ -1,5 +1,5 @@
 module Ginseng
-  class TemplateTest < Test::Unit::TestCase
+  class TemplateTest < TestCase
     def setup
       @template = Template.new('test')
       @template[:body1] = 'body1'

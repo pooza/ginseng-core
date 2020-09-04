@@ -1,5 +1,5 @@
 module Ginseng
-  class GatewayErrorTest < Test::Unit::TestCase
+  class GatewayErrorTest < TestCase
     def setup
       raise GatewayError, 'hoge'
     rescue => e

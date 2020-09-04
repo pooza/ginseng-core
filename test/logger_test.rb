@@ -1,5 +1,5 @@
 module Ginseng
-  class LoggerTest < Test::Unit::TestCase
+  class LoggerTest < TestCase
     def setup
       @logger = Logger.new
     end

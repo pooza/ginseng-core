@@ -7,6 +7,11 @@ package:
     - tkoishi@b-shock.co.jp
   description: ginseng core libraries
   license: MIT
+test:
+  filters:
+    - name: ci
+      cases:
+        - slack
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:

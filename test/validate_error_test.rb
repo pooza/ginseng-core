@@ -1,5 +1,5 @@
 module Ginseng
-  class ValidateErrorTest < Test::Unit::TestCase
+  class ValidateErrorTest < TestCase
     def setup
       raise ValidateError, 'hoge'
     rescue => e

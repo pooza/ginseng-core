@@ -1,5 +1,5 @@
 module Ginseng
-  class EnvironmentTest < Test::Unit::TestCase
+  class EnvironmentTest < TestCase
     def test_name
       assert_equal(Environment.name, 'ginseng-core')
     end

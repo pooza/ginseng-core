@@ -1,5 +1,5 @@
 module Ginseng
-  class IntegerTest < Test::Unit::TestCase
+  class IntegerTest < TestCase
     def setup
       @number = 4_790_122
     end

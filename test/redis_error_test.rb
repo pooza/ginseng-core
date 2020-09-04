@@ -1,5 +1,5 @@
 module Ginseng
-  class RedisErrorTest < Test::Unit::TestCase
+  class RedisErrorTest < TestCase
     def setup
       raise RedisError, 'hoge'
     rescue => e

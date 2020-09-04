@@ -1,5 +1,5 @@
 module Ginseng
-  class RenderErrorTest < Test::Unit::TestCase
+  class RenderErrorTest < TestCase
     def setup
       raise RenderError, 'hoge'
     rescue => e

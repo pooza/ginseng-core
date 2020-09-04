@@ -1,5 +1,5 @@
 module Ginseng
-  class ConfigTest < Test::Unit::TestCase
+  class ConfigTest < TestCase
     def setup
       @config = Config.instance
     end
