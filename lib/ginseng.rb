@@ -1,6 +1,7 @@
 require 'active_support'
 require 'active_support/core_ext'
 require 'active_support/dependencies/autoload'
+require 'zeitwerk'
 require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
