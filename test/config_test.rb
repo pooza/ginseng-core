@@ -21,6 +21,18 @@ module Ginseng
       end
     end
 
+    def test_keys
+      assert_equal(@config.keys('/package'), ['authors', 'description', 'email', 'license', 'url', 'version'])
+    end
+
+    def test_schema
+      assert_kind_of(Hash, @config.schema) unless Environment.ci?
+    end
+
+    def test_errors
+      assert_kind_of(Array, @config.errors) unless Environment.ci?
+    end
+
     def test_version
       assert_equal(@config['/package/version'], Package.version)
     end
