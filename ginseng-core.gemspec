@@ -18,6 +18,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'addressable'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
+  spec.add_dependency 'json-schema'
   spec.add_dependency 'nokogiri'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'

@@ -1,12 +1,12 @@
 module Ginseng
   module Refines
-    class ::Integer # rubocop:disable Style/ClassAndModuleChildren
+    class ::Integer
       def commaize
         return to_s.gsub(/(\d)(?=(\d{3})+(?!\d))/, '\1,')
       end
     end
 
-    class ::String # rubocop:disable Style/ClassAndModuleChildren
+    class ::String
       def ellipsize(length)
         i = 0
         str = ''
@@ -50,7 +50,7 @@ module Ginseng
       end
     end
 
-    class ::Hash # rubocop:disable Style/ClassAndModuleChildren
+    class ::Hash
       def deep_merge(target)
         return Hash.deep_merge(self, target)
       end
@@ -91,13 +91,13 @@ module Ginseng
       end
     end
 
-    class ::NilClass # rubocop:disable Style/ClassAndModuleChildren
+    class ::NilClass
       def empty?
         return true
       end
     end
 
-    module ::Process # rubocop:disable Style/ClassAndModuleChildren
+    module ::Process
       def self.alive?(pid)
         kill(0, pid)
         return true
