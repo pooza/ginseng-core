@@ -20,7 +20,7 @@ module Ginseng
       save_config
       @logger.info(daemon: app_name, version: package_class.version, message: 'start')
       IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
-        @logger.info(daemon: app_name, output: line.chomp)
+        @logger.info(create_log_entry(line))
       end
     end
 
@@ -75,6 +75,10 @@ module Ginseng
 
     def config_cache_path
       return File.join(environment_class.dir, "tmp/cache/#{name}.yaml")
+    end
+
+    def create_log_entry(line)
+      return {daemon: app_name, output: line.chomp}
     end
   end
 end
