@@ -48,6 +48,17 @@ module Ginseng
         replace(sanitize)
         return self
       end
+
+      def hex2bin
+        s = self
+        raise 'Not a valid hex string' unless /^[\da-fA-F]+$/.match?(s)
+        s = "0#{s}" unless (s.length & 1).zero?
+        return s.scan(/../).map {|b| b.to_i(16)}.pack('C*').force_encoding('UTF-8')
+      end
+
+      def bin2hex
+        return unpack('C*').map {|b| '%02x' % b}.join
+      end
     end
 
     class ::Hash
