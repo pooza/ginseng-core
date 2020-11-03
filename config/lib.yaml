@@ -1,5 +1,5 @@
 package:
-  version: 1.8.3
+  version: 1.8.4
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -19,3 +19,4 @@ error:
     level: 5
 crypt:
   password: mulukhiya
+  encoder: base64

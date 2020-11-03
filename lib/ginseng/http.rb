@@ -8,11 +8,12 @@ module Ginseng
 
     def initialize
       ENV['SSL_CERT_FILE'] ||= File.join(Environment.dir, 'cert/cacert.pem')
+      @logger = logger_class.new
     end
 
     def base_uri=(uri)
       unless uri.nil?
-        uri = Ginseng::URI.parse(uri.to_s) unless uri.is_a?(Ginseng::URI)
+        uri = URI.parse(uri.to_s) unless uri.is_a?(URI)
         raise 'Invalid base_uri' unless uri.absolute?
       end
       @base_uri = uri
@@ -33,8 +34,11 @@ module Ginseng
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       uri = create_uri(uri.to_s) unless uri.is_a?(URI)
-      log(method: 'GET', url: uri.to_s)
-      return HTTParty.get(uri.normalize, options)
+      start = Time.now
+      r = HTTParty.get(uri.normalize, options)
+      log(method: 'GET', url: uri.to_s, status: r.code, start: start)
+      raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+      return r
     end
 
     def post(uri, options = {})
@@ -45,8 +49,11 @@ module Ginseng
         options[:body] = options.to_json
       end
       uri = create_uri(uri.to_s) unless uri.is_a?(URI)
-      log(method: 'POST', url: uri.to_s)
-      return HTTParty.post(uri.normalize, options)
+      start = Time.now
+      r = HTTParty.post(uri.normalize, options)
+      log(method: 'POST', url: uri.to_s, status: r.code, start: start)
+      raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+      return r
     end
 
     def delete(uri, options = {})
@@ -54,8 +61,11 @@ module Ginseng
       options[:headers]['User-Agent'] ||= user_agent
       options[:headers]['Content-Type'] ||= 'application/json'
       uri = create_uri(uri.to_s) unless uri.is_a?(URI)
-      log(method: 'DELETE', url: uri.to_s)
-      return HTTParty.delete(uri.normalize, options)
+      start = Time.now
+      r = HTTParty.delete(uri.normalize, options)
+      log(method: 'DELETE', url: uri.to_s, status: r.code, start: start)
+      raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+      return r
     end
 
     def upload(uri, file, headers = {}, body = {})
@@ -63,8 +73,11 @@ module Ginseng
       headers['User-Agent'] ||= user_agent
       body[:file] = file
       uri = create_uri(uri.to_s) unless uri.is_a?(URI)
-      log(method: 'POST', type: 'multipart/form-data', url: uri.to_s)
-      return RestClient.post(uri.normalize.to_s, body, headers)
+      start = Time.now
+      r = RestClient.post(uri.normalize.to_s, body, headers)
+      log(method: 'POST', type: 'multipart/form-data', url: uri.to_s, status: r.code, start: start)
+      raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+      return r
     end
 
     def user_agent
@@ -74,8 +87,11 @@ module Ginseng
     private
 
     def log(message)
-      @logger ||= logger_class.new
       message = {message: message.to_s} unless message.is_a?(Hash)
+      if message[:start]
+        message[:seconds] = (Time.now - message[:start]).round(3)
+        message.delete(:start)
+      end
       message[:class] = self.class.to_s
       @logger.info(message)
     rescue
