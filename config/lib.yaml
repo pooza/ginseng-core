@@ -19,3 +19,4 @@ error:
     level: 5
 crypt:
   password: mulukhiya
+  encoder: base64

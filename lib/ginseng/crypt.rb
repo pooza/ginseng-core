@@ -19,13 +19,13 @@ module Ginseng
       enc.key = keyiv[:key]
       enc.iv = keyiv[:iv]
       encrypted = enc.update(plaintext) + enc.final
-      return [encode_base64(encrypted), encode_base64(salt)].join(GLUE)
+      return [encode(encrypted), encode(salt)].join(GLUE)
     rescue => e
-      @logger.error(e)
+      raise AuthError, e.message, e.backtrace
     end
 
     def decrypt(joined, bit = 256)
-      encrypted, salt = joined.split(GLUE).map {|v| decode_base64(v)}
+      encrypted, salt = joined.split(GLUE).map {|v| decode(v)}
       dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
       dec.decrypt
       keyiv = create_key_iv(password, salt, dec)
@@ -33,7 +33,7 @@ module Ginseng
       dec.iv = keyiv[:iv]
       return dec.update(encrypted) + dec.final
     rescue => e
-      @logger.error(e)
+      raise AuthError, e.message, e.backtrace
     end
 
     private
@@ -56,12 +56,30 @@ module Ginseng
       }
     end
 
-    def encode_base64(string)
-      return Base64.strict_encode64(string).chomp
+    def encode(string)
+      case encoder
+      when 'base64'
+        return Base64.strict_encode64(string).chomp
+      when 'hex'
+        return string.bin2hex
+      else
+        raise "Invalid encoder '#{encoder}'"
+      end
     end
 
-    def decode_base64(string)
-      return Base64.strict_decode64(string)
+    def decode(string)
+      case encoder
+      when 'base64'
+        return Base64.strict_decode64(string)
+      when 'hex'
+        return string.hex2bin
+      else
+        raise "Invalid encoder '#{encoder}'"
+      end
+    end
+
+    def encoder
+      return @config['/crypt/encoder']
     end
 
     def password
