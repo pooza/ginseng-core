@@ -23,6 +23,18 @@ module Ginseng
       udp.close
     end
 
+    def self.type
+      return Config.instance['/environment'] || 'development'
+    end
+
+    def self.development?
+      return type == 'development'
+    end
+
+    def self.production?
+      return type == 'production'
+    end
+
     def self.platform
       return 'Debian' if File.executable?('/usr/bin/apt-get')
       return `uname`.chomp
