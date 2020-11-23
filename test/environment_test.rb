@@ -16,6 +16,18 @@ module Ginseng
       assert_kind_of(String, Environment.platform)
     end
 
+    def test_type
+      assert_equal(Environment.type, 'development')
+    end
+
+    def test_development?
+      assert_boolean(Environment.development?)
+    end
+
+    def test_production?
+      assert_boolean(Environment.production?)
+    end
+
     def test_test?
       assert_equal(Environment.test?, ENV['TEST'].present?)
     end

@@ -1,5 +1,5 @@
 package:
-  version: 1.8.4
+  version: 1.8.5
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -7,6 +7,7 @@ package:
     - tkoishi@b-shock.co.jp
   description: ginseng core libraries
   license: MIT
+environment: development
 test:
   filters:
     - name: ci
