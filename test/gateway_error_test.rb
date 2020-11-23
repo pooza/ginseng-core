@@ -13,5 +13,9 @@ module Ginseng
     def test_status
       assert_equal(@error.status, 502)
     end
+
+    def test_source_status
+      assert_equal(@error.status, 502)
+    end
   end
 end
