@@ -61,6 +61,22 @@ module Ginseng
       end
     end
 
+    class ::Array
+      def deep_compact
+        return clone.deep_compact!
+      end
+
+      def deep_compact!
+        each do |value|
+          next unless value.class.method_defined?(:deep_compact!)
+          value.deep_compact!
+          delete(value) if value.empty?
+        end
+        compact!
+        return self
+      end
+    end
+
     class ::Hash
       def deep_merge(target)
         return Hash.deep_merge(self, target)
@@ -77,6 +93,20 @@ module Ginseng
 
       def key_flatten!(prefix = '')
         replace(key_flatten(prefix))
+        return self
+      end
+
+      def deep_compact
+        return clone.deep_compact!
+      end
+
+      def deep_compact!
+        each do |key, value|
+          next unless value.class.method_defined?(:deep_compact!)
+          value.deep_compact!
+          delete(key) if value.empty?
+        end
+        compact!
         return self
       end
 
