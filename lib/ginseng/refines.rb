@@ -68,12 +68,9 @@ module Ginseng
 
       def deep_compact!
         each do |value|
-          if ['Array', 'Hash'].freeze.member?(value.class.to_s)
-            value.deep_compact!
-            delete(value) if value.empty?
-          elsif value.nil?
-            delete(value)
-          end
+          next unless value.class.method_defined?(:deep_compact!)
+          value.deep_compact!
+          delete(value) if value.empty?
         end
         compact!
         return self
@@ -105,12 +102,9 @@ module Ginseng
 
       def deep_compact!
         each do |key, value|
-          if ['Array', 'Hash'].freeze.member?(value.class.to_s)
-            value.deep_compact!
-            delete(key) if value.empty?
-          elsif value.nil?
-            delete(key)
-          end
+          next unless value.class.method_defined?(:deep_compact!)
+          value.deep_compact!
+          delete(key) if value.empty?
         end
         compact!
         return self
