@@ -15,6 +15,17 @@ module Ginseng
       assert_kind_of(Array, @logger.create_message([1, 2, 3]))
       assert_kind_of(Hash, @logger.create_message(a: 'a', b: 'b'))
       assert_kind_of(String, @logger.create_message('aaaaa'))
+      assert_equal(@logger.create_message('string'), 'string')
+      raise Ginseng::AuthError, 'unauthorized'
+    rescue Ginseng::AuthError => e
+      assert_equal(@logger.create_message(error: e, class: self.class.to_s), {
+        error: {
+          message: 'unauthorized',
+          file: 'test/logger_test.rb',
+          line: 19,
+        },
+        class: 'Ginseng::LoggerTest',
+      })
     end
   end
 end
