@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
-  spec.add_dependency 'nokogiri'
+  spec.add_dependency 'nokogiri', '>=1.11.0.rc4' # CVE-2020-26247
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
   spec.add_dependency 'sanitize'

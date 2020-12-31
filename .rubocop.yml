@@ -1,13 +1,19 @@
-require: rubocop-performance
+require:
+  - rubocop-performance
 
 AllCops:
   AllowSymlinksInCacheRootDirectory: true
   DisplayCopNames: true
   NewCops: enable
+  Include:
+    - '**/*.rb'
+    - '**/Rakefile'
+    - '**/config.ru'
   Exclude:
     - '**/._*'
-    - '.git/**/*'
+    - '**/.git/**/*'
     - 'public/**/*'
+    - 'config/**/*'
     - 'tmp/**/*'
   TargetRubyVersion: 2.6
 
@@ -195,31 +201,33 @@ Metrics/AbcSize:
   Max: 30
   Exclude:
     - 'test/*'
-    - '**/contract/*'
 
 Metrics/BlockLength:
   Exclude:
     - 'test/*'
     - '**/contract/*'
+    - '**/controller/*'
+    - 'app/task/*'
     - '*.gemspec'
 
 Metrics/MethodLength:
   Max: 20
   Exclude:
     - 'test/*'
-    - '**/contract/*'
 
 Metrics/ClassLength:
   Max: 200
   Exclude:
     - 'test/*'
     - '**/contract/*'
+    - '**/controller/*'
 
 Metrics/ModuleLength:
   Max: 200
   Exclude:
     - 'test/*'
     - '**/contract/*'
+    - '**/controller/*'
 
 Metrics/CyclomaticComplexity:
   Max: 10
