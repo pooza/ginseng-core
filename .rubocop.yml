@@ -1,13 +1,19 @@
-require: rubocop-performance
+require:
+  - rubocop-performance
 
 AllCops:
   AllowSymlinksInCacheRootDirectory: true
   DisplayCopNames: true
   NewCops: enable
+  Include:
+    - '**/*.rb'
+    - '**/Rakefile'
+    - '**/config.ru'
   Exclude:
     - '**/._*'
-    - '.git/**/*'
+    - '**/.git/**/*'
     - 'public/**/*'
+    - 'config/**/*'
     - 'tmp/**/*'
   TargetRubyVersion: 2.6
 
