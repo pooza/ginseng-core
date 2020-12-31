@@ -18,8 +18,11 @@ module Ginseng
       uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/statuses'
       r = @http.post(uri, {
-        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
-        body: {status: 'ドッキドキドリームが煌めく'},
+        headers: {
+          'Authorization' => "Bearer #{@config['/mastodon/token']}",
+          'Content-Type' => 'application/x-www-form-urlencoded',
+        },
+        body: {'status' => 'ドッキドキドリームが煌めく'},
       })
       assert_equal(r.code, 200)
 
