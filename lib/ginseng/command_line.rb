@@ -35,7 +35,10 @@ module Ginseng
     def exec
       Dir.chdir(dir) if dir
       start = Time.now
-      result = Open3.capture3(@env.stringify_keys, to_s)
+      result = nil
+      Bundler.with_unbundled_env do
+        result = Open3.capture3(@env.stringify_keys, to_s)
+      end
       seconds = Time.now - start
       @stdout, @stderr, @status = result
       @pid = @status.pid
