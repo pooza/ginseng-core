@@ -14,11 +14,12 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>=2.6'
 
-  spec.add_dependency 'activesupport'
+  spec.add_dependency 'activesupport', '>=6.1.1'
   spec.add_dependency 'addressable'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
+  spec.add_dependency 'multi_json'
   spec.add_dependency 'nokogiri', '>=1.11.0.rc4' # CVE-2020-26247
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
