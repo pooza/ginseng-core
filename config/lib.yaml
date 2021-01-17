@@ -1,5 +1,5 @@
 package:
-  version: 1.9.0
+  version: 1.9.1
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -10,7 +10,7 @@ package:
 environment: development
 test:
   filters:
-    - name: c_i
+    - name: ci
       cases:
         - slack_test
 cert:

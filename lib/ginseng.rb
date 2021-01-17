@@ -6,6 +6,14 @@ require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
 
+ActiveSupport::Inflector.inflections do |inflect|
+  inflect.acronym 'CI'
+  inflect.acronym 'DSN'
+  inflect.acronym 'HTTP'
+  inflect.acronym 'URI'
+  inflect.acronym 'URL'
+end
+
 module Ginseng
   using Refines
 
@@ -18,7 +26,6 @@ module Ginseng
     loader = Zeitwerk::Loader.new
     loader.inflector.inflect(config['inflections'])
     loader.push_dir(File.join(dir, 'lib/ginseng'), namespace: Ginseng)
-    loader.collapse('lib/ginseng/*')
     return loader
   end
 end
