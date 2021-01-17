@@ -10,7 +10,7 @@ package:
 environment: development
 test:
   filters:
-    - name: c_i
+    - name: ci
       cases:
         - slack_test
 cert:
