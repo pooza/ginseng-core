@@ -27,7 +27,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'syslog-logger'
   spec.add_dependency 'unicode'
   spec.add_dependency 'yajl-ruby'
-  spec.add_dependency 'zeitwerk', '>=2.3.0'
+  spec.add_dependency 'zeitwerk', '>=2.4.0'
   spec.add_development_dependency 'rubocop'
   spec.add_development_dependency 'rubocop-performance'
   spec.add_development_dependency 'test-unit'

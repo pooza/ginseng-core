@@ -1,0 +1,4 @@
+inflections:
+  http: HTTP
+  uri: URI
+  ci_test_case_filter: CITestCaseFilter
