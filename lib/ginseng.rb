@@ -6,6 +6,14 @@ require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
 
+ActiveSupport::Inflector.inflections do |inflect|
+  inflect.acronym 'CI'
+  inflect.acronym 'DSN'
+  inflect.acronym 'HTTP'
+  inflect.acronym 'URI'
+  inflect.acronym 'URL'
+end
+
 module Ginseng
   using Refines
 
