@@ -21,3 +21,7 @@ error:
 crypt:
   password: mulukhiya
   encoder: base64
+http:
+  retry:
+    limit: 5
+    second: 1
