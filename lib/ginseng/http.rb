@@ -37,7 +37,7 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       r = HTTParty.get(uri.normalize, options)
-      log(method: 'GET', url: uri.to_s, status: r.code, start: start)
+      log(method: 'GET', url: uri.to_s, status: r.code, seconds: Time.now - start)
       raise GatewayError, "Bad response #{r.code}" unless r.code < 400
       return r
     rescue => e
@@ -51,13 +51,11 @@ module Ginseng
     def post(uri, options = {})
       cnt ||= 0
       options[:headers] = create_headers(options[:headers])
-      if options[:headers]['Content-Type'] == 'application/json' && options[:body].is_a?(Hash)
-        options[:body] = options.to_json
-      end
+      options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
       start = Time.now
       r = HTTParty.post(uri.normalize, options)
-      log(method: 'POST', url: uri.to_s, status: r.code, start: start)
+      log(method: 'POST', url: uri.to_s, status: r.code, seconds: Time.now - start)
       raise GatewayError, "Bad response #{r.code}" unless r.code < 400
       return r
     rescue => e
@@ -71,10 +69,11 @@ module Ginseng
     def delete(uri, options = {})
       cnt ||= 0
       options[:headers] = create_headers(options[:headers])
+      options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
       start = Time.now
       r = HTTParty.delete(uri.normalize, options)
-      log(method: 'DELETE', url: uri.to_s, status: r.code, start: start)
+      log(method: 'DELETE', url: uri.to_s, status: r.code, seconds: Time.now - start)
       raise GatewayError, "Bad response #{r.code}" unless r.code < 400
       return r
     rescue => e
@@ -93,7 +92,7 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       r = RestClient.post(uri.normalize.to_s, body, headers)
-      log(method: 'POST', type: 'multipart/form-data', url: uri.to_s, status: r.code, start: start)
+      log(method: 'POST', multipart: true, url: uri.to_s, status: r.code, seconds: Time.now - start)
       raise GatewayError, "Bad response #{r.code}" unless r.code < 400
       return r
     rescue => e
@@ -123,6 +122,11 @@ module Ginseng
       headers['User-Agent'] ||= user_agent
       headers['Content-Type'] ||= 'application/json'
       return headers
+    end
+
+    def create_body(body, headers)
+      return body.to_json if headers['Content-Type'] == 'application/json' && body.is_a?(Hash)
+      return body
     end
 
     def log(message)
