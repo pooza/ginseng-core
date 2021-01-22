@@ -39,14 +39,13 @@ module Ginseng
       Bundler.with_unbundled_env do
         result = Open3.capture3(@env.stringify_keys, to_s)
       end
-      seconds = Time.now - start
       @stdout, @stderr, @status = result
       @pid = @status.pid
       @status = @status.to_i
       if @status.zero?
-        @logger.info(command: to_s, env: @env, status: @status, seconds: seconds)
+        @logger.info(command: to_s, env: @env, status: @status, seconds: Time.now - start)
       else
-        @logger.error(command: to_s, env: @env, status: @status, seconds: seconds)
+        @logger.error(command: to_s, env: @env, status: @status, seconds: Time.now - start)
       end
       return @status
     end

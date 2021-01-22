@@ -24,4 +24,4 @@ crypt:
 http:
   retry:
     limit: 5
-    second: 1
+    seconds: 1

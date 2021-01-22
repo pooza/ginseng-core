@@ -44,7 +44,7 @@ module Ginseng
       cnt += 1
       @logger.error(error: e, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_second)
+      sleep(retry_seconds)
       retry
     end
 
@@ -62,7 +62,7 @@ module Ginseng
       cnt += 1
       @logger.error(error: e, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_second)
+      sleep(retry_seconds)
       retry
     end
 
@@ -80,7 +80,7 @@ module Ginseng
       cnt += 1
       @logger.error(error: e, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_second)
+      sleep(retry_seconds)
       retry
     end
 
@@ -99,7 +99,7 @@ module Ginseng
       cnt += 1
       @logger.error(error: e, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_second)
+      sleep(retry_seconds)
       retry
     end
 
@@ -113,8 +113,8 @@ module Ginseng
       return config['/http/retry/limit']
     end
 
-    def retry_second
-      return config['/http/retry/second']
+    def retry_seconds
+      return config['/http/retry/seconds']
     end
 
     def create_headers(headers)
