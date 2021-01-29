@@ -36,28 +36,25 @@ module Ginseng
     end
 
     def self.platform
+      return 'Windows' if RUBY_PLATFORM.match?(/mswin|msys|mingw|cygwin|bccwin|wince|emc/)
       return 'Debian' if File.executable?('/usr/bin/apt-get')
       return `uname`.chomp
     end
 
+    def self.win?
+      return platform == 'Windows'
+    end
+
     def self.ci?
-      return true if ENV['CI'].present?
-      return true if ENV['CIRCLECI'].present?
-      return false
-    rescue
-      return false
+      return ENV['CI'].present? rescue false
     end
 
     def self.test?
-      return ENV['TEST'].present?
-    rescue
-      return false
+      return ENV['TEST'].present? rescue false
     end
 
     def self.cron?
-      return ENV['CRON'].present?
-    rescue
-      return false
+      return ENV['CRON'].present? rescue false
     end
 
     def self.cert_fresh?

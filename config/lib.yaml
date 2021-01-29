@@ -1,5 +1,5 @@
 package:
-  version: 1.9.3
+  version: 1.10.0
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -13,6 +13,14 @@ test:
     - name: ci
       cases:
         - slack_test
+    - name: windows
+      cases:
+        - logger_test
+        - slack_test
+        - http_test
+        - environment_test
+        - process_test
+        - command_line_test
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
