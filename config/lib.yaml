@@ -14,7 +14,7 @@ test:
       cases:
         - slack_test
         - periodic_creator_test
-        - mailer_text
+        - mailer_test
     - name: windows
       cases:
         - logger_test
@@ -24,7 +24,7 @@ test:
         - process_test
         - command_line_test
         - periodic_creator_test
-        - mailer_text
+        - mailer_test
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
