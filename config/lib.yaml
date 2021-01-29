@@ -1,5 +1,5 @@
 package:
-  version: 1.9.3
+  version: 1.10.0
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -8,11 +8,6 @@ package:
   description: ginseng core libraries
   license: MIT
 environment: development
-test:
-  filters:
-    - name: ci
-      cases:
-        - slack_test
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
