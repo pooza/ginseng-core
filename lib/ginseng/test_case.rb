@@ -11,14 +11,18 @@ module Ginseng
     end
 
     def self.names
-      names = []
-      (ARGV.first.split(/[^[:word:],]+/)[1].split(',') || []).each do |name|
-        names.push(name) if File.exist?(File.join(dir, "#{name}.rb"))
-        names.push("#{name}_test") if File.exist?(File.join(dir, "#{name}_test.rb"))
+      if arg = ARGV.first.split(/[^[:word:],]+/)[1]
+        names = []
+        arg.split(',').each do |name|
+          names.push(name) if File.exist?(File.join(dir, "#{name}.rb"))
+          names.push("#{name}_test") if File.exist?(File.join(dir, "#{name}_test.rb"))
+        end
       end
       names ||= Dir.glob(File.join(dir, '*.rb')).map {|v| File.basename(v, '.rb')}
       TestCaseFilter.all do |filter|
-        filter.exec(names) if filter.active?
+        next unless filter.active?
+        puts "filter: #{filter.class}" if Environment.test?
+        filter.exec(names)
       end
       return names.sort.uniq
     end
