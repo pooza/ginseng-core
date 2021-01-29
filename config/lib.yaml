@@ -13,6 +13,8 @@ test:
     - name: ci
       cases:
         - slack_test
+        - periodic_creator_test
+        - mailer_text
     - name: windows
       cases:
         - logger_test
