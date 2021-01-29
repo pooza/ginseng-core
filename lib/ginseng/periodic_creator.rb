@@ -17,7 +17,7 @@ module Ginseng
       Dir.glob(File.join(dir, '*')) do |f|
         next unless File.symlink?(f)
         next unless File.readlink(f).match(environment_class.dir)
-        puts "delete link #{f}" if Environment.rake?
+        puts "delete link #{f}" if environment_class.rake?
         File.unlink(f)
         @logger.info(action: 'delete link', file: f)
       rescue => e
@@ -35,12 +35,10 @@ module Ginseng
 
     def self.periods
       return [
-        'monthly',
         'weekly',
         'daily',
         'hourly',
         'frequently',
-        'security',
       ]
     end
 
@@ -59,9 +57,9 @@ module Ginseng
     def self.create_link_name(counter, src)
       case Environment.platform
       when 'FreeBSD', 'Darwin'
-        return "#{counter}.#{environment_class.name}-#{File.basename(src, '.rb')}"
+        return "#{counter}.#{Environment.name}-#{File.basename(src, '.rb')}"
       when 'Debian'
-        return "#{environment_class.name}-#{File.basename(src, '.rb').tr('_', '-')}"
+        return "#{Environment.name}-#{File.basename(src, '.rb').tr('_', '-')}"
       else
         raise ImplementError, "'#{__method__}' not implemented on #{Environment.platform}"
       end
