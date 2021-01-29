@@ -11,13 +11,15 @@ module Ginseng
     end
 
     def exec(cases)
-      cases.delete_if do |v|
-        @params['/cases'].member?(File.basename(v, '.rb'))
+      @params['/cases'].each do |pattern|
+        cases.delete_if do |v|
+          File.fnmatch(pattern, v)
+        end
       end
     end
 
     def self.create(name)
-      Config.instance['/test/filters'].each do |entry|
+      config['/test/filters'].each do |entry|
         next unless entry['name'] == name
         return "Ginseng::#{name.camelize}TestCaseFilter".constantize.new(entry)
       end
@@ -25,9 +27,13 @@ module Ginseng
 
     def self.all
       return enum_for(__method__) unless block_given?
-      Config.instance['/test/filters'].each do |entry|
+      config['/test/filters'].each do |entry|
         yield TestCaseFilter.create(entry['name'])
       end
+    end
+
+    def self.config
+      return Config.instance
     end
 
     private
