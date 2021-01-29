@@ -1,15 +1,18 @@
+require 'mail'
+
 module Ginseng
   class Mailer
+    include Package
     attr_accessor :prefix
 
     def initialize
-      @config = Config.instance
+      @config = config_class.instance
       @mail = ::Mail.new(charset: 'UTF-8')
-      @mail['X-Mailer'] = Package.name
-      @mail.from = "root@#{Environment.hostname}"
+      @mail['X-Mailer'] = package_class.name
+      @mail.from = "root@#{environment_class.hostname}"
       @mail.to = @config['/mail/to']
       @mail.delivery_method(:sendmail)
-      @prefix = Environment.name
+      @prefix = environment_class.name
     end
 
     def subject
@@ -17,7 +20,7 @@ module Ginseng
     end
 
     def subject=(value)
-      @mail.subject = "#{prefix} #{value}" if prefix
+      @mail.subject = "[#{prefix}] #{value}" if prefix
       @mail.subject ||= vlaue
     end
 
