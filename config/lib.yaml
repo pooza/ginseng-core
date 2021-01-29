@@ -22,6 +22,7 @@ test:
         - process_test
         - command_line_test
         - periodic_creator_test
+        - mailer
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
