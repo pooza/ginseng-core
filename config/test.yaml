@@ -1,0 +1,16 @@
+filters:
+  - name: ci
+    cases:
+      - slack_test
+      - periodic_creator_test
+      - mailer_test
+  - name: windows
+    cases:
+      - logger_test
+      - slack_test
+      - http_test
+      - environment_test
+      - process_test
+      - command_line_test
+      - periodic_creator_test
+      - mailer_test
