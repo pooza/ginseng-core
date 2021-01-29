@@ -26,13 +26,9 @@ module Ginseng
 
     def self.all
       return enum_for(__method__) unless block_given?
-      config.raw.dig('test', 'filters').each do |entry|
+      Config.instance.raw.dig('test', 'filters').each do |entry|
         yield "Ginseng::#{entry['name'].camelize}TestCaseFilter".constantize.new(entry)
       end
-    end
-
-    def self.config
-      return Config.instance
     end
 
     private
