@@ -4,6 +4,10 @@ module Ginseng
   class FileFinder
     attr_accessor :dir, :patterns, :mtime, :atime, :empty
 
+    def initialize
+      @patterns = []
+    end
+
     def execute
       return enum_for(__method__) unless block_given?
       Find.find(@dir) do |f|
@@ -15,11 +19,12 @@ module Ginseng
       end
     end
 
+    alias exec execute
+
     private
 
     def match_patterns?(path)
-      return true unless @patterns
-      return @patterns.any do |pattern|
+      return @patterns.any? do |pattern|
         File.fnmatch(pattern, File.basename(path))
       end
     end
