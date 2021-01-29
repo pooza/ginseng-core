@@ -21,6 +21,7 @@ test:
         - environment_test
         - process_test
         - command_line_test
+        - periodic_creator_test
 cert:
   url: https://curl.haxx.se/ca/cacert.pem
 error:
