@@ -30,4 +30,5 @@ module Ginseng
   end
 end
 
+Bundler.require
 Ginseng.loader.setup
