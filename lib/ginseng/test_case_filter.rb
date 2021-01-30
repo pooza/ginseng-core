@@ -2,6 +2,10 @@ module Ginseng
   class TestCaseFilter
     include Package
 
+    def name
+      return params['name']
+    end
+
     def active?
       raise ImplementError, "'#{__method__}' not implemented"
     end
