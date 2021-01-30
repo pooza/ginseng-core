@@ -9,6 +9,7 @@ module Ginseng
     def initialize
       ENV['SSL_CERT_FILE'] ||= File.join(Environment.dir, 'cert/cacert.pem')
       @logger = logger_class.new
+      @config = config_class.instance
     end
 
     def base_uri=(uri)
@@ -110,11 +111,11 @@ module Ginseng
     end
 
     def retry_limit
-      return config['/http/retry/limit']
+      return @config['/http/retry/limit']
     end
 
     def retry_seconds
-      return config['/http/retry/seconds']
+      return @config['/http/retry/seconds']
     end
 
     def create_headers(headers)
