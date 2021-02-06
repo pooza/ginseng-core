@@ -7,12 +7,28 @@ module Ginseng
 
     def initialize
       @config = config_class.instance
+      @prefix = default_prefix
       @mail = ::Mail.new(charset: 'UTF-8')
-      @mail['X-Mailer'] = package_class.name
-      @mail.from = "root@#{environment_class.hostname}"
-      @mail.to = @config['/mail/to']
+      @mail['X-Mailer'] = name
+      @mail.from = default_sender
+      @mail.to = default_receipt
       @mail.delivery_method(:sendmail)
-      @prefix = environment_class.name
+    end
+
+    def name
+      return package_class.name
+    end
+
+    def default_prefix
+      return environment_class.name
+    end
+
+    def default_sender
+      return "root@#{environment_class.hostname}"
+    end
+
+    def default_receipt
+      return @config['/mail/to'] rescue nil
     end
 
     def subject
@@ -21,7 +37,7 @@ module Ginseng
 
     def subject=(value)
       @mail.subject = "[#{prefix}] #{value}" if prefix
-      @mail.subject ||= vlaue
+      @mail.subject ||= value
     end
 
     def from

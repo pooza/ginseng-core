@@ -11,22 +11,21 @@ module Ginseng
     alias url uri
 
     def post(message, type = :yaml)
-      r = @http.post(@uri, {body: create_body(message, type)})
-      raise GatewayError, "response #{r.code} (#{uri})" unless r.code == 200
-      return r
+      return unless body = create_body(message, type)
+      return @http.post(@uri, {body: body})
     end
 
     alias say post
 
     def create_body(message, type = :yaml)
-      case type
-      when :yaml
-        message = {text: YAML.dump(message)}
-      when :json
-        message = {text: JSON.pretty_generate(message)}
-      when :text
-        message = {text: message}
+      if message.is_a?(StandardError)
+        e = Error.create(message)
+        return nil unless e.broadcastable?
+        message = e.to_h
       end
+      message = {text: message.to_yaml} if type == :yaml
+      message ||= {text: JSON.pretty_generate(message)} if type == :json
+      message ||= {text: message}
       return message.to_json
     end
 
@@ -38,13 +37,7 @@ module Ginseng
     end
 
     def self.broadcast(src)
-      if src.is_a?(StandardError)
-        e = Error.create(src)
-        return false unless e.broadcastable?
-        src = e.to_h
-      end
-      all.map {|v| v.say(src)}
-      return true
+      all.each {|v| v.say(src)}
     end
   end
 end
