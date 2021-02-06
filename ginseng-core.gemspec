@@ -25,7 +25,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
   spec.add_dependency 'sanitize'
-  spec.add_dependency 'syslog-logger'
   spec.add_dependency 'unicode'
   spec.add_dependency 'yajl-ruby'
   spec.add_dependency 'zeitwerk', '>=2.4.0'
