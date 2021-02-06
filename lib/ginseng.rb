@@ -28,7 +28,8 @@ module Ginseng
     loader.push_dir(File.join(dir, 'lib/ginseng'), namespace: Ginseng)
     return loader
   end
+
+  Bundler.require
+  loader.setup
 end
 
-Bundler.require
-Ginseng.loader.setup
