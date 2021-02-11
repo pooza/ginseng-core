@@ -40,6 +40,10 @@ module Ginseng
       assert_equal(Environment.cron?, ENV['CRON'].present?)
     end
 
+    def test_cert_file
+      assert(File.exist?(Environment.cert_file))
+    end
+
     def test_uid
       assert(Environment.uid.positive?)
     end

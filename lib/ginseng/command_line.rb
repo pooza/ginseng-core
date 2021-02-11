@@ -1,5 +1,6 @@
 require 'open3'
 require 'shellwords'
+require 'facets/time'
 
 module Ginseng
   class CommandLine
@@ -34,18 +35,19 @@ module Ginseng
 
     def exec
       Dir.chdir(dir) if dir
-      start = Time.now
       result = nil
-      Bundler.with_unbundled_env do
-        result = Open3.capture3(@env.stringify_keys, to_s)
+      secs = Time.elapse do
+        Bundler.with_unbundled_env do
+          result = Open3.capture3(@env.stringify_keys, to_s)
+        end
       end
       @stdout, @stderr, @status = result
       @pid = @status.pid
       @status = @status.to_i
       if @status.zero?
-        @logger.info(command: to_s, env: @env, status: @status, seconds: Time.now - start)
+        @logger.info(command: to_s, env: @env, status: @status, seconds: secs.round(3))
       else
-        @logger.error(command: to_s, env: @env, status: @status, seconds: Time.now - start)
+        @logger.error(command: to_s, env: @env, status: @status, seconds: secs.round(3))
       end
       return @status
     end

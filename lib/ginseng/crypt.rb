@@ -21,7 +21,7 @@ module Ginseng
       encrypted = enc.update(plaintext) + enc.final
       return [encode(encrypted), encode(salt)].join(GLUE)
     rescue => e
-      raise AuthError, e.message, e.backtrace
+      raise CryptError, e.message, e.backtrace
     end
 
     def decrypt(joined, bit = 256)
@@ -33,13 +33,15 @@ module Ginseng
       dec.iv = keyiv[:iv]
       return dec.update(encrypted) + dec.final
     rescue => e
-      raise AuthError, e.message, e.backtrace
+      raise CryptError, e.message, e.backtrace
     end
 
     private
 
     def create_salt
       return OpenSSL::Random.random_bytes(8)
+    rescue => e
+      raise CryptError, e.message, e.backtrace
     end
 
     def create_key_iv(password, salt, aes)
@@ -54,6 +56,8 @@ module Ginseng
         key: keyiv[0, aes.key_len],
         iv: keyiv[aes.key_len, aes.iv_len],
       }
+    rescue => e
+      raise CryptError, e.message, e.backtrace
     end
 
     def encode(string)
@@ -63,7 +67,7 @@ module Ginseng
       when 'hex'
         return string.bin2hex
       else
-        raise "Invalid encoder '#{encoder}'"
+        raise CryptError, "Invalid encoder '#{encoder}'"
       end
     end
 
@@ -74,7 +78,7 @@ module Ginseng
       when 'hex'
         return string.hex2bin
       else
-        raise "Invalid encoder '#{encoder}'"
+        raise CryptError, "Invalid encoder '#{encoder}'"
       end
     end
 
