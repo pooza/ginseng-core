@@ -9,7 +9,10 @@ namespace :cert do
   desc 'update cert'
   task :update do
     puts "fetch #{Ginseng::Environment.cert_file}"
-    File.write(Ginseng::Environment.cert_file, Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']))
+    File.write(
+      Ginseng::Environment.cert_file,
+      Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']),
+    )
   end
 
   desc 'check cert'
