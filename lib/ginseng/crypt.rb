@@ -21,7 +21,7 @@ module Ginseng
       encrypted = enc.update(plaintext) + enc.final
       return [encode(encrypted), encode(salt)].join(GLUE)
     rescue => e
-      raise AuthError, e.message, e.backtrace
+      raise CryptError, e.message, e.backtrace
     end
 
     def decrypt(joined, bit = 256)
@@ -33,7 +33,7 @@ module Ginseng
       dec.iv = keyiv[:iv]
       return dec.update(encrypted) + dec.final
     rescue => e
-      raise AuthError, e.message, e.backtrace
+      raise CryptError, e.message, e.backtrace
     end
 
     private

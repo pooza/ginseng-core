@@ -17,10 +17,10 @@ module Ginseng
       assert_equal(decrypted, 'fugafuga')
 
       @config['/crypt/encoder'] = 'huga'
-      assert_raise AuthError do
+      assert_raise CryptError do
         encrypted = @crypt.encrypt('fugafuga')
       end
-      assert_raise AuthError do
+      assert_raise CryptError do
         decrypted = @crypt.decrypt(encrypted)
       end
     end
