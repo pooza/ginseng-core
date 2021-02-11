@@ -57,6 +57,10 @@ module Ginseng
       return ENV['CRON'].present? rescue false
     end
 
+    def self.cert_file
+      return File.join(dir, 'cert/cacert.pem')
+    end
+
     def self.cert_fresh?
       Dir.chdir(dir)
       return `git status`.include?('cacert.pem') == false

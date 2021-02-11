@@ -6,20 +6,16 @@ require 'bundler/setup'
 require 'ginseng'
 
 namespace :cert do
-  def path
-    return File.join(Ginseng::Environment.dir, 'cert/cacert.pem')
-  end
-
   desc 'update cert'
   task :update do
-    puts "fetch #{path}"
-    File.write(path, Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']))
+    puts "fetch #{Ginseng::Environment.cert_file}"
+    File.write(Ginseng::Environment.cert_file, Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']))
   end
 
   desc 'check cert'
   task :check do
     unless Ginseng::Environment.cert_fresh?
-      warn "'#{path}' is not fresh."
+      warn "'#{Ginseng::Environment.cert_file}' is not fresh."
       exit 1
     end
   end

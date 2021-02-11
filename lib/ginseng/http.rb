@@ -8,7 +8,7 @@ module Ginseng
     attr_reader :base_uri
 
     def initialize
-      ENV['SSL_CERT_FILE'] ||= File.join(Environment.dir, 'cert/cacert.pem')
+      ENV['SSL_CERT_FILE'] ||= Environment.cert_file
       @logger = logger_class.new
       @config = config_class.instance
     end
