@@ -17,6 +17,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'activesupport', '>=6.1.1'
   spec.add_dependency 'addressable'
   spec.add_dependency 'daemon-spawn'
+  spec.add_dependency 'facets'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
