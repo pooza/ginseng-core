@@ -18,14 +18,14 @@ module Ginseng
     alias say post
 
     def create_body(message, type = :yaml)
-      if message.is_a?(StandardError)
-        e = Error.create(message)
-        return nil unless e.broadcastable?
-        message = e.to_h
+      case type
+      when :yaml
+        message = {text: YAML.dump(message)}
+      when :json
+        message = {text: JSON.pretty_generate(message)}
+      when :text
+        message = {text: message}
       end
-      message = {text: message.to_yaml} if type == :yaml
-      message ||= {text: JSON.pretty_generate(message)} if type == :json
-      message ||= {text: message}
       return message.to_json
     end
 
