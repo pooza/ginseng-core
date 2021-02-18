@@ -91,14 +91,10 @@ module Ginseng
       headers['User-Agent'] ||= user_agent
       body[:file] = file
       uri = create_uri(uri)
-      response = nil
-      secs = Time.elapse {response = RestClient.post(uri.normalize.to_s, body, headers)}
-      log(method: 'POST', multipart: true, url: uri, status: response.code, seconds: secs.round(3))
+      response = RestClient.post(uri.normalize.to_s, body, headers)
+      log(method: 'POST', multipart: true, url: uri, status: response.code)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
-    rescue => e
-      @logger.error(error: e)
-      raise GatewayError, e.message, e.backtrace
     end
 
     private
