@@ -87,22 +87,14 @@ module Ginseng
     end
 
     def upload(uri, file, headers = {}, body = {})
-      cnt ||= 0
       file = File.new(file, 'rb') unless file.is_a?(File)
       headers['User-Agent'] ||= user_agent
       body[:file] = file
       uri = create_uri(uri)
-      response = nil
-      secs = Time.elapse {response = RestClient.post(uri.normalize.to_s, body, headers)}
-      log(method: 'POST', multipart: true, url: uri, status: response.code, seconds: secs.round(3))
+      response = RestClient.post(uri.normalize.to_s, body, headers)
+      log(method: 'POST', multipart: true, url: uri, status: response.code)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
-    rescue => e
-      cnt += 1
-      @logger.error(error: e, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
     end
 
     private
