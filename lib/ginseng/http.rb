@@ -38,9 +38,8 @@ module Ginseng
       options[:headers]['User-Agent'] ||= user_agent
       uri = create_uri(uri)
       response = nil
-      response = HTTParty.get(uri.normalize, options)
-      #secs = Time.elapse {response = HTTParty.get(uri.normalize, options)}
-      #log(method: 'GET', url: uri, status: response.code, seconds: secs.round(3))
+      secs = Time.elapse {response = HTTParty.get(uri.normalize, options)}
+      log(method: 'GET', url: uri, status: response.code, seconds: secs.round(3))
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -57,9 +56,8 @@ module Ginseng
       options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
       response = nil
-      response = HTTParty.post(uri.normalize, options)
-      #secs = Time.elapse {response = HTTParty.post(uri.normalize, options)}
-      #log(method: 'POST', url: uri, status: response.code, seconds: secs.round(3))
+      secs = Time.elapse {response = HTTParty.post(uri.normalize, options)}
+      log(method: 'POST', url: uri, status: response.code, seconds: secs.round(3))
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -76,9 +74,8 @@ module Ginseng
       options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
       response = nil
-      response = HTTParty.delete(uri.normalize, options)
-      #secs = Time.elapse {response = HTTParty.delete(uri.normalize, options)}
-      #log(method: 'DELETE', url: uri, status: response.code, seconds: secs.round(3))
+      secs = Time.elapse {response = HTTParty.delete(uri.normalize, options)}
+      log(method: 'DELETE', url: uri, status: response.code, seconds: secs.round(3))
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -96,9 +93,8 @@ module Ginseng
       body[:file] = file
       uri = create_uri(uri)
       response = nil
-      response = RestClient.post(uri.normalize.to_s, body, headers)
-      #secs = Time.elapse {response = RestClient.post(uri.normalize.to_s, body, headers)}
-      #log(method: 'POST', multipart: true, url: uri, status: response.code, seconds: secs.round(3))
+      secs = Time.elapse {response = RestClient.post(uri.normalize.to_s, body, headers)}
+      log(method: 'POST', multipart: true, url: uri, status: response.code, seconds: secs.round(3))
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
