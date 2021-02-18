@@ -1,6 +1,5 @@
 require 'httparty'
 require 'rest-client'
-require 'facets/time'
 
 module Ginseng
   class HTTP
@@ -37,9 +36,9 @@ module Ginseng
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
       uri = create_uri(uri)
-      response = nil
-      secs = Time.elapse {response = HTTParty.get(uri.normalize, options)}
-      log(method: 'GET', url: uri, status: response.code, seconds: secs.round(3))
+      start = Time.now
+      response = HTTParty.get(uri.normalize, options)
+      log(method: 'GET', url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -55,9 +54,9 @@ module Ginseng
       options[:headers] = create_headers(options[:headers])
       options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
-      response = nil
-      secs = Time.elapse {response = HTTParty.post(uri.normalize, options)}
-      log(method: 'POST', url: uri, status: response.code, seconds: secs.round(3))
+      start = Time.now
+      response = HTTParty.post(uri.normalize, options)
+      log(method: 'POST', url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -73,9 +72,9 @@ module Ginseng
       options[:headers] = create_headers(options[:headers])
       options[:body] = create_body(options[:body], options[:headers])
       uri = create_uri(uri)
-      response = nil
-      secs = Time.elapse {response = HTTParty.delete(uri.normalize, options)}
-      log(method: 'DELETE', url: uri, status: response.code, seconds: secs.round(3))
+      start = Time.now
+      response = HTTParty.delete(uri.normalize, options)
+      log(method: 'DELETE', url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -91,8 +90,9 @@ module Ginseng
       headers['User-Agent'] ||= user_agent
       body[:file] = file
       uri = create_uri(uri)
+      start = Time.now
       response = RestClient.post(uri.normalize.to_s, body, headers)
-      log(method: 'POST', multipart: true, url: uri, status: response.code)
+      log(method: 'POST', multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     end
@@ -125,6 +125,11 @@ module Ginseng
 
     def log(message)
       message = {message: message.to_s} unless message.is_a?(Hash)
+      message.deep_symbolize_keys!
+      if message[:start]
+        message[:seconds] = (Time.now - message[:start]).round(3)
+        message.delete(:start)
+      end
       message[:url] = message[:url].to_s if message[:url]
       @logger.info(message)
     rescue
