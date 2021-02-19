@@ -26,9 +26,10 @@ module Ginseng
     loader = Zeitwerk::Loader.new
     loader.inflector.inflect(config['inflections'])
     config['entries'].each do |entry|
-      loader.push_dir(File.join(dir, entry['path']), {
+      loader.push_dir(
+        File.join(dir, entry['path']),
         namespace: entry['namespace'].constantize,
-      })
+      )
     end
     return loader
   end
