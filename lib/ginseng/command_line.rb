@@ -6,7 +6,6 @@ module Ginseng
   class CommandLine
     include Package
     attr_reader :args, :stdout, :stderr, :status, :pid, :env
-
     attr_accessor :dir
 
     def initialize(args = [])
