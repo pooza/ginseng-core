@@ -25,7 +25,9 @@ module Ginseng
     config = YAML.load_file(File.join(dir, 'config/autoload.yaml'))
     loader = Zeitwerk::Loader.new
     loader.inflector.inflect(config['inflections'])
-    loader.push_dir(File.join(dir, 'lib/ginseng'), namespace: Ginseng)
+    config['entries'].each do |entry|
+      loader.push_dir(File.join(dir, entry['path']), namespace: entry['namespace'].constantize)
+    end
     return loader
   end
 
