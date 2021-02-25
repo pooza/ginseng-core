@@ -221,6 +221,7 @@ Metrics/ClassLength:
     - 'test/*'
     - '**/contract/*'
     - '**/controller/*'
+    - '**/service/*'
 
 Metrics/ModuleLength:
   Max: 200
@@ -228,6 +229,7 @@ Metrics/ModuleLength:
     - 'test/*'
     - '**/contract/*'
     - '**/controller/*'
+    - '**/service/*'
 
 Metrics/CyclomaticComplexity:
   Max: 10
