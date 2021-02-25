@@ -67,5 +67,11 @@ module Ginseng
       @http.base_uri = 'https://service1.example.com'
       assert_equal(@http.create_uri('/fuga'), Ginseng::URI.parse('https://service1.example.com/fuga'))
     end
+
+    def test_retry_limit
+      assert_kind_of(Integer, @http.retry_limit)
+      @http.retry_limit = 3
+      assert_equal(@http.retry_limit, 3)
+    end
   end
 end
