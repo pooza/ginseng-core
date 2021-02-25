@@ -5,6 +5,7 @@ module Ginseng
   class HTTP
     include Package
     attr_reader :base_uri
+    attr_accessor :retry
 
     def initialize
       ENV['SSL_CERT_FILE'] ||= Environment.cert_file
@@ -104,7 +105,7 @@ module Ginseng
     end
 
     def retry_limit
-      return @config['/http/retry/limit']
+      return @retry || config['/http/retry/limit']
     end
 
     def retry_seconds
