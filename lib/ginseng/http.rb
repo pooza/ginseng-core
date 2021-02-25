@@ -5,12 +5,13 @@ module Ginseng
   class HTTP
     include Package
     attr_reader :base_uri
-    attr_accessor :retry
+    attr_accessor :retry_limit
 
     def initialize
       ENV['SSL_CERT_FILE'] ||= Environment.cert_file
       @logger = logger_class.new
       @config = config_class.instance
+      @retry_limit = @config['/http/retry/limit']
     end
 
     def base_uri=(uri)
@@ -102,10 +103,6 @@ module Ginseng
 
     def user_agent
       return package_class.user_agent
-    end
-
-    def retry_limit
-      return @retry || config['/http/retry/limit']
     end
 
     def retry_seconds
