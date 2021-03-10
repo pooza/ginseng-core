@@ -20,5 +20,9 @@ module Ginseng
     def test_hex2bin
       assert_equal('3c703ee381aae3818ee3819526e381bbe381aee3818b3c2f703e'.hex2bin, '<p>なぎさ&ほのか</p>')
     end
+
+    def test_adler32
+      assert_equal('電柱が二本'.adler32, 1_473_055_422)
+    end
   end
 end

@@ -49,6 +49,11 @@ module Ginseng
         return self
       end
 
+      def adler32
+        require 'zlib'
+        return Zlib.adler32(self)
+      end
+
       def hex2bin
         s = self
         raise 'Not a valid hex string' unless /^[\da-fA-F]+$/.match?(s)
