@@ -20,3 +20,7 @@ http:
   retry:
     limit: 5
     seconds: 1
+line:
+  token: null
+  urls:
+    api: https://api.line.me
