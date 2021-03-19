@@ -10,6 +10,10 @@ module Ginseng
     def initialize
       super
       @raw = {}
+      load
+    end
+
+    def load
       dirs.each do |dir|
         suffixes.each do |suffix|
           Dir.glob(File.join(dir, "*#{suffix}")).each do |f|
@@ -23,6 +27,8 @@ module Ginseng
         update(@raw[key].key_flatten) if @raw[key]
       end
     end
+
+    alias reload load
 
     def dirs
       return [

@@ -7,5 +7,7 @@ entries:
     namespace: Ginseng
   - path: lib/ginseng/error
     namespace: Ginseng
+  - path: lib/ginseng/service
+    namespace: Ginseng
   - path: lib/ginseng/test_case_filter
     namespace: Ginseng

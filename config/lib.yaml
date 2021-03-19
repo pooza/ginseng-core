@@ -1,5 +1,5 @@
 package:
-  version: 1.10.10
+  version: 1.10.11
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -20,3 +20,7 @@ http:
   retry:
     limit: 5
     seconds: 1
+line:
+  token: null
+  urls:
+    api: https://api.line.me
