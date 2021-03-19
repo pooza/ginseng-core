@@ -2,7 +2,7 @@ filters:
   - name: ci
     cases:
       - slack_test
-      - line_test
+      - line_service_test
       - periodic_creator_test
       - mailer_test
   - name: windows
