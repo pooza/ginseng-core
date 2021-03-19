@@ -9,7 +9,7 @@ filters:
     cases:
       - logger_test
       - slack_test
-      - line_test
+      - line_service_test
       - http_test
       - environment_test
       - process_test
