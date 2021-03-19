@@ -1,13 +1,17 @@
 module Ginseng
   class LineService
     include Package
+    attr_reader :id, :token
 
-    def initialize(token = nil)
+    def initialize(params = {})
       @http = http_class.new
-      @http.base_uri = config['/line/urls/api']
+      @config = config_class.instance
+      @http.base_uri = @config['/line/urls/api']
+      @id = params[:id] || @config['/line/to']
+      @token = params[:token] || @config['/line/token']
     end
 
-    def say(id, body)
+    def say(body)
       return @http.post('/v2/bot/message/push', {
         headers: {'Authorization' => "Bearer #{token}"},
         body: {
@@ -15,14 +19,6 @@ module Ginseng
           messages: [{type: 'text', text: body.to_s.strip}],
         },
       })
-    end
-
-    def token
-      config['/line/token'] rescue nil
-    end
-
-    def self.config?
-      return config['/line/token'].present? rescue false
     end
   end
 end
