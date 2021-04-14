@@ -16,16 +16,15 @@ module Ginseng
 
     def exec(cases)
       @params['/cases'].each do |pattern|
-        cases.delete_if do |v|
-          File.fnmatch(pattern, v)
+        cases.clone.select {|v| File.fnmatch(pattern, v)}.each do |v|
+          puts "- case: #{v} (disabled)" if environment_class.test?
+          cases.delete(v)
         end
       end
     end
 
     def self.create(name)
-      all do |filter|
-        return filter if filter.name == name
-      end
+      return all.find {|v| v.name == name}
     end
 
     def self.all
