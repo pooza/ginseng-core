@@ -1,5 +1,6 @@
 require:
   - rubocop-performance
+  - rubocop-rake
 
 AllCops:
   AllowSymlinksInCacheRootDirectory: true
@@ -141,6 +142,9 @@ Style/SingleArgumentDig:
 
 Style/StringConcatenation:
   Enabled: true
+
+Style/EmptyMethod:
+  EnforcedStyle: expanded
 
 Style/CombinableLoops: # (new in 0.90)
   Enabled: true
