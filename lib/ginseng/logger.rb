@@ -1,9 +1,11 @@
 module Ginseng
   if Environment.win?
     class Logger
-      def info(message); end
+      def info(message)
+      end
 
-      def error(message); end
+      def error(message)
+      end
     end
   else
     require 'syslog/logger'
