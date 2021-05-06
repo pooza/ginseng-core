@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>=2.6'
 
-  spec.add_dependency 'activesupport', '>=6.1.1'
+  spec.add_dependency 'activesupport', '>=6.1.3.2' #CVE-2021-22904
   spec.add_dependency 'addressable'
   spec.add_dependency 'bundler'
   spec.add_dependency 'daemon-spawn'
@@ -33,5 +33,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'zlib'
   spec.add_development_dependency 'rubocop'
   spec.add_development_dependency 'rubocop-performance'
+  spec.add_development_dependency 'rubocop-rake'
   spec.add_development_dependency 'test-unit'
 end
