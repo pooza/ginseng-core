@@ -56,5 +56,18 @@ module Ginseng
     def self.decode(text)
       return ::URI.decode_www_form_component(text)
     end
+
+    def self.fix(root, href)
+      uri = URI.parse(href.to_s)
+      return uri if uri.absolute?
+      uri = URI.parse(root.to_s)
+      return uri if href.to_s.empty?
+      if href.to_s.start_with?('/')
+        uri.path = href.to_s
+      else
+        uri.path = File.join('/', uri.path, href.to_s)
+      end
+      return uri
+    end
   end
 end

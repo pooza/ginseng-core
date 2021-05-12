@@ -20,5 +20,15 @@ module Ginseng
       assert_equal(Ginseng::URI.decode('%E3%81%82+%E3%81%84'), 'あ い')
       assert_equal(Ginseng::URI.decode('%E3%81%82%20%E3%81%84'), 'あ い')
     end
+
+    def test_fix
+      assert_equal(URI.fix('https://www.example.com', 'https://hoge.example.com').to_s, 'https://hoge.example.com')
+      assert_equal(URI.fix('https://www.example.com', '').to_s, 'https://www.example.com')
+      assert_equal(URI.fix('https://www.example.com', '/').to_s, 'https://www.example.com/')
+      assert_equal(URI.fix('https://www.example.com', 'fuga').to_s, 'https://www.example.com/fuga')
+      assert_equal(URI.fix('https://www.example.com/hoge', 'fuga').to_s, 'https://www.example.com/hoge/fuga')
+      assert_equal(URI.fix('https://www.example.com/hoge', 'fuga/fugafuga').to_s, 'https://www.example.com/hoge/fuga/fugafuga')
+      assert_equal(URI.fix('https://www.example.com/hoge', '/fuga/fugafuga').to_s, 'https://www.example.com/fuga/fugafuga')
+    end
   end
 end
