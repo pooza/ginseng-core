@@ -17,8 +17,8 @@ module Ginseng
     end
 
     def test_decode
-      assert_equal(URI.decode('%E3%81%82+%E3%81%84'), 'あ い')
-      assert_equal(URI.decode('%E3%81%82%20%E3%81%84'), 'あ い')
+      assert_equal(Ginseng::URI.decode('%E3%81%82+%E3%81%84'), 'あ い')
+      assert_equal(Ginseng::URI.decode('%E3%81%82%20%E3%81%84'), 'あ い')
     end
 
     def test_fix
