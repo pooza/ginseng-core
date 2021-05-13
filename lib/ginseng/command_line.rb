@@ -11,6 +11,7 @@ module Ginseng
     def initialize(args = [])
       @logger = logger_class.new
       @env = {}
+      @dir = environment_class.dir
       self.args = args
     end
 
@@ -33,14 +34,12 @@ module Ginseng
     end
 
     def exec
-      Dir.chdir(dir) if dir
-      result = nil
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          result = Open3.capture3(@env.stringify_keys, to_s)
+          Dir.chdir(dir) if dir
+          @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s)
         end
       end
-      @stdout, @stderr, @status = result
       @pid = @status.pid
       @status = @status.to_i
       if @status.zero?
