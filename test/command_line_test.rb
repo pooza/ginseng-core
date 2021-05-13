@@ -17,7 +17,7 @@ module Ginseng
     end
 
     def test_dir
-      assert_nil(@command.dir)
+      assert_equal(@command.dir, Environment.dir)
       @command.dir = '/etc'
       @command.args = ['ls']
       @command.exec
