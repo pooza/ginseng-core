@@ -54,6 +54,11 @@ module Ginseng
         return Zlib.adler32(self)
       end
 
+      def nokogiri
+        require 'nokogiri'
+        return Nokogiri::HTML.parse(force_encoding('utf-8'), nil, 'utf-8')
+      end
+
       def hex2bin
         s = self
         raise 'Not a valid hex string' unless /^[\da-fA-F]+$/.match?(s)
