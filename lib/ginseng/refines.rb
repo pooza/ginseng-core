@@ -51,7 +51,12 @@ module Ginseng
 
       def adler32
         require 'zlib'
-        return Zlib.adler32(self)
+        return Zlib.adler32(self).to_s
+      end
+
+      def nokogiri
+        require 'nokogiri'
+        return Nokogiri::HTML.parse(force_encoding('utf-8'), nil, 'utf-8')
       end
 
       def hex2bin
