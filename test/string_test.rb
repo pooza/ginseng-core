@@ -22,7 +22,13 @@ module Ginseng
     end
 
     def test_adler32
-      assert_equal('電柱が二本'.adler32, 1_473_055_422)
+      assert_equal('電柱が二本'.adler32, '1473055422')
+    end
+
+    def test_nokogiri
+      require 'nokogiri'
+      assert_kind_of(Nokogiri::HTML::Document, ''.nokogiri)
+      assert_kind_of(Nokogiri::HTML::Document, '<div>hoge</div>'.nokogiri)
     end
   end
 end
