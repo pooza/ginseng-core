@@ -51,7 +51,7 @@ module Ginseng
 
       def adler32
         require 'zlib'
-        return Zlib.adler32(self)
+        return Zlib.adler32(self).to_s
       end
 
       def nokogiri
