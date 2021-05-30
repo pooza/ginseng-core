@@ -24,3 +24,4 @@ line:
   token: null
   urls:
     api: https://api.line.me
+  to: U00
