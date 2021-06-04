@@ -23,7 +23,7 @@ module Ginseng
     end
 
     def self.type
-      return Config.instance['/environment'] || 'development'
+      return Config.instance['/environment'] rescue 'development'
     end
 
     def self.development?
