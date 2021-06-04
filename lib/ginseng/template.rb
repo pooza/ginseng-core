@@ -15,12 +15,13 @@ module Ginseng
     end
 
     def []=(key, value)
-      value = value.deep_symbolized_keys if value.is_a?(Hash)
+      value = value.deep_symbolize_keys if value.is_a?(Hash)
       @params[key] = value
     end
 
     def params=(params)
-      @params = template_class.assign_values.perge(params).deep_symbolized_keys
+      @params = template_class.assign_values.merge(params).deep_symbolize_keys
+      ic @params
     end
 
     def to_s
@@ -29,11 +30,9 @@ module Ginseng
 
     def self.assign_values
       return {
-        package: package_class,
-        controller: controller_class,
-        sns: info_agent_service,
-        env: environment_class,
-        config: config,
+        package: Package,
+        env: Environment,
+        config: Config.instance,
       }
     end
 
