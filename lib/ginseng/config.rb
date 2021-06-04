@@ -90,7 +90,7 @@ module Ginseng
     end
 
     def self.deep_merge(src, target)
-      return Hash.deep_merge(src, target).with_indifferent_access
+      return Hash.deep_merge(src, target)
     end
   end
 end
