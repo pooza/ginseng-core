@@ -9,7 +9,7 @@ module Ginseng
       path = File.join(environment_class.dir, dir, "#{name}.erb")
       raise RenderError, "Template file #{name} not found" unless File.exist?(path)
       @erb = ERB.new(File.read(path), **{trim_mode: '-'})
-      @params = {}.with_indifferent_access
+      self.params = {}
     end
 
     def [](key)
@@ -17,16 +17,26 @@ module Ginseng
     end
 
     def []=(key, value)
-      value = value.with_indifferent_access if value.is_a?(Hash)
+      value = value.deep_symbolized_keys if value.is_a?(Hash)
       @params[key] = value
     end
 
     def params=(params)
-      @params = params.with_indifferent_access
+      @params = template_class.assign_values.perge(params).deep_symbolized_keys
     end
 
     def to_s
       return @erb.result(binding)
+    end
+
+    def self.assign_values
+      return {
+        package: package_class,
+        controller: controller_class,
+        sns: info_agent_service,
+        env: environment_class,
+        config: config,
+      }
     end
 
     private
