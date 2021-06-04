@@ -20,6 +20,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'date'
   spec.add_dependency 'facets'
+  spec.add_dependency 'fileutils'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
