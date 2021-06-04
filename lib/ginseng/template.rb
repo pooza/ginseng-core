@@ -21,7 +21,6 @@ module Ginseng
 
     def params=(params)
       @params = template_class.assign_values.merge(params).deep_symbolize_keys
-      ic @params
     end
 
     def to_s
