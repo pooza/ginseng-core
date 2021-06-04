@@ -81,6 +81,10 @@ module Ginseng
       return @schema
     end
 
+    def pretty_print(pp)
+      return pp.pp(self.class)
+    end
+
     def self.key_flatten(prefix, node)
       return Hash.key_flatten(prefix, node)
     end
