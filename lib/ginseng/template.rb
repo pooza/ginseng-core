@@ -1,5 +1,3 @@
-require 'erb'
-
 module Ginseng
   class Template
     include Package
