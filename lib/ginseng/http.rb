@@ -122,7 +122,7 @@ module Ginseng
     end
 
     def log(message)
-      message = message.deep_symbolize_keys if message.is_a?(Hash)
+      message.deep_symbolize_keys! if message.is_a?(Hash)
       message ||= {message: message.to_s}
       if message[:start]
         message[:seconds] = (Time.now - message[:start]).round(3)
