@@ -30,7 +30,7 @@ module Ginseng
     end
 
     def to_s
-      return args.map(&:shellescape).join(' ')
+      return args.map(&:to_s).map(&:shellescape).join(' ')
     end
 
     def exec
