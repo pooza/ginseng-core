@@ -49,5 +49,17 @@ module Ginseng
       end
       return @status
     end
+
+    def exec_system
+      start = Time.now
+      Bundler.with_unbundled_env do
+        Dir.chdir(dir) if dir
+        if system(@env.stringify_keys, to_s)
+          @logger.info(command: to_s, env: @env, seconds: (Time.now - start).round(3))
+        else
+          @logger.error(command: to_s, env: @env, seconds: (Time.now - start).round(3))
+        end
+      end
+    end
   end
 end
