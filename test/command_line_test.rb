@@ -33,6 +33,11 @@ module Ginseng
       assert_kind_of(Integer, @command.pid)
     end
 
+    def test_exec_system
+      @command.args = ['ls', '/']
+      assert(@command.exec_system)
+    end
+
     def test_env
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
