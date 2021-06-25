@@ -21,6 +21,12 @@ module Ginseng
       return @normalized_path
     end
 
+    def local?
+      return true if host == 'localhost'
+      return true if host == '127.0.0.1'
+      return false
+    end
+
     def self.normalize_component(component,
       character_class = CharacterClasses::RESERVED + CharacterClasses::UNRESERVED,
       leave_encoded = '')

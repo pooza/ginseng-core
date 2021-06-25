@@ -17,7 +17,7 @@ module Ginseng
     def exec(cases)
       @params['/cases'].each do |pattern|
         cases.clone.select {|v| File.fnmatch(pattern, v)}.each do |v|
-          puts "- case: #{v} (disabled)" if environment_class.test?
+          puts "- case: #{v} (filter: #{self.class})" if environment_class.test?
           cases.delete(v)
         end
       end

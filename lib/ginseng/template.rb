@@ -15,8 +15,7 @@ module Ginseng
     end
 
     def []=(key, value)
-      value.deep_symbolize_keys! if value.is_a?(Hash)
-      @params[key] = value
+      @params[key] = value.is_a?(Hash) ? value.deep_symbolize_keys : value
     end
 
     def params=(params)
