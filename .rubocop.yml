@@ -22,6 +22,9 @@ AllCops:
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
 
+Naming/InclusiveLanguage:
+  Enabled: false
+
 Style/FrozenStringLiteralComment:
   Enabled: false
 
@@ -201,6 +204,9 @@ Layout/EmptyLinesAroundAttributeAccessor:
 
 Layout/EndOfLine:
   EnforcedStyle: lf
+
+Layout/LineEndStringConcatenationIndentation:
+  Enabled: false
 
 Metrics/AbcSize:
   Max: 30
