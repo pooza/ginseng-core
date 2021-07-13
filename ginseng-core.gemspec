@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>=2.6'
 
   spec.add_dependency 'activesupport', '>=6.1.3.2' # CVE-2021-22904
-  spec.add_dependency 'addressable'
+  spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'date'
@@ -27,7 +27,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
-  spec.add_dependency 'nokogiri', '>=1.11.4' # https://github.com/advisories/GHSA-7rrm-v45f-jp64
+  spec.add_dependency 'nokogiri', '>=1.11.4' # GHSA-7rrm-v45f-jp64
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
   spec.add_dependency 'sanitize'

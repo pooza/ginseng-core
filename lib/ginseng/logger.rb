@@ -12,8 +12,9 @@ module Ginseng
     class Logger < Syslog::Logger
       include Package
 
-      def initialize
-        super(package_class.name)
+      def initialize(name = nil)
+        name ||= package_class.name
+        super
       end
 
       def info(message)
