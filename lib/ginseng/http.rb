@@ -45,7 +45,7 @@ module Ginseng
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, count: cnt)
+      @logger.error(error: e, method: 'GET', url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
@@ -63,7 +63,7 @@ module Ginseng
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, count: cnt)
+      @logger.error(error: e, method: 'POST', url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
@@ -81,7 +81,7 @@ module Ginseng
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, count: cnt)
+      @logger.error(error: e, method: 'DELETE', url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
