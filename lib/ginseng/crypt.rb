@@ -25,8 +25,8 @@ module Ginseng
     end
 
     def decrypt(joined, bit = 256)
-      [encoder, 'base64', 'hex'].uniq.each do |current_encoder|
-        encrypted, salt = joined.split(GLUE).map {|v| decode(v, current_encoder)}
+      [default_encoder, 'base64', 'hex'].uniq.each do |encoder|
+        encrypted, salt = joined.split(GLUE).map {|v| decode(v, encoder)}
         dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
         dec.decrypt
         keyiv = create_key_iv(password, salt, dec)
@@ -63,7 +63,8 @@ module Ginseng
       raise CryptError, e.message, e.backtrace
     end
 
-    def encode(string)
+    def encode(string, encoder = nil)
+      encoder ||= default_encoder
       case encoder
       when 'base64'
         return Base64.strict_encode64(string).chomp
@@ -75,7 +76,8 @@ module Ginseng
     end
 
     def decode(string, encoder = nil)
-      case encoder || senf.encoder
+      encoder ||= default_encoder
+      case encoder
       when 'base64'
         return Base64.strict_decode64(string)
       when 'hex'
@@ -85,7 +87,7 @@ module Ginseng
       end
     end
 
-    def encoder
+    def default_encoder
       return @config['/crypt/encoder']
     end
 
