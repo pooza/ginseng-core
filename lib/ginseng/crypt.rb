@@ -25,15 +25,18 @@ module Ginseng
     end
 
     def decrypt(joined, bit = 256)
-      encrypted, salt = joined.split(GLUE).map {|v| decode(v)}
-      dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
-      dec.decrypt
-      keyiv = create_key_iv(password, salt, dec)
-      dec.key = keyiv[:key]
-      dec.iv = keyiv[:iv]
-      return dec.update(encrypted) + dec.final
-    rescue => e
-      raise CryptError, e.message, e.backtrace
+      [encoder, 'base64', 'hex'].uniq.each do |current_encoder|
+        encrypted, salt = joined.split(GLUE).map {|v| decode(v, current_encoder)}
+        dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
+        dec.decrypt
+        keyiv = create_key_iv(password, salt, dec)
+        dec.key = keyiv[:key]
+        dec.iv = keyiv[:iv]
+        return dec.update(encrypted) + dec.final
+      rescue => e
+        @logger.error(error: e, encoder: encoder)
+      end
+      raise CryptError, "invalid string '#{joined}'"
     end
 
     private
@@ -71,8 +74,8 @@ module Ginseng
       end
     end
 
-    def decode(string)
-      case encoder
+    def decode(string, encoder = nil)
+      case encoder || senf.encoder
       when 'base64'
         return Base64.strict_decode64(string)
       when 'hex'
