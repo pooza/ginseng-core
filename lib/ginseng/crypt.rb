@@ -33,6 +33,8 @@ module Ginseng
         dec.key = keyiv[:key]
         dec.iv = keyiv[:iv]
         return dec.update(encrypted) + dec.final
+      rescue CryptError
+        next
       rescue => e
         @logger.error(error: e, encoder: encoder)
       end
@@ -70,9 +72,10 @@ module Ginseng
         return Base64.strict_encode64(string).chomp
       when 'hex'
         return string.bin2hex
-      else
-        raise CryptError, "Invalid encoder '#{encoder}'"
       end
+      raise "Invalid encoder '#{encoder}'"
+    rescue => e
+      raise CryptError, e.message, e.backtrace
     end
 
     def decode(string, encoder = nil)
@@ -82,9 +85,10 @@ module Ginseng
         return Base64.strict_decode64(string)
       when 'hex'
         return string.hex2bin
-      else
-        raise CryptError, "Invalid encoder '#{encoder}'"
       end
+      raise "Invalid encoder '#{encoder}'"
+    rescue => e
+      raise CryptError, e.message, e.backtrace
     end
 
     def default_encoder
