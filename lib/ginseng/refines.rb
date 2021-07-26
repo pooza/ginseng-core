@@ -148,6 +148,24 @@ module Ginseng
       end
     end
 
+    class ::StandardError
+      def status
+        return 500
+      end
+
+      def broadcastable?
+        return true
+      end
+
+      def to_h
+        return {
+          package: Package.name,
+          class: self.class.name,
+          message: message,
+        }
+      end
+    end
+
     module ::Process
       def self.alive?(pid)
         kill(0, pid)
