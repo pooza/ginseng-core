@@ -27,7 +27,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
-  spec.add_dependency 'nokogiri', '>=1.11.4', '<1.12' # GHSA-7rrm-v45f-jp64
+  spec.add_dependency 'nokogiri', '>=1.12.1' # https://github.com/sparklemotion/nokogiri/issues/2298
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
