@@ -33,6 +33,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'rest-client'
   spec.add_dependency 'sanitize'
   spec.add_dependency 'securerandom'
+  spec.add_dependency 'set'
   spec.add_dependency 'time'
   spec.add_dependency 'unicode'
   spec.add_dependency 'yajl-ruby'
