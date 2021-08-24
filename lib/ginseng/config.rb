@@ -69,7 +69,7 @@ module Ginseng
       return map do |key, value|
         next unless key.start_with?(prefix)
         key.sub(Regexp.new("^#{prefix}"), '').split('/')[1]
-      end.compact.uniq.to_set
+      end.compact.sort.to_set
     end
 
     def errors
