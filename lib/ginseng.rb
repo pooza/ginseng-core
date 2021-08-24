@@ -7,9 +7,15 @@ require 'yajl'
 require 'yajl/json_gem'
 
 ActiveSupport::Inflector.inflections do |inflect|
+  inflect.acronym 'API'
   inflect.acronym 'CI'
   inflect.acronym 'DSN'
   inflect.acronym 'HTTP'
+  inflect.acronym 'MIME'
+  inflect.acronym 'OAuth'
+  inflect.acronym 'RSS'
+  inflect.acronym 'SNS'
+  inflect.acronym 'UI'
   inflect.acronym 'URI'
   inflect.acronym 'URL'
 end

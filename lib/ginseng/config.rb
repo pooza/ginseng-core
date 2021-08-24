@@ -52,10 +52,10 @@ module Ginseng
     end
 
     def [](key)
-      keys = [key]
+      keys = Set[key]
       (raw['deprecated'] || []).each do |entry|
         next unless entry['key'] == key
-        keys.concat(entry['aliases'])
+        keys.merge(entry['aliases'])
         break
       end
       keys.each do |k|
@@ -69,7 +69,7 @@ module Ginseng
       return map do |key, value|
         next unless key.start_with?(prefix)
         key.sub(Regexp.new("^#{prefix}"), '').split('/')[1]
-      end.compact.uniq.sort
+      end.compact.sort.to_set
     end
 
     def errors
