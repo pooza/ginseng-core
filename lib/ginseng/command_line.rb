@@ -50,6 +50,13 @@ module Ginseng
       return @status
     end
 
+    def bundle_install
+      Bundler.with_unbundled_env do
+        Dir.chdir(dir) if dir
+        return system(@env.stringify_keys, 'bundle', 'install')
+      end
+    end
+
     def exec_system
       start = Time.now
       Bundler.with_unbundled_env do
