@@ -22,7 +22,7 @@ module Ginseng
     end
 
     def test_keys
-      assert_equal(@config.keys('/package'), Set['authors', 'description', 'email', 'license', 'url', 'version'])
+      assert_equal(@config.keys('/package'), ['authors', 'description', 'email', 'license', 'url', 'version'].to_set)
     end
 
     def test_schema

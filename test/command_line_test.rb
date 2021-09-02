@@ -38,6 +38,11 @@ module Ginseng
       assert(@command.exec_system)
     end
 
+    def test_bundle_install
+      @command.dir = Environment.dir
+      assert(@command.bundle_install)
+    end
+
     def test_env
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
