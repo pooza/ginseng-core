@@ -1,5 +1,3 @@
-require 'find'
-
 module Ginseng
   class FileFinder
     attr_accessor :dir, :patterns, :mtime, :atime, :empty
