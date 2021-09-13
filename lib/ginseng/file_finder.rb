@@ -15,7 +15,7 @@ module Ginseng
         next unless match_mtime?(f)
         next unless match_atime?(f)
         next unless match_empty?(f)
-        yield(f)
+        yield f
       end
     end
 
