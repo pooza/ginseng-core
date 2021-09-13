@@ -21,7 +21,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'date'
   spec.add_dependency 'erb'
   spec.add_dependency 'facets'
-  spec.add_dependency 'find'
   spec.add_dependency 'fileutils'
   spec.add_dependency 'find'
   spec.add_dependency 'httparty'
