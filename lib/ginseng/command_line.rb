@@ -43,9 +43,9 @@ module Ginseng
       @pid = @status.pid
       @status = @status.to_i
       if @status.zero?
-        @logger.info(command: to_s, env: @env, status: @status, seconds: secs.round(3))
+        @logger.info(command: to_s, dir: dir, env: @env, status: @status, seconds: secs.round(3))
       else
-        @logger.error(command: to_s, env: @env, status: @status, seconds: secs.round(3))
+        @logger.error(command: to_s, dir: dir, env: @env, status: @status, seconds: secs.round(3))
       end
       return @status
     end
@@ -62,9 +62,9 @@ module Ginseng
       Bundler.with_unbundled_env do
         Dir.chdir(dir) if dir
         if system(@env.stringify_keys, to_s)
-          @logger.info(command: to_s, env: @env, seconds: (Time.now - start).round(3))
+          @logger.info(command: to_s, dir: dir, env: @env, seconds: (Time.now - start).round(3))
         else
-          @logger.error(command: to_s, env: @env, seconds: (Time.now - start).round(3))
+          @logger.error(command: to_s, dir: dir, env: @env, seconds: (Time.now - start).round(3))
         end
       end
     end
