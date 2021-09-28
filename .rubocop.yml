@@ -218,7 +218,7 @@ Metrics/BlockLength:
     - 'test/*'
     - '**/contract/*'
     - '**/controller/*'
-    - 'app/task/*'
+    - 'app/task/**/*.rb'
     - '*.gemspec'
 
 Metrics/MethodLength:
@@ -349,4 +349,5 @@ Rake:
     - '*'
   Include:
     - 'Rakefile'
-    - 'app/task/*'
+    - '*.rake'
+    - 'app/task/**/*.rb'

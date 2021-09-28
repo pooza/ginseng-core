@@ -16,8 +16,8 @@ module Ginseng
       assert_kind_of(Hash, @logger.create_message(a: 'a', b: 'b'))
       assert_kind_of(String, @logger.create_message('aaaaa'))
       assert_equal(@logger.create_message('string'), 'string')
-      raise Ginseng::AuthError, 'unauthorized'
-    rescue Ginseng::AuthError => e
+      raise AuthError, 'unauthorized'
+    rescue AuthError => e
       assert_equal(@logger.create_message(error: e, class: self.class.to_s), {
         error: {
           message: 'unauthorized',
