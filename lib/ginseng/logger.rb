@@ -31,7 +31,7 @@ module Ginseng
 
       def create_message(src)
         if src.is_a?(Hash) && src[:error].is_a?(StandardError)
-          error = Ginseng::Error.create(src[:error])
+          error = Error.create(src[:error])
           file, line = error.backtrace.first.split(':')
           src[:error] = {
             message: error.message,

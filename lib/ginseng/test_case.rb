@@ -20,7 +20,7 @@ module Ginseng
           .map {|v| [v, "#{v}_test", v.sub(/_test$/, '')]}.flatten
           .select {|v| File.exist?(File.join(dir, "#{v}.rb"))}.compact
       else
-        finder = Ginseng::FileFinder.new
+        finder = FileFinder.new
         finder.dir = dir
         finder.patterns.push('*.rb')
         names = finder.exec.map {|v| File.basename(v, '.rb')}
