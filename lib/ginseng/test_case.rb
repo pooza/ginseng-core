@@ -16,14 +16,17 @@ module Ginseng
 
     def self.names(cases = nil)
       if cases
-        names = cases.split(',')
-          .map {|v| [v, "#{v}Test", v.underscore, "#{v.underscore}_test"]}.flatten
+        names = cases.split(',').map(&:underscore)
+          .map {|v| [v, "#{v}_test", v.sub(/_test$/, '')]}.flatten
           .select {|v| File.exist?(File.join(dir, "#{v}.rb"))}.compact
       else
-        names = Dir.glob(File.join(dir, '*.rb')).map {|v| File.basename(v, '.rb')}
+        finder = Ginseng::FileFinder.new
+        finder.dir = dir
+        finder.patterns.push('*.rb')
+        names = finder.exec.map {|v| File.basename(v, '.rb')}
       end
       TestCaseFilter.all.select(&:active?).each {|v| v.exec(names)}
-      return names.sort.to_set
+      return names.to_set
     end
 
     def self.dir
