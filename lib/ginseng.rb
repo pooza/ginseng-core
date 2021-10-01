@@ -1,3 +1,4 @@
+require 'bundler/setup'
 require 'ginseng/refines'
 require 'active_support'
 require 'active_support/core_ext'
