@@ -27,7 +27,7 @@ module Ginseng
       end
 
       def nfkc
-        return self.unicode_normalize(:nfkc)
+        return unicode_normalize(:nfkc)
       end
 
       def nfkc!
