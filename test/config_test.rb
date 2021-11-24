@@ -51,5 +51,9 @@ module Ginseng
       config = Config.deep_merge(config, {c: {d: nil}})
       assert_equal(config, {'a' => 111, 'b' => 222, 'c' => {'e' => 333, 'f' => 444}})
     end
+
+    def test_load_file
+      assert_kind_of(Hash, Config.load_file('test'))
+    end
   end
 end
