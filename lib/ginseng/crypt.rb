@@ -25,7 +25,7 @@ module Ginseng
     end
 
     def decrypt(joined, bit = 256)
-      [default_encoder, 'base64', 'hex'].uniq.each do |encoder|
+      [default_encoder, 'base64', 'hex'].to_set.each do |encoder|
         encrypted, salt = joined.split(GLUE).map {|v| decode(v, encoder)}
         dec = OpenSSL::Cipher.new("AES-#{bit}-CBC")
         dec.decrypt

@@ -92,5 +92,10 @@ module Ginseng
     def self.deep_merge(src, target)
       return Hash.deep_merge(src, target).with_indifferent_access
     end
+
+    def self.load_file(name)
+      name += '.yaml' if File.extname(name).empty?
+      return YAML.load_file(File.join(environment_class.dir, 'config', name))
+    end
   end
 end

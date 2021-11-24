@@ -47,5 +47,23 @@ module Ginseng
     def self.user_agent
       return "#{name}/#{version} (#{url})"
     end
+
+    def self.included(base)
+      base.extend(Methods)
+    end
+
+    module Methods
+      def environment_class
+        return Environment
+      end
+
+      def logger
+        return Logger.new
+      end
+
+      def config
+        return Config.instance
+      end
+    end
   end
 end
