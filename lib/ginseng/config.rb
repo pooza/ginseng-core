@@ -52,12 +52,16 @@ module Ginseng
     end
 
     def [](key)
-      value = (raw['deprecated'] || {})
-        .select {|_k, v| v['key'] == key}
-        .inject(Set[key]) {|keys, v| keys.merge(v['aliases'])}
-        .map {|k| super(k)}
-        .find(&:present?)
-      return value unless value.nil?
+      keys = Set[key]
+      (raw['deprecated'] || []).each do |entry|
+        next unless entry['key'] == key
+        keys.merge(entry['aliases'])
+        break
+      end
+      keys.each do |k|
+        value = super(k)
+        return value unless value.nil?
+      end
       raise ConfigError, "'#{key}' not found"
     end
 
