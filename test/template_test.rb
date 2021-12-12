@@ -12,6 +12,10 @@ module Ginseng
       end
     end
 
+    def test_path
+      assert(File.exist?(@template.path))
+    end
+
     def test_to_s
       @template[:output] = 1
       assert_equal(@template.to_s, "body1\n")
