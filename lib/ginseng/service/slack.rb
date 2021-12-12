@@ -29,11 +29,9 @@ module Ginseng
       return message.to_json
     end
 
-    def self.all
-      return enum_for(__method__) unless block_given?
-      Config.instance['/slack/hooks'].each do |url|
-        yield Slack.new(url)
-      end
+    def self.all(&block)
+      return enum_for(__method__) unless block
+      Config.instance['/slack/hooks'].map {|v| Slack.new(v)}.each(&block)
     end
 
     def self.broadcast(src)

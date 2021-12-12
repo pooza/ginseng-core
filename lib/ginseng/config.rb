@@ -52,8 +52,7 @@ module Ginseng
     end
 
     def [](key)
-      keys = Set[key]
-      (raw['deprecated'] || []).each do |entry|
+      keys = (raw['deprecated'] || []).inject(Set[key]) do |keys, entry|
         next unless entry['key'] == key
         keys.merge(entry['aliases'])
         break
