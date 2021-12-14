@@ -16,9 +16,10 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency 'activesupport', '>=6.1.3.2' # CVE-2021-22904
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
-  spec.add_dependency 'cgi', ">= 0.3.1" # CVE-2021-41816
+  spec.add_dependency 'bundler', '~>2.0'
+  spec.add_dependency 'cgi', ">=0.3.1" # CVE-2021-41816
   spec.add_dependency 'daemon-spawn'
-  spec.add_dependency 'date', ">= 3.2.1" # CVE-2021-41817
+  spec.add_dependency 'date', ">=3.2.1" # CVE-2021-41817
   spec.add_dependency 'erb'
   spec.add_dependency 'etc'
   spec.add_dependency 'facets'
