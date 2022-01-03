@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
   spec.metadata['homepage_uri'] = package['url']
   spec.metadata['rubygems_mfa_required'] = 'true'
   spec.require_paths = ['lib']
-  spec.required_ruby_version = '>=2.6'
+  spec.required_ruby_version = '>=2.7'
 
   spec.add_dependency 'activesupport', '>=6.1.3.2' # CVE-2021-22904
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
@@ -24,13 +24,14 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'erb'
   spec.add_dependency 'etc'
   spec.add_dependency 'facets'
-  spec.add_dependency 'fileutils', '>=1.5.0'
+  spec.add_dependency 'fileutils', '~>1.6.0'
   spec.add_dependency 'find'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
+  spec.add_dependency 'net-smtp'
   spec.add_dependency 'nokogiri', '>=1.12.5' # CVE-2021-41098
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
