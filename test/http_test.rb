@@ -2,22 +2,18 @@ module Ginseng
   class HTTPTest < TestCase
     def setup
       @http = HTTP.new
+      @http.base_uri = 'https://st.mstdn.b-shock.org/'
       @config = Config.instance
-      @config['/mastodon/url'] = 'https://st.mstdn.b-shock.org/'
     end
 
     def test_get
-      uri = URI.parse(@config['/mastodon/url'])
-      uri.path = '/about'
-      r = @http.get(uri)
+      r = @http.get('/about')
       assert_equal(r.code, 200)
     end
 
     def test_post
       return if Environment.ci?
-      uri = URI.parse(@config['/mastodon/url'])
-      uri.path = '/api/v1/statuses'
-      r = @http.post(uri, {
+      r = @http.post('/api/v1/statuses', {
         headers: {
           'Authorization' => "Bearer #{@config['/mastodon/token']}",
           'Content-Type' => 'application/x-www-form-urlencoded',
@@ -26,7 +22,7 @@ module Ginseng
       })
       assert_equal(r.code, 200)
 
-      r = @http.post(uri, {
+      r = @http.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
       })
@@ -36,15 +32,13 @@ module Ginseng
     def test_upload
       return if Environment.ci?
 
-      uri = URI.parse(@config['/mastodon/url'])
-      uri.path = '/api/v1/media'
-      r = @http.upload(uri, File.join(Environment.dir, 'images/pooza.png'), {
+      r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         'Authorization' => "Bearer #{@config['/mastodon/token']}",
       })
       assert_equal(r.code, 200)
+      id = JSON.parse(r.body)['id']
 
-      uri.path = '/api/v1/media'
-      r = @http.put(uri, File.join(Environment.dir, 'images/pooza.png'), {
+      r = @http.put("/api/v1/media/#{id}", File.join(Environment.dir, 'images/pooza.png'), {
         'Authorization' => "Bearer #{@config['/mastodon/token']}",
       })
       assert_equal(r.code, 200)
