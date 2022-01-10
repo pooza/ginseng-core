@@ -35,9 +35,16 @@ module Ginseng
 
     def test_upload
       return if Environment.ci?
+
       uri = URI.parse(@config['/mastodon/url'])
       uri.path = '/api/v1/media'
       r = @http.upload(uri, File.join(Environment.dir, 'images/pooza.png'), {
+        'Authorization' => "Bearer #{@config['/mastodon/token']}",
+      })
+      assert_equal(r.code, 200)
+
+      uri.path = '/api/v1/media'
+      r = @http.put(uri, File.join(Environment.dir, 'images/pooza.png'), {
         'Authorization' => "Bearer #{@config['/mastodon/token']}",
       })
       assert_equal(r.code, 200)
