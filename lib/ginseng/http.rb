@@ -40,7 +40,7 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       response = HTTParty.get(uri.normalize, options)
-      log(method: 'GET', url: uri, status: response.code, start: start)
+      log(method: :get, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -58,12 +58,12 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       response = HTTParty.post(uri.normalize, options)
-      log(method: 'POST', url: uri, status: response.code, start: start)
+      log(method: :post, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, method: 'POST', url: uri.to_s, count: cnt)
+      @logger.error(error: e, method: :post, url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
@@ -76,7 +76,7 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       response = HTTParty.delete(uri.normalize, options)
-      log(method: 'DELETE', url: uri, status: response.code, start: start)
+      log(method: :delete, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
@@ -87,14 +87,29 @@ module Ginseng
       retry
     end
 
-    def upload(uri, file, headers = {}, body = {})
+    def upload(uri, file, headers = {}, payload = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
       headers['User-Agent'] ||= user_agent
-      body[:file] = file
       uri = create_uri(uri)
       start = Time.now
-      response = RestClient.post(uri.normalize.to_s, body, headers)
-      log(method: 'POST', multipart: true, url: uri, status: response.code, start: start)
+      response = RestClient.post(uri.normalize.to_s, payload.merge(file: file), headers)
+      log(method: :post, multipart: true, url: uri, status: response.code, start: start)
+      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+      return response
+    end
+
+    def put(uri, file, headers = {}, payload = {})
+      file = File.new(file, 'rb') unless file.is_a?(File)
+      headers['User-Agent'] ||= user_agent
+      uri = create_uri(uri)
+      start = Time.now
+      response = RestClient::Request.new(
+        url: uri.normalize.to_s,
+        method: :put,
+        headers: headers,
+        payload: payload.merge(file: file),
+      ).execute
+      log(method: :put, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     end
@@ -128,6 +143,7 @@ module Ginseng
         message[:seconds] = (Time.now - message[:start]).round(3)
         message.delete(:start)
       end
+      message[:method] = message[:method].upcase.to_sym if message[:method]
       message[:url] = message[:url].to_s if message[:url]
       @logger.info(message)
     rescue
