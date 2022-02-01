@@ -99,7 +99,7 @@ module Ginseng
     end
 
     def put(uri, file, headers = {}, payload = {})
-      file = File.new(file, 'rb') unless file.is_a?(File)
+      file = File.new(file, 'rb') if file.is_a?(String)
       headers['User-Agent'] ||= user_agent
       uri = create_uri(uri)
       start = Time.now
