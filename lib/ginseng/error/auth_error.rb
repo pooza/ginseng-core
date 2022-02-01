@@ -1,5 +1,5 @@
 module Ginseng
-  class AuthError < Error
+  class AuthError < SecurityError
     def status
       return 403
     end
