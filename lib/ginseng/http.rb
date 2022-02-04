@@ -98,22 +98,6 @@ module Ginseng
       return response
     end
 
-    def put(uri, file, headers = {}, payload = {})
-      file = File.new(file, 'rb') if file.is_a?(String)
-      headers['User-Agent'] ||= user_agent
-      uri = create_uri(uri)
-      start = Time.now
-      response = RestClient::Request.new(
-        url: uri.normalize.to_s,
-        method: :put,
-        headers: headers,
-        payload: payload.merge(file: file),
-      ).execute
-      log(method: :put, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
-    end
-
     private
 
     def user_agent

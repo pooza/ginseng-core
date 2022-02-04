@@ -36,12 +36,6 @@ module Ginseng
         'Authorization' => "Bearer #{@config['/mastodon/token']}",
       })
       assert_equal(r.code, 200)
-      id = JSON.parse(r.body)['id']
-
-      r = @http.put("/api/v1/media/#{id}", File.join(Environment.dir, 'images/pooza.png'), {
-        'Authorization' => "Bearer #{@config['/mastodon/token']}",
-      })
-      assert_equal(r.code, 200)
     end
 
     def test_base_uri
