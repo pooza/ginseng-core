@@ -1,4 +1,4 @@
 module Ginseng
-  class ImplementError < Error
+  class ImplementError < NoMethodError
   end
 end

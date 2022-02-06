@@ -29,17 +29,26 @@ module Ginseng
       assert_equal(r.code, 200)
     end
 
+    def test_put
+      return if Environment.ci?
+
+      r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
+        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+      })
+      id = JSON.parse(r.body)['id']
+      r = @http.put("/api/v1/media/#{id}", {
+        body: {description: 'おにぎりのレシピッピ'},
+        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+      })
+      assert_equal(r.code, 200)
+      assert_equal(JSON.parse(r.body)['description'], 'おにぎりのレシピッピ')
+    end
+
     def test_upload
       return if Environment.ci?
 
       r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
-        'Authorization' => "Bearer #{@config['/mastodon/token']}",
-      })
-      assert_equal(r.code, 200)
-      id = JSON.parse(r.body)['id']
-
-      r = @http.put("/api/v1/media/#{id}", File.join(Environment.dir, 'images/pooza.png'), {
-        'Authorization' => "Bearer #{@config['/mastodon/token']}",
+        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
       assert_equal(r.code, 200)
     end
