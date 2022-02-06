@@ -106,7 +106,7 @@ module Ginseng
     end
 
     def upload(uri, file, options = {})
-      file = File.new(file, 'rb') unless file.is_a?(File)
+      file = File.new(file, 'rb') if file.is_a?(String)
       uri = create_uri(uri)
       method = options[:method] || :post
       start = Time.now
