@@ -45,7 +45,7 @@ module Ginseng
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, method: 'GET', url: uri.to_s, count: cnt)
+      @logger.error(error: e, method: :get, url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
@@ -81,13 +81,31 @@ module Ginseng
       return response
     rescue => e
       cnt += 1
-      @logger.error(error: e, method: 'DELETE', url: uri.to_s, count: cnt)
+      @logger.error(error: e, method: :delete, url: uri.to_s, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
     end
 
-    def upload(uri, file, headers = {}, payload = {})
+    def put(uri, options = {})
+      cnt ||= 0
+      options[:headers] = create_headers(options[:headers])
+      options[:body] = create_body(options[:body], options[:headers])
+      uri = create_uri(uri)
+      start = Time.now
+      response = HTTParty.put(uri.normalize, options)
+      log(method: :delete, url: uri, status: response.code, start: start)
+      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+      return response
+    rescue => e
+      cnt += 1
+      @logger.error(error: e, method: :put, url: uri.to_s, count: cnt)
+      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      sleep(retry_seconds)
+      retry
+    end
+
+    def upload(uri, file, headers = {}, payload = {}, options = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
       headers['User-Agent'] ||= user_agent
       uri = create_uri(uri)
