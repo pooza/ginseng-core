@@ -105,13 +105,18 @@ module Ginseng
       retry
     end
 
-    def upload(uri, file, headers = {}, payload = {}, options = {})
+    def upload(uri, file, options = {})
       file = File.new(file, 'rb') unless file.is_a?(File)
-      headers['User-Agent'] ||= user_agent
       uri = create_uri(uri)
+      method = options[:method] || :post
       start = Time.now
-      response = RestClient.post(uri.normalize.to_s, payload.merge(file: file), headers)
-      log(method: :post, multipart: true, url: uri, status: response.code, start: start)
+      response = RestClient::Request.new(
+        url: uri.normalize.to_s,
+        method: method,
+        headers: (options[:headers] || {}).merge('User-Agent': user_agent),
+        payload: (options[:payload] || options[:body] || {}).merge(file: file),
+      ).execute
+      log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     end

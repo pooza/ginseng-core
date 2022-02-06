@@ -33,7 +33,7 @@ module Ginseng
       return if Environment.ci?
 
       r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
-        'Authorization' => "Bearer #{@config['/mastodon/token']}",
+        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
       id = JSON.parse(r.body)['id']
       r = @http.put("/api/v1/media/#{id}", {
@@ -48,7 +48,7 @@ module Ginseng
       return if Environment.ci?
 
       r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
-        'Authorization' => "Bearer #{@config['/mastodon/token']}",
+        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
       assert_equal(r.code, 200)
     end
