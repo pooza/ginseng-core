@@ -94,7 +94,7 @@ module Ginseng
       uri = create_uri(uri)
       start = Time.now
       response = HTTParty.put(uri.normalize, options)
-      log(method: :delete, url: uri, status: response.code, start: start)
+      log(method: :put, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
