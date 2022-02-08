@@ -108,13 +108,17 @@ module Ginseng
     def upload(uri, file, options = {})
       file = File.new(file, 'rb') if file.is_a?(String)
       uri = create_uri(uri)
+      headers = options[:headers] || {}
+      headers['User-Agent'] ||= user_agent
+      payload = options[:payload] || options[:body] || {}
+      payload[:file] = file if file
       method = options[:method] || :post
       start = Time.now
       response = RestClient::Request.new(
         url: uri.normalize.to_s,
         method: method,
-        headers: (options[:headers] || {}).merge('User-Agent': user_agent),
-        payload: (options[:payload] || options[:body] || {}).merge(file: file),
+        headers: headers,
+        payload: payload,
       ).execute
       log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
