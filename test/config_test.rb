@@ -10,7 +10,7 @@ module Ginseng
 
     def test_raw
       assert_kind_of(Hash, @config.raw)
-      @config.raw.each do |k, v|
+      @config.raw.each do |_k, v|
         assert_kind_of(Hash, v)
       end
     end

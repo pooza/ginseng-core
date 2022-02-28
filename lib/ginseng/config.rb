@@ -66,7 +66,7 @@ module Ginseng
     end
 
     def keys(prefix)
-      return filter_map do |key, value|
+      return filter_map do |key, _value|
         next unless key.start_with?(prefix)
         key.sub(Regexp.new("^#{prefix}"), '').split('/')[1]
       end.sort.to_set
