@@ -105,6 +105,26 @@ module Ginseng
       retry
     end
 
+    def mkcol(uri, options = {})
+      cnt ||= 0
+      uri = create_uri(uri)
+      start = Time.now
+      response = RestClient::Request.execute(
+        method: :mkcol,
+        url: uri.normalize.to_s,
+        headers: create_headers(options[:headers]),
+      )
+      log(method: :mkcol, url: uri, status: response.code, start: start)
+      raise Ginseng::GatewayError, "Bad response #{response.code}" unless response.code < 400
+      return response
+    rescue => e
+      cnt += 1
+      @logger.error(error: e, method: :put, url: uri.to_s, count: cnt)
+      raise Ginseng::GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      sleep(retry_seconds)
+      retry
+    end
+
     def upload(uri, file, options = {})
       file = File.new(file, 'rb') if file.is_a?(String)
       uri = create_uri(uri)
@@ -114,12 +134,12 @@ module Ginseng
       payload[:file] = file if file
       method = options[:method] || :post
       start = Time.now
-      response = RestClient::Request.new(
-        url: uri.normalize.to_s,
+      response = RestClient::Request.execute(
         method: method,
+        url: uri.normalize.to_s,
         headers: headers,
         payload: payload,
-      ).execute
+      )
       log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
