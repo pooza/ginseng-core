@@ -6,6 +6,11 @@ module Ginseng
       @config = Config.instance
     end
 
+    def test_head
+      r = @http.head('/about')
+      assert_equal(r.code, 200)
+    end
+
     def test_get
       r = @http.get('/about')
       assert_equal(r.code, 200)

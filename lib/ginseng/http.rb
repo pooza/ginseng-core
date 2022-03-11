@@ -33,6 +33,24 @@ module Ginseng
       return uri
     end
 
+    def head(uri, options = {})
+      cnt ||= 0
+      options[:headers] ||= {}
+      options[:headers]['User-Agent'] ||= user_agent
+      uri = create_uri(uri)
+      start = Time.now
+      response = HTTParty.head(uri.normalize, options)
+      log(method: :get, url: uri, status: response.code, start: start)
+      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+      return response
+    rescue => e
+      cnt += 1
+      @logger.error(error: e, method: :get, url: uri.to_s, count: cnt)
+      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      sleep(retry_seconds)
+      retry
+    end
+
     def get(uri, options = {})
       cnt ||= 0
       options[:headers] ||= {}
