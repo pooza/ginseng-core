@@ -115,12 +115,12 @@ module Ginseng
         headers: create_headers(options[:headers]),
       )
       log(method: :mkcol, url: uri, status: response.code, start: start)
-      raise Ginseng::GatewayError, "Bad response #{response.code}" unless response.code < 400
+      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     rescue => e
       cnt += 1
       @logger.error(error: e, method: :put, url: uri.to_s, count: cnt)
-      raise Ginseng::GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
     end
