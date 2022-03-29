@@ -1,28 +1,28 @@
 module Ginseng
   class StringTest < TestCase
     def test_ellipsize
-      assert_equal('キュアソード'.ellipsize(5), 'キュアソー…')
-      assert_equal('hogehogehoge'.ellipsize!(4), 'hoge…')
+      assert_equal('キュアソー…', 'キュアソード'.ellipsize(5))
+      assert_equal('hoge…', 'hogehogehoge'.ellipsize!(4))
     end
 
     def test_nfkc
-      assert_equal('！！！！！!!!!'.nfkc, '!!!!!!!!!')
+      assert_equal('!!!!!!!!!', '！！！！！!!!!'.nfkc)
     end
 
     def test_sanitize
-      assert_equal('<p>なぎさ&ほのか</p>'.sanitize, 'なぎさ&ほのか ')
+      assert_equal('なぎさ&ほのか ', '<p>なぎさ&ほのか</p>'.sanitize)
     end
 
     def test_bin2hex
-      assert_equal('<p>なぎさ&ほのか</p>'.bin2hex, '3c703ee381aae3818ee3819526e381bbe381aee3818b3c2f703e')
+      assert_equal('3c703ee381aae3818ee3819526e381bbe381aee3818b3c2f703e', '<p>なぎさ&ほのか</p>'.bin2hex)
     end
 
     def test_hex2bin
-      assert_equal('3c703ee381aae3818ee3819526e381bbe381aee3818b3c2f703e'.hex2bin, '<p>なぎさ&ほのか</p>')
+      assert_equal('<p>なぎさ&ほのか</p>', '3c703ee381aae3818ee3819526e381bbe381aee3818b3c2f703e'.hex2bin)
     end
 
     def test_adler32
-      assert_equal('電柱が二本'.adler32, '1473055422')
+      assert_equal('1473055422', '電柱が二本'.adler32)
     end
 
     def test_nokogiri

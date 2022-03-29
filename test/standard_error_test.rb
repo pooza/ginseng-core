@@ -8,8 +8,8 @@ module Ginseng
     end
 
     def test_status
-      assert_equal(@standard_error.status, 500)
-      assert_equal(@runtime_error.status, 500)
+      assert_equal(500, @standard_error.status)
+      assert_equal(500, @runtime_error.status)
     end
 
     def test_to_h

@@ -1,7 +1,7 @@
 module Ginseng
   class PackageTest < TestCase
     def test_name
-      assert_equal(Package.name, 'ginseng-core')
+      assert_equal('ginseng-core', Package.name)
     end
 
     def test_version

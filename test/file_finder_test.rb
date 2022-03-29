@@ -6,27 +6,27 @@ module Ginseng
     end
 
     def test_execute
-      assert_equal(@finder.exec.count, 0)
+      assert_equal(0, @finder.exec.count)
       assert(@finder.exec.is_a?(Enumerable))
 
       @finder.patterns.clear
       @finder.patterns.push('*')
       assert(@finder.exec.is_a?(Enumerable))
       @finder.exec do |f|
-        assert(File.exist?(f))
+        assert_path_exist(f)
       end
 
       @finder.patterns.clear
       @finder.patterns.push('*.rb')
       assert(@finder.exec.is_a?(Enumerable))
       @finder.exec do |f|
-        assert(File.exist?(f))
+        assert_path_exist(f)
       end
 
       @finder.patterns.clear
       @finder.patterns.push('*.exe')
       assert(@finder.exec.is_a?(Enumerable))
-      assert_equal(@finder.exec.count, 0)
+      assert_equal(0, @finder.exec.count)
     end
   end
 end
