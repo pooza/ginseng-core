@@ -7,7 +7,10 @@ module Ginseng
       @path = name if name.start_with?('/') && File.exist?(name)
       @path ||= File.join(environment_class.dir, dir, "#{name.sub(/\.erb$/, '')}.erb")
       raise RenderError, "Template file #{name} not found" unless File.exist?(@path)
-      @erb = ERB.new(File.read(@path), **{trim_mode: '-'})
+      @erb = ERB.new(
+        ['<%# encoding: UTF-8 -%>', File.read(@path)].join("\n"),
+        **{trim_mode: '-'},
+      )
       self.params = {}
     end
 
