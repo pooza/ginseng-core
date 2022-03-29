@@ -1,5 +1,6 @@
 require:
   - rubocop-performance
+  - rubocop-minitest
   - rubocop-rake
 
 AllCops:
@@ -89,6 +90,8 @@ Metrics/PerceivedComplexity:
     - test/*
     - '**/contract/*'
   Max: 10
+Minitest/MultipleAssertions:
+  Enabled: false
 Naming/RescuedExceptionsVariableName:
   PreferredName: e
 Rake:

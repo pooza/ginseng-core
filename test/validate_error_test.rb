@@ -11,7 +11,7 @@ module Ginseng
     end
 
     def test_status
-      assert_equal(@error.status, 422)
+      assert_equal(422, @error.status)
     end
   end
 end

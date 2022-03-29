@@ -1,7 +1,7 @@
 module Ginseng
   class EnvironmentTest < TestCase
     def test_name
-      assert_equal(Environment.name, 'ginseng-core')
+      assert_equal('ginseng-core', Environment.name)
     end
 
     def test_hostname
@@ -17,7 +17,7 @@ module Ginseng
     end
 
     def test_type
-      assert_equal(Environment.type, 'development')
+      assert_equal('development', Environment.type)
     end
 
     def test_development?
@@ -41,15 +41,15 @@ module Ginseng
     end
 
     def test_cert_file
-      assert(File.exist?(Environment.cert_file))
+      assert_path_exist(Environment.cert_file)
     end
 
     def test_uid
-      assert(Environment.uid.positive?)
+      assert_predicate(Environment.uid, :positive?)
     end
 
     def test_gid
-      assert(Environment.gid.positive?)
+      assert_predicate(Environment.gid, :positive?)
     end
   end
 end

@@ -6,28 +6,28 @@ module Ginseng
     end
 
     def test_deep_merge
-      assert_equal(@hash.deep_merge(b: {d: 4}, e: 5), {a: 1, b: {c: 2, d: 4}, e: 5})
+      assert_equal({a: 1, b: {c: 2, d: 4}, e: 5}, @hash.deep_merge(b: {d: 4}, e: 5))
 
       tmp = @hash.clone
       tmp.deep_merge!(b: {d: 4}, e: 5, f: 10)
-      assert_equal(tmp, {a: 1, b: {c: 2, d: 4}, e: 5, f: 10})
+      assert_equal({a: 1, b: {c: 2, d: 4}, e: 5, f: 10}, tmp)
     end
 
     def test_key_flatten
-      assert_equal(@hash.key_flatten, {'/a' => 1, '/b/c' => 2, '/b/d' => 3})
+      assert_equal({'/a' => 1, '/b/c' => 2, '/b/d' => 3}, @hash.key_flatten)
 
       tmp = @hash.clone
       tmp.key_flatten!
-      assert_equal(tmp, {'/a' => 1, '/b/c' => 2, '/b/d' => 3})
+      assert_equal({'/a' => 1, '/b/c' => 2, '/b/d' => 3}, tmp)
     end
 
     def test_deep_compact
-      assert_equal(@hash2.deep_compact, {a: {ab: 12}, c: 1})
+      assert_equal({a: {ab: 12}, c: 1}, @hash2.deep_compact)
     end
 
     def test_deep_compact!
       cloned = @hash2.deep_compact!
-      assert_equal(cloned, {a: {ab: 12}, c: 1})
+      assert_equal({a: {ab: 12}, c: 1}, cloned)
     end
   end
 end

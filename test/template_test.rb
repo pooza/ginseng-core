@@ -13,22 +13,22 @@ module Ginseng
     end
 
     def test_path
-      assert(File.exist?(@template.path))
+      assert_path_exist(@template.path)
     end
 
     def test_to_s
       @template[:output] = 1
-      assert_equal(@template.to_s, "body1\n")
+      assert_equal("body1\n", @template.to_s)
       @template[:output] = 2
-      assert_equal(@template.to_s, "body2\n")
+      assert_equal("body2\n", @template.to_s)
     end
 
     def test_params=
       assert_kind_of(Hash, @template.params)
       @template.params = {'output' => 3, 'body3' => 'body3'}
-      assert_equal(@template.to_s, "body3\n")
+      assert_equal("body3\n", @template.to_s)
       @template.params = {output: 3, body3: 'body3!'}
-      assert_equal(@template.to_s, "body3!\n")
+      assert_equal("body3!\n", @template.to_s)
     end
   end
 end

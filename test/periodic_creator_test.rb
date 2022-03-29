@@ -6,12 +6,12 @@ module Ginseng
 
     def test_destroot
       PeriodicCreator.periods.each do |period|
-        assert(File.exist?(PeriodicCreator.destroot(period)))
+        assert_path_exist(PeriodicCreator.destroot(period))
       end
     end
 
     def test_create_link_name
-      assert_equal(PeriodicCreator.create_link_name(900, 'sample'), '900.ginseng-core-sample')
+      assert_equal('900.ginseng-core-sample', PeriodicCreator.create_link_name(900, 'sample'))
     end
   end
 end

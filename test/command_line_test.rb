@@ -6,14 +6,14 @@ module Ginseng
 
     def test_args
       @command.args = []
-      assert_equal(@command.args, [])
+      assert_empty(@command.args)
       @command.args = ['ffmpeg', File.join(Environment.dir, 'sample/poyke.mp4')]
-      assert_equal(@command.args[0], 'ffmpeg')
+      assert_equal('ffmpeg', @command.args[0])
     end
 
     def test_to_s
       @command.args = ['ls', 'a b', '"x"']
-      assert_equal(@command.to_s, 'ls a\\ b \\"x\\"')
+      assert_equal('ls a\\ b \\"x\\"', @command.to_s)
     end
 
     def test_dir
@@ -21,15 +21,15 @@ module Ginseng
       @command.dir = '/etc'
       @command.args = ['ls']
       @command.exec
-      assert_equal(Dir.pwd, '/etc')
+      assert_equal('/etc', Dir.pwd)
     end
 
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
-      assert(@command.status.zero?)
-      assert(@command.stdout.present?)
-      assert(@command.stderr.blank?)
+      assert_predicate(@command.status, :zero?)
+      assert_predicate(@command.stdout, :present?)
+      assert_predicate(@command.stderr, :blank?)
       assert_kind_of(Integer, @command.pid)
     end
 
@@ -47,7 +47,7 @@ module Ginseng
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
       @command.exec
-      assert(@command.stdout.include?('HOGE=fugafuga'))
+      assert_includes(@command.stdout, 'HOGE=fugafuga')
     end
   end
 end

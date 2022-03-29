@@ -8,12 +8,12 @@ module Ginseng
 
     def test_head
       r = @http.head('/about')
-      assert_equal(r.code, 200)
+      assert_equal(200, r.code)
     end
 
     def test_get
       r = @http.get('/about')
-      assert_equal(r.code, 200)
+      assert_equal(200, r.code)
     end
 
     def test_post
@@ -25,13 +25,13 @@ module Ginseng
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
       })
-      assert_equal(r.code, 200)
+      assert_equal(200, r.code)
 
       r = @http.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
       })
-      assert_equal(r.code, 200)
+      assert_equal(200, r.code)
     end
 
     def test_put
@@ -45,8 +45,8 @@ module Ginseng
         body: {description: 'おにぎりのレシピッピ'},
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
-      assert_equal(r.code, 200)
-      assert_equal(JSON.parse(r.body)['description'], 'おにぎりのレシピッピ')
+      assert_equal(200, r.code)
+      assert_equal('おにぎりのレシピッピ', JSON.parse(r.body)['description'])
     end
 
     def test_upload
@@ -55,7 +55,7 @@ module Ginseng
       r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
-      assert_equal(r.code, 200)
+      assert_equal(200, r.code)
     end
 
     def test_base_uri
@@ -86,7 +86,7 @@ module Ginseng
     def test_retry_limit
       assert_kind_of(Integer, @http.retry_limit)
       @http.retry_limit = 3
-      assert_equal(@http.retry_limit, 3)
+      assert_equal(3, @http.retry_limit)
     end
   end
 end

@@ -5,7 +5,7 @@ module Ginseng
     end
 
     def test_commaize
-      assert_equal(@number.commaize, '4,790,122')
+      assert_equal('4,790,122', @number.commaize)
     end
   end
 end
