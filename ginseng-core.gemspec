@@ -40,7 +40,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'
   spec.add_dependency 'time'
-  spec.add_dependency 'yajl-ruby'
+  spec.add_dependency 'yajl-ruby', '>= 1.4.2' # CVE-2022-24795
   spec.add_dependency 'zeitwerk', '>=2.4.0'
   spec.add_dependency 'zlib'
   spec.add_development_dependency 'pp'
