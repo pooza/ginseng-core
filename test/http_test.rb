@@ -3,7 +3,10 @@ module Ginseng
     def setup
       @mastodon = HTTP.new
       @mastodon.base_uri = 'https://st.mstdn.b-shock.org/'
-      @config = Config.instance
+      config = Config.instance
+      @tokens = {
+        mastodon: (config['/mastodon/token'] rescue nil),
+      }
     end
 
     def test_head
@@ -19,7 +22,7 @@ module Ginseng
     def test_post
       r = @mastodon.post('/api/v1/statuses', {
         headers: {
-          'Authorization' => "Bearer #{@config['/mastodon/token']}",
+          'Authorization' => "Bearer #{@tokens[:mastodon]}",
           'Content-Type' => 'application/x-www-form-urlencoded',
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
@@ -28,7 +31,7 @@ module Ginseng
       assert_equal(200, r.code)
 
       r = @mastodon.post('/api/v1/statuses', {
-        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
         mock: {class: self.class, method: __method__},
       })
@@ -37,12 +40,12 @@ module Ginseng
 
     def test_put
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
-        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
       })
       id = JSON.parse(r.body)['id']
       r = @mastodon.put("/api/v1/media/#{id}", {
         body: {description: 'おにぎりのレシピッピ'},
-        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
@@ -51,7 +54,7 @@ module Ginseng
 
     def test_upload
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
-        headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
