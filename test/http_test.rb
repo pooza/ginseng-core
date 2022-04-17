@@ -17,7 +17,6 @@ module Ginseng
     end
 
     def test_post
-      return if Environment.ci?
       r = @mastodon.post('/api/v1/statuses', {
         headers: {
           'Authorization' => "Bearer #{@config['/mastodon/token']}",
@@ -37,8 +36,6 @@ module Ginseng
     end
 
     def test_put
-      return if Environment.ci?
-
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
@@ -53,8 +50,6 @@ module Ginseng
     end
 
     def test_upload
-      return if Environment.ci?
-
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
         mock: {class: self.class, method: __method__},
