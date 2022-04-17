@@ -1,35 +1,37 @@
 module Ginseng
   class HTTPTest < TestCase
     def setup
-      @http = HTTP.new
-      @http.base_uri = 'https://st.mstdn.b-shock.org/'
+      @mastodon = HTTP.new
+      @mastodon.base_uri = 'https://st.mstdn.b-shock.org/'
       @config = Config.instance
     end
 
     def test_head
-      r = @http.head('/about')
+      r = @mastodon.head('/about', {mock: {class: self.class, method: __method__}})
       assert_equal(200, r.code)
     end
 
     def test_get
-      r = @http.get('/about')
+      r = @mastodon.get('/about', {mock: {class: self.class, method: __method__}})
       assert_equal(200, r.code)
     end
 
     def test_post
       return if Environment.ci?
-      r = @http.post('/api/v1/statuses', {
+      r = @mastodon.post('/api/v1/statuses', {
         headers: {
           'Authorization' => "Bearer #{@config['/mastodon/token']}",
           'Content-Type' => 'application/x-www-form-urlencoded',
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
+        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
 
-      r = @http.post('/api/v1/statuses', {
+      r = @mastodon.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
+        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
     end
@@ -37,13 +39,14 @@ module Ginseng
     def test_put
       return if Environment.ci?
 
-      r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
+      r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
       })
       id = JSON.parse(r.body)['id']
-      r = @http.put("/api/v1/media/#{id}", {
+      r = @mastodon.put("/api/v1/media/#{id}", {
         body: {description: 'おにぎりのレシピッピ'},
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
       assert_equal('おにぎりのレシピッピ', JSON.parse(r.body)['description'])
@@ -52,41 +55,42 @@ module Ginseng
     def test_upload
       return if Environment.ci?
 
-      r = @http.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
+      r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@config['/mastodon/token']}"},
+        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
     end
 
     def test_base_uri
-      @http.base_uri = 'https://service1.example.com'
-      assert_equal(@http.base_uri, Ginseng::URI.parse('https://service1.example.com'))
+      @mastodon.base_uri = 'https://service1.example.com'
+      assert_equal(@mastodon.base_uri, Ginseng::URI.parse('https://service1.example.com'))
 
-      @http.base_uri = Ginseng::URI.parse('https://service2.example.com')
-      assert_equal(@http.base_uri, Ginseng::URI.parse('https://service2.example.com'))
+      @mastodon.base_uri = Ginseng::URI.parse('https://service2.example.com')
+      assert_equal(@mastodon.base_uri, Ginseng::URI.parse('https://service2.example.com'))
 
       assert_raise RuntimeError do
-        @http.base_uri = '/hoge'
+        @mastodon.base_uri = '/hoge'
       end
 
-      @http.base_uri = nil
-      assert_nil(@http.base_uri)
+      @mastodon.base_uri = nil
+      assert_nil(@mastodon.base_uri)
     end
 
     def test_create_uri
-      @http.base_uri = nil
+      @mastodon.base_uri = nil
       assert_raise RuntimeError do
-        @http.create_uri('/fuga')
+        @mastodon.create_uri('/fuga')
       end
 
-      @http.base_uri = 'https://service1.example.com'
-      assert_equal(@http.create_uri('/fuga'), Ginseng::URI.parse('https://service1.example.com/fuga'))
+      @mastodon.base_uri = 'https://service1.example.com'
+      assert_equal(@mastodon.create_uri('/fuga'), Ginseng::URI.parse('https://service1.example.com/fuga'))
     end
 
     def test_retry_limit
-      assert_kind_of(Integer, @http.retry_limit)
-      @http.retry_limit = 3
-      assert_equal(3, @http.retry_limit)
+      assert_kind_of(Integer, @mastodon.retry_limit)
+      @mastodon.retry_limit = 3
+      assert_equal(3, @mastodon.retry_limit)
     end
   end
 end

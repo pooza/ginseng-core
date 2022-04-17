@@ -4,6 +4,7 @@ require 'rest-client'
 module Ginseng
   class HTTP
     include Package
+    include Mockable
     attr_reader :base_uri
     attr_accessor :retry_limit
 
@@ -34,93 +35,73 @@ module Ginseng
     end
 
     def head(uri, options = {})
-      cnt ||= 0
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
-      uri = create_uri(uri)
-      start = Time.now
-      response = HTTParty.head(uri.normalize, options)
-      log(method: :get, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:get, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.head(uri.normalize, options)
+        log(method: :head, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :get, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def get(uri, options = {})
-      cnt ||= 0
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
-      uri = create_uri(uri)
-      start = Time.now
-      response = HTTParty.get(uri.normalize, options)
-      log(method: :get, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:get, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.get(uri.normalize, options)
+        log(method: :get, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :get, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def post(uri, options = {})
-      cnt ||= 0
       options[:headers] = create_headers(options[:headers])
       options[:body] = create_body(options[:body], options[:headers])
-      uri = create_uri(uri)
-      start = Time.now
-      response = HTTParty.post(uri.normalize, options)
-      log(method: :post, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:post, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.post(uri.normalize, options)
+        log(method: :post, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :post, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def delete(uri, options = {})
-      cnt ||= 0
       options[:headers] = create_headers(options[:headers])
       options[:body] = create_body(options[:body], options[:headers])
-      uri = create_uri(uri)
-      start = Time.now
-      response = HTTParty.delete(uri.normalize, options)
-      log(method: :delete, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:delete, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.delete(uri.normalize, options)
+        log(method: :post, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :delete, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def put(uri, options = {})
-      cnt ||= 0
       options[:headers] = create_headers(options[:headers])
       options[:body] = create_body(options[:body], options[:headers])
-      uri = create_uri(uri)
-      start = Time.now
-      response = HTTParty.put(uri.normalize, options)
-      log(method: :put, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:delete, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.put(uri.normalize, options)
+        log(method: :put, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :put, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def mkcol(uri, options = {})
@@ -164,6 +145,17 @@ module Ginseng
     end
 
     private
+
+    def repeat(method, uri, start)
+      cnt ||= 0
+      yield
+    rescue => e
+      @logger.error(error: e, method: method, url: uri.to_s, start: start, count: cnt)
+      cnt += 1
+      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      sleep(retry_seconds)
+      retry
+    end
 
     def user_agent
       return package_class.user_agent
