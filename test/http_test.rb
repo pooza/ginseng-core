@@ -26,14 +26,14 @@ module Ginseng
           'Content-Type' => 'application/x-www-form-urlencoded',
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
-        mock: {class: self.class, method: __method__},
+        mock: {class: self.class, method: __method__, type: 'application/x-www-form-urlencoded'},
       })
       assert_equal(200, r.code)
 
       r = @mastodon.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
-        mock: {class: self.class, method: __method__},
+        mock: {class: self.class, method: __method__, type: 'application/json'},
       })
       assert_equal(200, r.code)
     end
