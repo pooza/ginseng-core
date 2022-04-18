@@ -12,11 +12,11 @@ module Ginseng
       warn "#{__method__}: #{mock.class} #{File.basename(path)}"
     end
 
-    def load_mock(options)
-      return nil unless options[:error]
-      raise options[:error] unless options[:mock]
-      raise options[:error] unless environment_class.ci?
-      raise options[:error] unless environment_class.test?
+    def load_mock(error, options)
+      return nil unless error
+      raise error unless options[:mock]
+      raise error unless environment_class.ci?
+      raise error unless environment_class.test?
       mock = Marshal.load(File.read(path = create_mock_path(options))) # rubocop:disable Security/MarshalLoad
       warn "#{__method__}: #{mock.class} #{File.basename(path)}"
       return mock

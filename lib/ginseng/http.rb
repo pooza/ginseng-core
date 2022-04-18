@@ -45,7 +45,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def get(uri, options = {})
@@ -59,7 +59,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def post(uri, options = {})
@@ -73,7 +73,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def delete(uri, options = {})
@@ -87,7 +87,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def put(uri, options = {})
@@ -101,7 +101,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def mkcol(uri, options = {})
@@ -117,7 +117,7 @@ module Ginseng
         return response
       end
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     def upload(uri, file, options = {})
@@ -140,7 +140,7 @@ module Ginseng
       save_mock(response, options)
       return response
     rescue => e
-      return load_mock(error: e, options: options)
+      return load_mock(e, options)
     end
 
     private
