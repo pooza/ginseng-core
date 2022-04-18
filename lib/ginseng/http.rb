@@ -105,23 +105,19 @@ module Ginseng
     end
 
     def mkcol(uri, options = {})
-      cnt ||= 0
-      uri = create_uri(uri)
-      start = Time.now
-      response = RestClient::Request.execute(
-        method: :mkcol,
-        url: uri.normalize.to_s,
-        headers: create_headers(options[:headers]),
-      )
-      log(method: :mkcol, url: uri, status: response.code, start: start)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      return response
+      repeat(:mkcol, uri = create_uri(uri), start = Time.now) do
+        response = RestClient::Request.execute(
+          method: :mkcol,
+          url: uri.normalize.to_s,
+          headers: create_headers(options[:headers]),
+        )
+        log(method: :mkcol, url: uri, status: response.code, start: start)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        save_mock(response, options)
+        return response
+      end
     rescue => e
-      cnt += 1
-      @logger.error(error: e, method: :put, url: uri.to_s, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
-      sleep(retry_seconds)
-      retry
+      return load_mock(error: e, options: options)
     end
 
     def upload(uri, file, options = {})
@@ -141,7 +137,10 @@ module Ginseng
       )
       log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+      save_mock(response, options)
       return response
+    rescue => e
+      return load_mock(error: e, options: options)
     end
 
     private

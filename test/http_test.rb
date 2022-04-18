@@ -10,12 +10,12 @@ module Ginseng
     end
 
     def test_head
-      r = @mastodon.head('/about', {mock: {class: self.class, method: __method__}})
+      r = @mastodon.head('/about')
       assert_equal(200, r.code)
     end
 
     def test_get
-      r = @mastodon.get('/about', {mock: {class: self.class, method: __method__}})
+      r = @mastodon.get('/about')
       assert_equal(200, r.code)
     end
 
@@ -26,14 +26,12 @@ module Ginseng
           'Content-Type' => 'application/x-www-form-urlencoded',
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
-        mock: {class: self.class, method: __method__, type: 'application/x-www-form-urlencoded'},
       })
       assert_equal(200, r.code)
 
       r = @mastodon.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
-        mock: {class: self.class, method: __method__, type: 'application/json'},
       })
       assert_equal(200, r.code)
     end
@@ -46,7 +44,6 @@ module Ginseng
       r = @mastodon.put("/api/v1/media/#{id}", {
         body: {description: 'おにぎりのレシピッピ'},
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
-        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
       assert_equal('おにぎりのレシピッピ', JSON.parse(r.body)['description'])
@@ -55,7 +52,6 @@ module Ginseng
     def test_upload
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
-        mock: {class: self.class, method: __method__},
       })
       assert_equal(200, r.code)
     end
