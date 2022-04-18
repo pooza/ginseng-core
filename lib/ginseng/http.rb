@@ -149,7 +149,13 @@ module Ginseng
       cnt ||= 0
       yield
     rescue => e
-      @logger.error(error: e, method: method, url: uri.to_s, start: start, count: cnt)
+      @logger.error(
+        error: e,
+        method: method.upcase.to_sym,
+        url: uri.to_s,
+        start: start,
+        count: cnt,
+      )
       cnt += 1
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
