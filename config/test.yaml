@@ -5,6 +5,7 @@ filters:
       - line_service_test
       - periodic_creator_test
       - mailer_test
+      - http_test
   - name: windows
     cases:
       - logger_test
