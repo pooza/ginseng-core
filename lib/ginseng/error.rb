@@ -12,7 +12,7 @@ module Ginseng
     end
 
     def to_h
-      h = {package: package, class: self.class.name, message: message}
+      h = super
       h[:source_class] = @source_class if @source_class
       h[:backtrace] = backtrace[0..backtrace_level] if backtrace
       return h

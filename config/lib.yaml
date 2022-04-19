@@ -25,3 +25,8 @@ line:
   urls:
     api: https://api.line.me
   to: U00
+logger:
+  mask_fields:
+    - password
+    - token
+    - secret

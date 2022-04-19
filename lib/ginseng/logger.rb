@@ -13,6 +13,7 @@ module Ginseng
       include Package
 
       def initialize(name = nil)
+        @config = config_class.instance
         name ||= package_class.name
         super
       end
@@ -30,17 +31,36 @@ module Ginseng
       end
 
       def create_message(src)
-        if src.is_a?(Hash) && src[:error].is_a?(StandardError)
-          error = Error.create(src[:error])
+        case src
+        in {error: error}
           file, line = error.backtrace.first.split(':')
-          src[:error] = {
-            message: error.message,
+          return mask(src.merge(error: {
+            message: Error.create(error).message,
             file: file.sub("#{Environment.dir}/", ''),
             line: line.to_i,
-          }
+          }))
+        in Hash
+          return mask(src)
+        in StandardError
+          return src.to_h
+        else
+          return src
         end
-        return Error.create(src).to_h if src.is_a?(StandardError)
-        return src
+      end
+
+      private
+
+      def mask(arg)
+        if arg.is_a?(Hash)
+          arg.symbolize_keys.reject {|_, v| v.to_s.empty?}.each do |k, v|
+            if @config['/logger/mask_fields'].member?(k)
+              arg.delete(k)
+            else
+              arg[k] = mask(v)
+            end
+          end
+        end
+        return arg.clone
       end
     end
   end
