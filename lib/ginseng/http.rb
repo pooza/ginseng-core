@@ -4,7 +4,6 @@ require 'rest-client'
 module Ginseng
   class HTTP
     include Package
-    include Mockable
     attr_reader :base_uri
     attr_accessor :retry_limit
 
@@ -41,11 +40,8 @@ module Ginseng
         response = HTTParty.head(uri.normalize, options)
         log(method: :head, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def get(uri, options = {})
@@ -55,11 +51,8 @@ module Ginseng
         response = HTTParty.get(uri.normalize, options)
         log(method: :get, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def post(uri, options = {})
@@ -69,11 +62,8 @@ module Ginseng
         response = HTTParty.post(uri.normalize, options)
         log(method: :post, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def delete(uri, options = {})
@@ -83,11 +73,8 @@ module Ginseng
         response = HTTParty.delete(uri.normalize, options)
         log(method: :post, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def put(uri, options = {})
@@ -97,11 +84,8 @@ module Ginseng
         response = HTTParty.put(uri.normalize, options)
         log(method: :put, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def mkcol(uri, options = {})
@@ -113,11 +97,8 @@ module Ginseng
         )
         log(method: :mkcol, url: uri, status: response.code, start: start)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        save_mock(response, options)
         return response
       end
-    rescue => e
-      return load_mock(e, options)
     end
 
     def upload(uri, file, options = {})
@@ -137,10 +118,7 @@ module Ginseng
       )
       log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-      save_mock(response, options)
       return response
-    rescue => e
-      return load_mock(e, options)
     end
 
     private
@@ -149,6 +127,7 @@ module Ginseng
       cnt ||= 0
       yield
     rescue => e
+      cnt += 1
       @logger.error(
         error: e,
         method: method.upcase.to_sym,
@@ -156,7 +135,6 @@ module Ginseng
         start: start,
         count: cnt,
       )
-      cnt += 1
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry

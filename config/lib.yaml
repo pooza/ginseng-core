@@ -1,5 +1,5 @@
 package:
-  version: 1.13.1
+  version: 1.13.2
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -25,3 +25,8 @@ line:
   urls:
     api: https://api.line.me
   to: U00
+logger:
+  mask_fields:
+    - password
+    - token
+    - secret
