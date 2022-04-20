@@ -33,10 +33,10 @@ module Ginseng
       def create_message(src)
         case src
         in {error: error}
-          return src unless error&.backtrace
+          error = Error.create(error)
           file, line = error.backtrace.first.split(':')
           return mask(src.merge(error: {
-            message: Error.create(error).message,
+            message: error.message,
             file: file.sub("#{Environment.dir}/", ''),
             line: line.to_i,
           }))
