@@ -33,7 +33,6 @@ module Ginseng
       def create_message(src)
         case src
         in {error: error}
-          error = Error.create(error)
           file, line = error.backtrace.first.split(':')
           return mask(src.merge(error: {
             message: error.message,
@@ -44,9 +43,9 @@ module Ginseng
           return mask(src)
         in StandardError
           return src.to_h
-        else
-          return src
         end
+      rescue
+        return src
       end
 
       private
