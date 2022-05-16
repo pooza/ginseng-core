@@ -1,5 +1,10 @@
 module Ginseng
   class LineServiceTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @service = LineService.new
     end

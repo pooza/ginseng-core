@@ -1,5 +1,10 @@
 module Ginseng
   class LoggerTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @logger = Logger.new
     end
