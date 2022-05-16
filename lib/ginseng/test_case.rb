@@ -4,6 +4,18 @@ module Ginseng
   class TestCase < Test::Unit::TestCase
     include Package
 
+    def underscore
+      return self.class.to_s.split('::').last.underscore.sub(/_test$/, '')
+    end
+
+    def disable?
+      return false
+    end
+
+    def run_test
+      super unless disable?
+    end
+
     def self.load(cases = nil)
       ENV['TEST'] = Package.name
       names(cases).each do |name|
@@ -25,7 +37,6 @@ module Ginseng
         finder.patterns.push('*.rb')
         names = finder.exec.map {|v| File.basename(v, '.rb')}
       end
-      TestCaseFilter.all.select(&:active?).each {|v| v.exec(names)}
       return names.to_set
     end
 

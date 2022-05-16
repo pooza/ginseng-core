@@ -53,7 +53,7 @@ module Ginseng
     end
 
     def test_load_file
-      assert_kind_of(Hash, Config.load_file('test'))
+      assert_kind_of(Hash, Config.load_file('autoload'))
     end
   end
 end

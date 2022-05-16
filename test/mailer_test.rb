@@ -1,5 +1,10 @@
 module Ginseng
   class MailerTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @mailer = Mailer.new
       @config = Config.instance

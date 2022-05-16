@@ -1,5 +1,10 @@
 module Ginseng
   class EnvironmentTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def test_name
       assert_equal('ginseng-core', Environment.name)
     end

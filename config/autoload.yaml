@@ -1,13 +1,10 @@
 inflections:
   http: HTTP
   uri: URI
-  ci_test_case_filter: CITestCaseFilter
 entries:
   - path: lib/ginseng
     namespace: Ginseng
   - path: lib/ginseng/error
     namespace: Ginseng
   - path: lib/ginseng/service
-    namespace: Ginseng
-  - path: lib/ginseng/test_case_filter
     namespace: Ginseng

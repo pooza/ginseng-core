@@ -1,5 +1,10 @@
 module Ginseng
   class SlackTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def test_all
       Slack.all do |slack|
         assert_kind_of(Slack, slack)

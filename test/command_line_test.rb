@@ -1,5 +1,10 @@
 module Ginseng
   class CommandLineTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @command = CommandLine.new
     end

@@ -37,10 +37,7 @@ module Ginseng
 
       def sanitize
         require 'sanitize'
-        require 'nokogiri'
-        return Nokogiri::HTML.parse(
-          Sanitize.clean(self),
-        ).text
+        return Sanitize.clean(self).nokogiri.text
       end
 
       def sanitize!

@@ -8,15 +8,14 @@ module Ginseng
       @patterns = []
     end
 
-    def execute
-      return enum_for(__method__) unless block_given?
-      Find.find(@dir) do |f|
-        next unless match_patterns?(f)
-        next unless match_mtime?(f)
-        next unless match_atime?(f)
-        next unless match_empty?(f)
-        yield f
-      end
+    def execute(&block)
+      return enum_for(__method__) unless block
+      Find.find(@dir)
+        .select {|f| match_patterns?(f)}
+        .select {|f| match_mtime?(f)}
+        .select {|f| match_atime?(f)}
+        .select {|f| match_empty?(f)}
+        .each(&block)
     end
 
     alias exec execute
@@ -24,9 +23,7 @@ module Ginseng
     private
 
     def match_patterns?(path)
-      return @patterns.any? do |pattern|
-        File.fnmatch(pattern, File.basename(path))
-      end
+      return @patterns.any? {|p| File.fnmatch(p, File.basename(path))}
     end
 
     def match_mtime?(path)

@@ -1,5 +1,10 @@
 module Ginseng
   class HTTPTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @mastodon = HTTP.new
       @mastodon.base_uri = 'https://st.mstdn.b-shock.org/'

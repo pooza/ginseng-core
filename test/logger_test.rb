@@ -1,5 +1,10 @@
 module Ginseng
   class LoggerTest < TestCase
+    def disable?
+      return true if environment_class.win?
+      return false
+    end
+
     def setup
       @logger = Logger.new
     end
@@ -23,7 +28,7 @@ module Ginseng
         error: {
           message: 'unauthorized',
           file: 'test/logger_test.rb',
-          line: 20,
+          line: 25,
         },
         class: 'Ginseng::LoggerTest',
       }, @logger.create_message(error: e, class: self.class.to_s))
