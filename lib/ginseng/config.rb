@@ -72,6 +72,19 @@ module Ginseng
       end.sort.to_set
     end
 
+    def local_file_path
+      dirs.each do |dir|
+        suffix = suffixes.find {|v| File.exist?(File.join(dir, "local#{v}"))}
+        return File.join(dir, "local#{suffix}") unless suffix.nil?
+      end
+      return nil
+    end
+
+    def update_file(values)
+      return unless path = local_file_path
+      File.write(path, raw['local'].deep_merge(values.deep_stringify_keys).to_yaml)
+    end
+
     def errors
       return JSON::Validator.fully_validate(schema, raw['local'])
     end
