@@ -43,12 +43,19 @@ module Ginseng
 
     def test_local_file_path
       assert_kind_of(String, @config.local_file_path)
-      assert_kind_of(File.exist?(@config.local_file_path))
+      assert(File.exist?(@config.local_file_path))
     end
 
     def test_update_file
       @config.update_file(hoge: {fuga: 1})
-      local_config = YAML.load(@config.local_file_path)
+      local_config = YAML.load_file(@config.local_file_path)
+      assert_equal(1, local_config.dig('hoge', 'fuga'))
+      @config.update_file(hoge: {fuga: 2})
+      local_config = YAML.load_file(@config.local_file_path)
+      assert_equal(2, local_config.dig('hoge', 'fuga'))
+      @config.update_file(hoge: nil)
+      local_config = YAML.load_file(@config.local_file_path)
+      assert_nil(local_config.dig('hoge', 'fuga'))
     end
 
     def test_deep_merge
