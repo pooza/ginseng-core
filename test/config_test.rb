@@ -43,7 +43,7 @@ module Ginseng
 
     def test_local_file_path
       assert_kind_of(String, @config.local_file_path)
-      assert_path_exists(@config.local_file_path)
+      assert_path_exist(@config.local_file_path)
     end
 
     def test_update_file
