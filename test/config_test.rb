@@ -41,6 +41,16 @@ module Ginseng
       assert_equal(@config['/package/url'], Package.url)
     end
 
+    def test_local_file_path
+      assert_kind_of(String, @config.local_file_path)
+      assert_kind_of(File.exist?(@config.local_file_path))
+    end
+
+    def test_update_file
+      @config.update_file(hoge: {fuga: 1})
+      local_config = YAML.load(@config.local_file_path)
+    end
+
     def test_deep_merge
       config = Config.deep_merge({}, {a: 111, b: 222})
       assert_equal({'a' => 111, 'b' => 222}, config)
