@@ -24,6 +24,7 @@ module Ginseng
     def local?
       return true if host == 'localhost'
       return true if host == '127.0.0.1'
+      return true if host == '::1'
       return false
     end
 
