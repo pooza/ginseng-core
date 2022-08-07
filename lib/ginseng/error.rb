@@ -23,7 +23,7 @@ module Ginseng
     end
 
     def self.create(src)
-      return src if src.is_a?(Error)
+      return src if src.is_a?(self)
       dest = new(src.message)
       dest.source_class = src.class.name
       dest.set_backtrace(src.backtrace)
