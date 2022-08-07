@@ -45,6 +45,11 @@ module Ginseng
         return self
       end
 
+      def sha256
+        require 'digest/sha2'
+        return Digest::SHA256.hexdigest(self)
+      end
+
       def adler32
         require 'zlib'
         return Zlib.adler32(self).to_s

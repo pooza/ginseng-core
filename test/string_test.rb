@@ -25,6 +25,10 @@ module Ginseng
       assert_equal('1473055422', '電柱が二本'.adler32)
     end
 
+    def test_sha256
+      assert_equal('484622047f579bba997c9a6df71f0e4c9e65c10f81d9d27cb28c5e106112d06c', '妖魔司教ザボエラ'.sha256)
+    end
+
     def test_nokogiri
       require 'nokogiri'
       assert_kind_of(Nokogiri::HTML::Document, ''.nokogiri)
