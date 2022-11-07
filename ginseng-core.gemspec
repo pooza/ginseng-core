@@ -16,6 +16,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>=2.7'
 
   spec.add_dependency 'activesupport', '>=6.1.3.2' # CVE-2021-22904
+  spec.add_dependency 'actionpack', '>=7.0.4' # CVE-2022-3704
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler', '~>2.0'
   spec.add_dependency 'cgi', '>=0.3.1' # CVE-2021-41816

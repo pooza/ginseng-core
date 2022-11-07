@@ -13,6 +13,7 @@ module Ginseng
     def test_subject
       assert_nil(@mailer.subject)
       @mailer.subject = 'おめでとうございます！'
+
       assert_equal('[ginseng-core] おめでとうございます！', @mailer.subject)
     end
 
@@ -20,6 +21,7 @@ module Ginseng
       assert(@mailer.from.first.start_with?('root@'))
       prev = @mailer.from
       @mailer.from = 'pooza@b-shock.org'
+
       assert_equal('pooza@b-shock.org', @mailer.from.first)
       @mailer.from = prev
     end
@@ -27,6 +29,7 @@ module Ginseng
     def test_to
       prev = @mailer.to
       @mailer.to = 'pooza@b-shock.org'
+
       assert_equal('pooza@b-shock.org', @mailer.to.first)
       @mailer.to = prev
     end

@@ -13,6 +13,7 @@ module Ginseng
     def test_package
       assert_equal('ginseng-core', @error.package)
       @error.package = 'another_package'
+
       assert_equal('another_package', @error.package)
     end
 
@@ -26,6 +27,7 @@ module Ginseng
 
     def test_to_h
       h = @error.to_h
+
       assert_equal('Ginseng::Error', h[:class])
       assert_equal('hoge', h[:message])
       assert_equal('RuntimeError', h[:source_class])

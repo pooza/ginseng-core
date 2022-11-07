@@ -11,6 +11,7 @@ module Ginseng
 
     def test_say
       r = @service.say(Time.now.to_s)
+
       assert_kind_of(HTTParty::Response, r)
       assert_equal(200, r.code)
     end

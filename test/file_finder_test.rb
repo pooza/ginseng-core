@@ -11,6 +11,7 @@ module Ginseng
 
       @finder.patterns.clear
       @finder.patterns.push('*')
+
       assert(@finder.exec.is_a?(Enumerable))
       @finder.exec do |f|
         assert_path_exist(f)
@@ -18,6 +19,7 @@ module Ginseng
 
       @finder.patterns.clear
       @finder.patterns.push('*.rb')
+
       assert(@finder.exec.is_a?(Enumerable))
       @finder.exec do |f|
         assert_path_exist(f)
@@ -25,6 +27,7 @@ module Ginseng
 
       @finder.patterns.clear
       @finder.patterns.push('*.exe')
+
       assert(@finder.exec.is_a?(Enumerable))
       assert_equal(0, @finder.exec.count)
     end
