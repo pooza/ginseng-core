@@ -16,11 +16,13 @@ module Ginseng
 
     def test_head
       r = @mastodon.head('/about')
+
       assert_equal(200, r.code)
     end
 
     def test_get
       r = @mastodon.get('/about')
+
       assert_equal(200, r.code)
     end
 
@@ -32,12 +34,14 @@ module Ginseng
         },
         body: {'status' => 'ドッキドキドリームが煌めく'},
       })
+
       assert_equal(200, r.code)
 
       r = @mastodon.post('/api/v1/statuses', {
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
         body: {status: 'ドッキドキドリームが煌めく'}.to_json,
       })
+
       assert_equal(200, r.code)
     end
 
@@ -50,6 +54,7 @@ module Ginseng
         body: {description: 'おにぎりのレシピッピ'},
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
       })
+
       assert_equal(200, r.code)
       assert_equal('おにぎりのレシピッピ', JSON.parse(r.body)['description'])
     end
@@ -58,14 +63,17 @@ module Ginseng
       r = @mastodon.upload('/api/v1/media', File.join(Environment.dir, 'images/pooza.png'), {
         headers: {'Authorization' => "Bearer #{@tokens[:mastodon]}"},
       })
+
       assert_equal(200, r.code)
     end
 
     def test_base_uri
       @mastodon.base_uri = 'https://service1.example.com'
+
       assert_equal(@mastodon.base_uri, Ginseng::URI.parse('https://service1.example.com'))
 
       @mastodon.base_uri = Ginseng::URI.parse('https://service2.example.com')
+
       assert_equal(@mastodon.base_uri, Ginseng::URI.parse('https://service2.example.com'))
 
       assert_raise RuntimeError do
@@ -73,6 +81,7 @@ module Ginseng
       end
 
       @mastodon.base_uri = nil
+
       assert_nil(@mastodon.base_uri)
     end
 
@@ -83,12 +92,14 @@ module Ginseng
       end
 
       @mastodon.base_uri = 'https://service1.example.com'
+
       assert_equal(@mastodon.create_uri('/fuga'), Ginseng::URI.parse('https://service1.example.com/fuga'))
     end
 
     def test_retry_limit
       assert_kind_of(Integer, @mastodon.retry_limit)
       @mastodon.retry_limit = 3
+
       assert_equal(3, @mastodon.retry_limit)
     end
   end

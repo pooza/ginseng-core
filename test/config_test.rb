@@ -49,23 +49,30 @@ module Ginseng
     def test_update_file
       @config.update_file(hoge: {fuga: 1})
       local_config = YAML.load_file(@config.local_file_path)
+
       assert_equal(1, local_config.dig('hoge', 'fuga'))
       @config.update_file(hoge: {fuga: 2})
       local_config = YAML.load_file(@config.local_file_path)
+
       assert_equal(2, local_config.dig('hoge', 'fuga'))
       @config.update_file(hoge: nil)
       local_config = YAML.load_file(@config.local_file_path)
+
       assert_nil(local_config.dig('hoge', 'fuga'))
     end
 
     def test_deep_merge
       config = Config.deep_merge({}, {a: 111, b: 222})
+
       assert_equal({'a' => 111, 'b' => 222}, config)
       config = Config.deep_merge(config, {c: {d: 333, e: 444}})
+
       assert_equal({'a' => 111, 'b' => 222, 'c' => {'d' => 333, 'e' => 444}}, config)
       config = Config.deep_merge(config, {c: {e: 333, f: 444}})
+
       assert_equal({'a' => 111, 'b' => 222, 'c' => {'d' => 333, 'e' => 333, 'f' => 444}}, config)
       config = Config.deep_merge(config, {c: {d: nil}})
+
       assert_equal({'a' => 111, 'b' => 222, 'c' => {'e' => 333, 'f' => 444}}, config)
     end
 

@@ -31,6 +31,7 @@ module Ginseng
 
     def test_nokogiri
       require 'nokogiri'
+
       assert_kind_of(Nokogiri::HTML::Document, ''.nokogiri)
       assert_kind_of(Nokogiri::HTML::Document, '<div>hoge</div>'.nokogiri)
     end

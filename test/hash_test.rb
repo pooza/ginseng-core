@@ -10,6 +10,7 @@ module Ginseng
 
       tmp = @hash.clone
       tmp.deep_merge!(b: {d: 4}, e: 5, f: 10)
+
       assert_equal({a: 1, b: {c: 2, d: 4}, e: 5, f: 10}, tmp)
     end
 
@@ -18,6 +19,7 @@ module Ginseng
 
       tmp = @hash.clone
       tmp.key_flatten!
+
       assert_equal({'/a' => 1, '/b/c' => 2, '/b/d' => 3}, tmp)
     end
 
@@ -27,6 +29,7 @@ module Ginseng
 
     def test_deep_compact!
       cloned = @hash2.deep_compact!
+
       assert_equal({a: {ab: 12}, c: 1}, cloned)
     end
   end

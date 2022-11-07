@@ -11,12 +11,14 @@ module Ginseng
 
     def test_base64
       @config['/crypt/encoder'] = 'base64'
+
       assert_equal('hogehoge', @crypt.decrypt(@base64_encrypted))
       assert_equal('fugafuga', @crypt.decrypt(@hex_encrypted))
     end
 
     def test_hex
       @config['/crypt/encoder'] = 'hex'
+
       assert_equal('hogehoge', @crypt.decrypt(@base64_encrypted))
       assert_equal('fugafuga', @crypt.decrypt(@hex_encrypted))
     end
@@ -26,6 +28,7 @@ module Ginseng
       assert_raise CryptError do
         @crypt.encrypt('fugafuga')
       end
+
       assert_equal('hogehoge', @crypt.decrypt(@base64_encrypted))
       assert_equal('fugafuga', @crypt.decrypt(@hex_encrypted))
     end
