@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'actionpack', '>=7.0.4' # CVE-2022-3704
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler', '~>2.0'
-  spec.add_dependency 'cgi', '>=0.3.1' # CVE-2021-41816
+  spec.add_dependency 'cgi', '>=0.3.5' # CVE-2021-33621
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'date', '>=3.2.1' # CVE-2021-41817
   spec.add_dependency 'erb'
