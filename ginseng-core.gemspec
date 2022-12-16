@@ -16,7 +16,6 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>=2.7'
 
   spec.add_dependency 'activesupport', '>=6.1.3.2' # CVE-2021-22904
-  spec.add_dependency 'actionpack', '>=7.0.4' # CVE-2022-3704
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler', '~>2.0'
   spec.add_dependency 'cgi', '>=0.3.5' # CVE-2021-33621
@@ -44,6 +43,12 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'yajl-ruby', '>= 1.4.3' # CVE-2022-24795
   spec.add_dependency 'zeitwerk', '>=2.4.0'
   spec.add_dependency 'zlib'
+
+  # security
+  spec.add_dependency 'actionpack', '>=7.0.4' # CVE-2022-3704
+  spec.add_dependency 'loofah', '>=2.19.1' # CVE-2022-23514 CVE-2022-23515 CVE-2022-23516
+  spec.add_dependency 'rails-html-sanitizer', '>=1.4.4' # CVE-2022-23517 CVE-2022-23518 CVE-2022-23519 CVE-2022-23520
+
   spec.add_development_dependency 'pp'
   spec.add_development_dependency 'ricecream'
   spec.add_development_dependency 'rubocop'
