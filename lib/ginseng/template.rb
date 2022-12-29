@@ -9,7 +9,7 @@ module Ginseng
       raise RenderError, "Template file #{name} not found" unless File.exist?(@path)
       @erb = ERB.new(
         ['<%# encoding: UTF-8 -%>', File.read(@path)].join("\n"),
-        **{trim_mode: '-'},
+        trim_mode: '-',
       )
       self.params = {}
     end

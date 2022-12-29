@@ -24,7 +24,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'erb'
   spec.add_dependency 'etc'
   spec.add_dependency 'facets'
-  spec.add_dependency 'fileutils', '~>1.6.0'
+  spec.add_dependency 'fileutils', '~>1.7.0'
   spec.add_dependency 'find'
   spec.add_dependency 'httparty'
   spec.add_dependency 'json-schema'
