@@ -37,6 +37,10 @@ module Ginseng
       return self.class.to_s
     end
 
+    def jit_ready?
+      return ENV['RUBY_YJIT_ENABLE'].present?
+    end
+
     def fork!(args)
       Process.setsid
       exit if fork
