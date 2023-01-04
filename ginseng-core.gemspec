@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'facets'
   spec.add_dependency 'fileutils', '~>1.7.0'
   spec.add_dependency 'find'
-  spec.add_dependency 'httparty'
+  spec.add_dependency 'httparty', '>=0.21.0' # GHSA-5pq7-52mg-hr42
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
