@@ -18,7 +18,12 @@ module Ginseng
 
     def start(args)
       save_config
-      @logger.info(daemon: app_name, version: package_class.version, message: 'start')
+      @logger.info(
+        daemon: app_name,
+        version: package_class.version,
+        message: 'start',
+        command: command.to_s,
+      )
       IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
         @logger.info(create_log_entry(line))
       end
