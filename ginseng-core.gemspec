@@ -36,7 +36,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
-  spec.add_dependency 'sanitize'
+  spec.add_dependency 'sanitize', '>=6.0.1' # CVE-2023-23627
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'
   spec.add_dependency 'time'

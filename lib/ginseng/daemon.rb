@@ -58,22 +58,6 @@ module Ginseng
       start(args)
     end
 
-    def self.start(opts, args)
-      living_daemons = find(opts).select(&:alive?)
-      raise "Already started! PIDS: #{living_daemons.map(&:pid).join(', ')}" if living_daemons.any?
-      build(opts).map do |daemon|
-        unless File.writable?(File.dirname(daemon.pid_file))
-          raise "Unable to write PID file to #{daemon.pid_file}"
-        end
-        raise "#{daemon.app_name} is already running (PID #{daemon.pid})" if daemon.alive?
-        fork {daemon.fork!(args)}
-        puts daemon.motd
-        puts ''
-      end
-    end
-
-    private
-
     def save_config
       config = @config.raw['application'][name]
       if values = @config.raw['local']&.dig(name)
@@ -88,6 +72,20 @@ module Ginseng
 
     def create_log_entry(line)
       return {daemon: app_name, output: line.chomp}
+    end
+
+    def self.start(opts, args)
+      living_daemons = find(opts).select(&:alive?)
+      raise "Already started! PIDS: #{living_daemons.map(&:pid).join(', ')}" if living_daemons.any?
+      build(opts).map do |daemon|
+        unless File.writable?(File.dirname(daemon.pid_file))
+          raise "Unable to write PID file to #{daemon.pid_file}"
+        end
+        raise "#{daemon.app_name} is already running (PID #{daemon.pid})" if daemon.alive?
+        fork {daemon.fork!(args)}
+        puts daemon.motd
+        puts ''
+      end
     end
   end
 end
