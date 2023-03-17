@@ -24,8 +24,8 @@ jobs:
           bundle exec rake bundle:check
       - name: cert check
         run: |
-          bundle exec rake cert:update
-          git diff
+          #bundle exec rake cert:update
+          #git diff
           #bundle exec rake cert:check
       - name: Run lint
         run: |
