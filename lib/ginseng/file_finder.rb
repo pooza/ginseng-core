@@ -38,7 +38,7 @@ module Ginseng
 
     def match_empty?(path)
       return true unless @empty
-      return File.size(path).zero?
+      return File.empty?(path)
     end
   end
 end
