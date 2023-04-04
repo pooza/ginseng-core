@@ -39,7 +39,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'sanitize', '>=6.0.1' # CVE-2023-23627
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'
-  spec.add_dependency 'time'
+  spec.add_dependency 'time', '>= 0.2.2' # CVE-2023-28756
   spec.add_dependency 'yajl-ruby', '>= 1.4.3' # CVE-2022-24795
   spec.add_dependency 'zeitwerk', '>=2.4.0'
   spec.add_dependency 'zlib'
