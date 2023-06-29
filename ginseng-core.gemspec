@@ -45,7 +45,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'zlib'
 
   # security
-  spec.add_dependency 'actionpack', '>=7.0.4.1' # CVE-2023-22795 CVE-2023-22796 CVE-2023-22797
+  spec.add_dependency 'actionpack', '>=7.0.5.1' # CVE-2023-28362
   spec.add_dependency 'loofah', '>=2.19.1' # CVE-2022-23514 CVE-2022-23515 CVE-2022-23516
   spec.add_dependency 'rack', '>=2.2.6.2' # CVE-2022-44570
   spec.add_dependency 'rails-html-sanitizer', '>=1.4.4' # CVE-2022-23517 CVE-2022-23518 CVE-2022-23519 CVE-2022-23520
