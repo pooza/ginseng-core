@@ -51,7 +51,8 @@ module Ginseng
       private
 
       def mask(arg)
-        if arg.is_a?(Hash)
+        case arg
+        in Hash
           arg.symbolize_keys.reject {|_, v| v.to_s.empty?}.each do |k, v|
             if @config['/logger/mask_fields'].member?(k.to_s)
               arg.delete(k)
@@ -59,6 +60,11 @@ module Ginseng
               arg[k] = mask(v)
             end
           end
+        in Array
+          arg.reject {|v| v.to_s.empty?}.each_with_index do |v, i|
+              arg[i] = mask(v)
+          end
+        else
         end
         return arg.clone
       end
