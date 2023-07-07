@@ -62,7 +62,7 @@ module Ginseng
           end
         in Array
           arg.reject {|v| v.to_s.empty?}.each_with_index do |v, i|
-              arg[i] = mask(v)
+            arg[i] = mask(v)
           end
         else
         end
