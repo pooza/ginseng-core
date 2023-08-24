@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>=2.7'
 
-  spec.add_dependency 'activesupport', '>=7.0.4.3' # CVE-2023-28120
+  spec.add_dependency 'activesupport', '>=7.0.7.1' # CVE-2023-38037
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler', '~>2.0'
   spec.add_dependency 'cgi', '>=0.3.5' # CVE-2021-33621
