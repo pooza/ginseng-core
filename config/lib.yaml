@@ -1,5 +1,5 @@
 package:
-  version: 1.13.25
+  version: 1.13.26
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -20,6 +20,8 @@ http:
   retry:
     limit: 5
     seconds: 1
+  timeout:
+    seconds: 30
 line:
   token: null
   urls:
