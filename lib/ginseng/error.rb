@@ -1,3 +1,5 @@
+require 'pp' # rubocop:disable Lint/RedundantRequireStatement
+
 module Ginseng
   class Error < StandardError
     include Package
