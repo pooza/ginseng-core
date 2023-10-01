@@ -115,6 +115,7 @@ module Ginseng
         url: uri.normalize.to_s,
         headers: headers,
         payload: payload,
+        timeout: @config['/http/timeout/seconds'],
       )
       log(method: method, multipart: true, url: uri, status: response.code, start: start)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
