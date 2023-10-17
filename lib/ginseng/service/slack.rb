@@ -12,7 +12,7 @@ module Ginseng
 
     def post(message, type = :yaml)
       return unless body = create_body(message, type)
-      return @http.post(@uri, {body: body})
+      return @http.post(@uri, {body:})
     end
 
     alias say post

@@ -29,7 +29,7 @@ module Ginseng
       dest = File.join(dir, create_link_name(@counter, src))
       puts "create link #{src} -> #{dest}" if environment_class.rake?
       File.symlink(src, dest)
-      @logger.info(action: 'create link', src: src, dest: dest)
+      @logger.info(action: 'create link', src:, dest:)
       @counter += 1
     end
 
