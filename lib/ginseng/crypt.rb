@@ -36,7 +36,7 @@ module Ginseng
       rescue CryptError
         next
       rescue => e
-        @logger.error(error: e, encoder: encoder)
+        @logger.error(error: e, encoder:)
       end
       raise CryptError, "invalid string '#{joined}'"
     end

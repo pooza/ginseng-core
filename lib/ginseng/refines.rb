@@ -162,7 +162,7 @@ module Ginseng
         return {
           package: Package.name,
           class: self.class.name,
-          message: message,
+          message:,
         }
       end
     end

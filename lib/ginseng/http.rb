@@ -38,7 +38,7 @@ module Ginseng
       options[:headers]['User-Agent'] ||= user_agent
       repeat(:get, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.head(uri.normalize, options)
-        log(method: :head, url: uri, status: response.code, start: start)
+        log(method: :head, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -49,7 +49,7 @@ module Ginseng
       options[:headers]['User-Agent'] ||= user_agent
       repeat(:get, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.get(uri.normalize, options)
-        log(method: :get, url: uri, status: response.code, start: start)
+        log(method: :get, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -60,7 +60,7 @@ module Ginseng
       options[:body] = create_body(options[:body], options[:headers])
       repeat(:post, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.post(uri.normalize, options)
-        log(method: :post, url: uri, status: response.code, start: start)
+        log(method: :post, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -71,7 +71,7 @@ module Ginseng
       options[:body] = create_body(options[:body], options[:headers])
       repeat(:delete, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.delete(uri.normalize, options)
-        log(method: :post, url: uri, status: response.code, start: start)
+        log(method: :post, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -82,7 +82,7 @@ module Ginseng
       options[:body] = create_body(options[:body], options[:headers])
       repeat(:delete, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.put(uri.normalize, options)
-        log(method: :put, url: uri, status: response.code, start: start)
+        log(method: :put, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -95,7 +95,7 @@ module Ginseng
           url: uri.normalize.to_s,
           headers: create_headers(options[:headers]),
         )
-        log(method: :mkcol, url: uri, status: response.code, start: start)
+        log(method: :mkcol, url: uri, status: response.code, start:)
         raise GatewayError, "Bad response #{response.code}" unless response.code < 400
         return response
       end
@@ -111,13 +111,13 @@ module Ginseng
       method = options[:method] || :post
       start = Time.now
       response = RestClient::Request.execute(
-        method: method,
+        method:,
         url: uri.normalize.to_s,
-        headers: headers,
-        payload: payload,
+        headers:,
+        payload:,
         timeout: @config['/http/timeout/seconds'],
       )
-      log(method: method, multipart: true, url: uri, status: response.code, start: start)
+      log(method:, multipart: true, url: uri, status: response.code, start:)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
     end
@@ -133,7 +133,7 @@ module Ginseng
         error: e,
         method: method.upcase.to_sym,
         url: uri.to_s,
-        start: start,
+        start:,
         count: cnt,
       )
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
