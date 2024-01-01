@@ -13,12 +13,13 @@ Gem::Specification.new do |spec|
   spec.metadata['homepage_uri'] = package['url']
   spec.metadata['rubygems_mfa_required'] = 'true'
   spec.require_paths = ['lib']
-  spec.required_ruby_version = '>=2.7'
+  spec.required_ruby_version = '>=3.1'
 
   spec.add_dependency 'activesupport', '>=7.0.7.1' # CVE-2023-38037
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'bundler', '~>2.0'
   spec.add_dependency 'cgi', '>=0.3.5' # CVE-2021-33621
+  spec.add_dependency 'csv'
   spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'date', '>=3.2.1' # CVE-2021-41817
   spec.add_dependency 'erb'
@@ -39,6 +40,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'sanitize', '>=6.0.2' # CVE-2023-36823
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'
+  spec.add_dependency 'syslog'
   spec.add_dependency 'time', '>= 0.2.2' # CVE-2023-28756
   spec.add_dependency 'yajl-ruby', '>= 1.4.3' # CVE-2022-24795
   spec.add_dependency 'zeitwerk', '>=2.4.0'
