@@ -51,12 +51,4 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'loofah', '>=2.19.1' # CVE-2022-23514 CVE-2022-23515 CVE-2022-23516
   spec.add_dependency 'rack', '>=2.2.6.2' # CVE-2022-44570
   spec.add_dependency 'rails-html-sanitizer', '>=1.4.4' # CVE-2022-23517 CVE-2022-23518 CVE-2022-23519 CVE-2022-23520
-
-  spec.add_development_dependency 'pp'
-  spec.add_development_dependency 'ricecream'
-  spec.add_development_dependency 'rubocop'
-  spec.add_development_dependency 'rubocop-minitest'
-  spec.add_development_dependency 'rubocop-performance'
-  spec.add_development_dependency 'rubocop-rake'
-  spec.add_development_dependency 'test-unit'
 end
