@@ -27,13 +27,13 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'facets'
   spec.add_dependency 'fileutils', '~>1.7.0'
   spec.add_dependency 'find'
-  spec.add_dependency 'httparty', '>=0.21.0' # GHSA-5pq7-52mg-hr42
+  spec.add_dependency 'httparty', '>=0.21.0' # CVE-2024-22049
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
   spec.add_dependency 'net-smtp'
-  spec.add_dependency 'nokogiri', '>=1.15.4' # CVE-2017-15412
+  spec.add_dependency 'nokogiri', '>=1.16.2' # CVE-2024-25062
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
