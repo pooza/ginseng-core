@@ -143,6 +143,12 @@ module Ginseng
       end
     end
 
+    class ::Time
+      def today?
+        return strftime('%Y/%m/%d') == Date.today.strftime('%Y/%m/%d')
+      end
+    end
+
     class ::NilClass
       def empty?
         return true
