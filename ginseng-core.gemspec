@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
   spec.add_dependency 'net-smtp'
-  spec.add_dependency 'nokogiri', '>=1.16.2' # CVE-2024-25062
+  spec.add_dependency 'nokogiri', '>=1.16.5' # CVE-2024-34459
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
@@ -45,10 +45,4 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'yajl-ruby', '>= 1.4.3' # CVE-2022-24795
   spec.add_dependency 'zeitwerk', '>=2.4.0'
   spec.add_dependency 'zlib'
-
-  # security
-  spec.add_dependency 'actionpack', '>=7.0.5.1' # CVE-2023-28362
-  spec.add_dependency 'loofah', '>=2.19.1' # CVE-2022-23514 CVE-2022-23515 CVE-2022-23516
-  spec.add_dependency 'rack', '>=2.2.6.2' # CVE-2022-44570
-  spec.add_dependency 'rails-html-sanitizer', '>=1.4.4' # CVE-2022-23517 CVE-2022-23518 CVE-2022-23519 CVE-2022-23520
 end
