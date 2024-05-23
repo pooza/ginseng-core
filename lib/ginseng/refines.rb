@@ -37,7 +37,7 @@ module Ginseng
 
       def sanitize
         require 'sanitize'
-        return Sanitize.clean(self).nokogiri.text
+        return Sanitize.clean(gsub(%r{<br */?>}, "\n")).nokogiri.text.strip
       end
 
       def sanitize!
