@@ -10,7 +10,8 @@ module Ginseng
     end
 
     def test_sanitize
-      assert_equal('なぎさ&ほのか ', '<p>なぎさ&ほのか</p>'.sanitize)
+      assert_equal('なぎさ&ほのか', '<p>なぎさ&ほのか</p>'.sanitize)
+      assert_equal("なぎさ\nほのか", '<p>なぎさ<br />ほのか</p>'.sanitize)
     end
 
     def test_bin2hex
