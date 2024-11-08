@@ -63,7 +63,7 @@ module Ginseng
       def hex2bin
         s = self
         raise 'Not a valid hex string' unless /^[\da-fA-F]+$/.match?(s)
-        s = "0#{s}" unless (s.length & 1).zero?
+        s = "0#{s}" unless s.length.nobits?(1)
         return s.scan(/../).map {|b| b.to_i(16)}.pack('C*').force_encoding('UTF-8')
       end
 
