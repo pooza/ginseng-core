@@ -31,7 +31,6 @@ module Ginseng
     def self.normalize_component(component,
       character_class = CharacterClasses::RESERVED + CharacterClasses::UNRESERVED,
       leave_encoded = '')
-
       begin
         unencoded = unencode_component(
           component.to_s.force_encoding(Encoding::ASCII_8BIT),
