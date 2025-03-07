@@ -1,4 +1,4 @@
-require 'pp' # rubocop:disable Lint/RedundantRequireStatement
+require 'pp'
 
 module Ginseng
   class Error < StandardError
