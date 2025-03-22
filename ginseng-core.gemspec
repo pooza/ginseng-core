@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
   spec.add_dependency 'net-smtp'
-  spec.add_dependency 'nokogiri', '>=1.18.3' # CVE-2025-24928, CVE-2024-56171
+  spec.add_dependency 'nokogiri', '>=1.18.4' # CVE-2025-24855, CVE-2024-55549
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
   spec.add_dependency 'rest-client'
