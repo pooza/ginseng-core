@@ -22,7 +22,7 @@ module Ginseng
     end
 
     def test_type
-      assert_equal('development', Environment.type)
+      assert_equal(:development, Environment.type)
     end
 
     def test_development?
