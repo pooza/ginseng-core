@@ -23,15 +23,15 @@ module Ginseng
     end
 
     def self.type
-      return Config.instance['/environment'] rescue 'development'
+      return Config.instance['/environment'].to_sym rescue :development
     end
 
     def self.development?
-      return type == 'development'
+      return type.to_s == 'development'
     end
 
     def self.production?
-      return type == 'production'
+      return type.to_s == 'production'
     end
 
     def self.platform
