@@ -18,7 +18,7 @@ module Ginseng
     end
 
     def test_ip_platform
-      assert_kind_of(String, Environment.platform)
+      assert_kind_of(Symbol, Environment.platform)
     end
 
     def test_type
