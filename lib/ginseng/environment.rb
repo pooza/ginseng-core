@@ -37,7 +37,7 @@ module Ginseng
     def self.platform
       return :windows if RUBY_PLATFORM.match?(/mswin|msys|mingw|cygwin|bccwin|wince|emc/)
       return :debian if File.executable?('/usr/bin/apt-get')
-      return `uname`.chomp.to_sym
+      return `uname`.chomp.underscore.to_sym
     end
 
     def self.win?
