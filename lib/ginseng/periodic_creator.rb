@@ -45,9 +45,9 @@ module Ginseng
     def self.destroot(period)
       raise ArgumentError, "Invalid period '#{period}'" unless periods.member?(period)
       case Environment.platform
-      when 'FreeBSD', 'Darwin'
+      when :freebsd, :darwin
         return File.join('/usr/local/etc/periodic', period)
-      when 'Debian'
+      when :debian
         return File.join('/etc', "cron.#{period}")
       else
         raise ImplementError, "'#{__method__}' not implemented on #{Environment.platform}"
@@ -56,9 +56,9 @@ module Ginseng
 
     def self.create_link_name(counter, src)
       case Environment.platform
-      when 'FreeBSD', 'Darwin'
+      when :freebsd, :darwin
         return "#{counter}.#{Environment.name}-#{File.basename(src, '.rb')}"
-      when 'Debian'
+      when :debian
         return "#{Environment.name}-#{File.basename(src, '.rb').tr('_', '-')}"
       else
         raise ImplementError, "'#{__method__}' not implemented on #{Environment.platform}"

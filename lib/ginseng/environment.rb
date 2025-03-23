@@ -23,25 +23,25 @@ module Ginseng
     end
 
     def self.type
-      return Config.instance['/environment'] rescue 'development'
+      return Config.instance['/environment'].to_sym rescue :development
     end
 
     def self.development?
-      return type == 'development'
+      return type.to_s == 'development'
     end
 
     def self.production?
-      return type == 'production'
+      return type.to_s == 'production'
     end
 
     def self.platform
-      return 'Windows' if RUBY_PLATFORM.match?(/mswin|msys|mingw|cygwin|bccwin|wince|emc/)
-      return 'Debian' if File.executable?('/usr/bin/apt-get')
-      return `uname`.chomp
+      return :windows if RUBY_PLATFORM.match?(/mswin|msys|mingw|cygwin|bccwin|wince|emc/)
+      return :debian if File.executable?('/usr/bin/apt-get')
+      return `uname`.chomp.underscore.to_sym
     end
 
     def self.win?
-      return platform == 'Windows'
+      return platform == :windows
     end
 
     def self.ci?

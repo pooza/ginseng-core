@@ -17,12 +17,12 @@ module Ginseng
       assert_kind_of(String, Environment.ip_address)
     end
 
-    def test_ip_platform
-      assert_kind_of(String, Environment.platform)
+    def test_platform
+      assert_kind_of(Symbol, Environment.platform)
     end
 
     def test_type
-      assert_equal('development', Environment.type)
+      assert_equal(:development, Environment.type)
     end
 
     def test_development?

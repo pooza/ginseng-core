@@ -45,6 +45,14 @@ module Ginseng
         return self
       end
 
+      def remove_escape_sequences
+        return gsub(/\e\[[\d;]*m/, '')
+      end
+
+      def remove_escape_sequences!
+        return gsub!(/\e\[[\d;]*m/, '')
+      end
+
       def sha256
         require 'digest/sha2'
         return Digest::SHA256.hexdigest(self)
