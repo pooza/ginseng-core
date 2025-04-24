@@ -30,7 +30,9 @@ module Ginseng
     end
 
     def to_s
-      return args.map {|v| v.to_s.shellescape}.join(' ')
+      return args.map do |arg|
+        arg.is_a?(Symbol) ? arg : arg.to_s.shellescape
+      end.join(' ')
     end
 
     def exec
