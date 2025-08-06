@@ -1,6 +1,7 @@
 module Ginseng
   class LineService
     include Package
+
     attr_reader :id, :token
 
     def initialize(params = {})

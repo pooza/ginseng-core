@@ -1,6 +1,7 @@
 module Ginseng
   class Slack
     include Package
+
     attr_reader :uri
 
     def initialize(uri)

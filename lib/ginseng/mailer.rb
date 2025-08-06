@@ -3,6 +3,7 @@ require 'mail'
 module Ginseng
   class Mailer
     include Package
+
     attr_accessor :prefix
 
     def initialize

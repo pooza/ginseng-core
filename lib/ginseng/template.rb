@@ -1,6 +1,7 @@
 module Ginseng
   class Template
     include Package
+
     attr_reader :params, :path
 
     def initialize(name)

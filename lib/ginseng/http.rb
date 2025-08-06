@@ -4,6 +4,7 @@ require 'rest-client'
 module Ginseng
   class HTTP
     include Package
+
     attr_reader :base_uri
     attr_accessor :retry_limit
 

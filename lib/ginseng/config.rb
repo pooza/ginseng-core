@@ -5,6 +5,7 @@ module Ginseng
   class Config < Hash
     include Package
     include Singleton
+
     attr_reader :raw
 
     def initialize

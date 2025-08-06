@@ -1,6 +1,7 @@
 module Ginseng
   class PeriodicCreator
     include Package
+
     attr_reader :dir, :counter
 
     def initialize(period)

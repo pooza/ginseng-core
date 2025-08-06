@@ -4,6 +4,7 @@ require 'base64'
 module Ginseng
   class Crypt
     include Package
+
     GLUE = '::::'.freeze
 
     def initialize

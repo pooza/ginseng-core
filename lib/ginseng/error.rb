@@ -3,6 +3,7 @@ require 'pp'
 module Ginseng
   class Error < StandardError
     include Package
+
     attr_accessor :source_class, :package
     attr_reader :raw_message
 
