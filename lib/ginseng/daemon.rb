@@ -51,6 +51,12 @@ module Ginseng
       exit if fork
       File.write(pid_file, Process.pid.to_s)
       Dir.chdir(working_dir)
+
+      $stdout.reopen(File::NULL, 'w')
+      $stderr.reopen(File::NULL, 'w')
+      $stdout.sync = true
+      $stderr.sync = true
+
       trap('TERM') do
         stop
         exit
