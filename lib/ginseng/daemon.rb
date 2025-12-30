@@ -43,7 +43,7 @@ module Ginseng
     end
 
     def jit_ready?
-      return ENV['RUBY_YJIT_ENABLE'].present?
+      return defined?(RubyVM::YJIT)
     end
 
     def fork!(args)
