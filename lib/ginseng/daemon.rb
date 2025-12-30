@@ -42,9 +42,11 @@ module Ginseng
       return self.class.to_s
     end
 
-    def jit_ready?
-      return defined?(RubyVM::YJIT)
+    def jit?
+      return environment_class.jit?
     end
+
+    alias jit_ready? jit?
 
     def fork!(args)
       Process.setsid

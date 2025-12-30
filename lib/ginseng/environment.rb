@@ -56,6 +56,10 @@ module Ginseng
       return ENV['CRON'].present? rescue false
     end
 
+    def self.jit?
+      return defined?(RubyVM::YJIT)
+    end
+
     def self.cert_file
       return File.join(dir, 'cert/cacert.pem')
     end
