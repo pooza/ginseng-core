@@ -26,7 +26,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'facets'
   spec.add_dependency 'fileutils', '~>1.7.0'
   spec.add_dependency 'find'
-  spec.add_dependency 'httparty', '>=0.21.0' # CVE-2024-22049
+  spec.add_dependency 'httparty', '>=0.24.0' # CVE-2025-68696
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail'
   spec.add_dependency 'multi_json'
