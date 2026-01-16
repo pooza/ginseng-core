@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 module Ginseng
   class RenderErrorTest < TestCase
     def setup

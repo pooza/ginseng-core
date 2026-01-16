@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 module Ginseng
   class LineServiceTest < TestCase
     def disable?

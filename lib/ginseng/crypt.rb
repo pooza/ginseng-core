@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 require 'openssl'
 require 'base64'
 
@@ -6,7 +7,7 @@ module Ginseng
   class Crypt
     include Package
 
-    GLUE = '::::'.freeze
+    GLUE = '::::'
 
     def initialize
       @config = config_class.instance

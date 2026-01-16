@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
+
 $LOAD_PATH.unshift(File.join(File.expand_path('..', __dir__), 'lib'))
 
 require 'ginseng'
