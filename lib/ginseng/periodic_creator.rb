@@ -44,7 +44,7 @@ module Ginseng
     end
 
     def self.destroot(period)
-      raise ArgumentError, "Invalid period '#{period}'" unless periods.member?(period)
+      raise ArgumentError, "Invalid period '#{period}'" unless periods.include?(period)
       case Environment.platform
       when :freebsd, :darwin
         return File.join('/usr/local/etc/periodic', period)

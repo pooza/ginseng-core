@@ -12,7 +12,7 @@ module Ginseng
         end.join(SLASH)
 
         result = URI.normalize_path(result)
-        if result.empty? && ['http', 'https', 'ftp', 'tftp'].member?(normalized_scheme)
+        if result.empty? && ['http', 'https', 'ftp', 'tftp'].include?(normalized_scheme)
           result = SLASH.dup
         end
         result
@@ -40,7 +40,7 @@ module Ginseng
       rescue
         raise TypeError, "Can't convert #{component.class} into String."
       end
-      unless [String, Regexp].member?(character_class.class)
+      unless [String, Regexp].include?(character_class.class)
         raise TypeError, "Expected String or Regexp, got #{character_class.inspect}"
       end
 

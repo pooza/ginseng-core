@@ -19,7 +19,7 @@ module Ginseng
         suffixes.each do |suffix|
           Dir.glob(File.join(dir, "*#{suffix}")).each do |f|
             key = File.basename(f, suffix)
-            next if @raw.member?(key)
+            next if @raw.key?(key)
             @raw[key] = YAML.load_file(f)
           end
         end

@@ -54,7 +54,7 @@ module Ginseng
         case arg
         in Hash
           arg.symbolize_keys.reject {|_, v| v.to_s.empty?}.each do |k, v|
-            if @config['/logger/mask_fields'].member?(k.to_s)
+            if @config['/logger/mask_fields'].include?(k.to_s)
               arg.delete(k)
             else
               arg[k] = mask(v)
