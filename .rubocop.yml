@@ -124,7 +124,7 @@ Style/FormatString:
 Style/FormatStringToken:
   EnforcedStyle: template
 Style/FrozenStringLiteralComment:
-  Enabled: false
+  Enabled: true
 Style/IdenticalConditionalBranches:
   Exclude:
     - test/*

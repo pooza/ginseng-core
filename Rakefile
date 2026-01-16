@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 dir = File.expand_path(__dir__)
 $LOAD_PATH.unshift(File.join(dir, 'lib'))
 ENV['BUNDLE_GEMFILE'] = File.join(dir, 'Gemfile')

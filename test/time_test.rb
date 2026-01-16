@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Ginseng
   class TimeTest < TestCase
     def test_today?

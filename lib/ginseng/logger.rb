@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Ginseng
   if Environment.win?
     class Logger

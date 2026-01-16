@@ -1,6 +1,11 @@
+# frozen_string_literal: true
 module Ginseng
   module Mockable
     include Package
+
+    def self.included(base)
+      warn "DEPRECATION WARNING: Ginseng::Mockable is deprecated and will be removed in a future version."
+    end
 
     def save_mock(mock, options = {})
       return if environment_class.ci?

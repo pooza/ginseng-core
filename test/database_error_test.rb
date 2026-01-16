@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Ginseng
   class DatabaseErrorTest < TestCase
     def setup
