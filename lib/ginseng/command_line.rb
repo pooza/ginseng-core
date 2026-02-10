@@ -93,7 +93,7 @@ module Ginseng
         parts.push('env')
         @env.stringify_keys.each {|k, v| parts.push("#{k}=#{v}")}
       end
-      return [*parts.map(&:shellescape), to_s].join(' ')
+      return [*parts.map(&:shellescape), 'sh', '-c', to_s.shellescape].join(' ')
     end
   end
 end
