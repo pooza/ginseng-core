@@ -9,11 +9,12 @@ module Ginseng
     include Package
 
     attr_reader :args, :stdout, :stderr, :status, :pid, :env
-    attr_accessor :dir
+    attr_accessor :dir, :user
 
     def initialize(args = [])
       @logger = logger_class.new
       @env = {}
+      @user = nil
       @dir = environment_class.dir
       self.args = args
     end
@@ -41,15 +42,21 @@ module Ginseng
     def exec
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s, chdir: dir)
+          if @user
+            @stdout, @stderr, @status = Open3.capture3(sudo_command, chdir: dir)
+          else
+            @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s, chdir: dir)
+          end
         end
       end
       @pid = @status.pid
       @status = @status.to_i
       if @status.zero?
-        @logger.info(command: to_s, dir:, env: @env, status: @status, seconds: secs.round(3))
+        @logger.info(command: to_s, dir:, env: @env, user: @user, status: @status,
+          seconds: secs.round(3))
       else
-        @logger.error(command: to_s, dir:, env: @env, status: @status, seconds: secs.round(3))
+        @logger.error(command: to_s, dir:, env: @env, user: @user, status: @status,
+          seconds: secs.round(3))
       end
       return @status
     end
@@ -63,12 +70,30 @@ module Ginseng
     def exec_system
       start = Time.now
       Bundler.with_unbundled_env do
-        if system(@env.stringify_keys, to_s, chdir: dir)
-          @logger.info(command: to_s, dir:, env: @env, seconds: (Time.now - start).round(3))
+        if @user
+          result = system(sudo_command, chdir: dir)
         else
-          @logger.error(command: to_s, dir:, env: @env, seconds: (Time.now - start).round(3))
+          result = system(@env.stringify_keys, to_s, chdir: dir)
+        end
+        if result
+          @logger.info(command: to_s, dir:, env: @env, user: @user,
+            seconds: (Time.now - start).round(3))
+        else
+          @logger.error(command: to_s, dir:, env: @env, user: @user,
+            seconds: (Time.now - start).round(3))
         end
       end
+    end
+
+    private
+
+    def sudo_command
+      parts = ['sudo', '-u', @user]
+      if @env.any?
+        parts.push('env')
+        @env.stringify_keys.each {|k, v| parts.push("#{k}=#{v}")}
+      end
+      return [*parts.map(&:shellescape), to_s].join(' ')
     end
   end
 end
