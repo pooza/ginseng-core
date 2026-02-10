@@ -41,8 +41,7 @@ module Ginseng
     def exec
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          Dir.chdir(dir) if dir
-          @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s)
+          @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s, chdir: dir)
         end
       end
       @pid = @status.pid
@@ -57,16 +56,14 @@ module Ginseng
 
     def bundle_install
       Bundler.with_unbundled_env do
-        Dir.chdir(dir) if dir
-        return system(@env.stringify_keys, 'bundle', 'install')
+        return system(@env.stringify_keys, 'bundle', 'install', chdir: dir)
       end
     end
 
     def exec_system
       start = Time.now
       Bundler.with_unbundled_env do
-        Dir.chdir(dir) if dir
-        if system(@env.stringify_keys, to_s)
+        if system(@env.stringify_keys, to_s, chdir: dir)
           @logger.info(command: to_s, dir:, env: @env, seconds: (Time.now - start).round(3))
         else
           @logger.error(command: to_s, dir:, env: @env, seconds: (Time.now - start).round(3))
