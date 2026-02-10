@@ -51,13 +51,7 @@ module Ginseng
       end
       @pid = @status.pid
       @status = @status.to_i
-      if @status.zero?
-        @logger.info(command: to_s, dir:, env: @env, user: @user, status: @status,
-          seconds: secs.round(3))
-      else
-        @logger.error(command: to_s, dir:, env: @env, user: @user, status: @status,
-          seconds: secs.round(3))
-      end
+      log_exec(secs, success: @status.zero?)
       return @status
     end
 
@@ -75,17 +69,19 @@ module Ginseng
         else
           result = system(@env.stringify_keys, to_s, chdir: dir)
         end
-        if result
-          @logger.info(command: to_s, dir:, env: @env, user: @user,
-            seconds: (Time.now - start).round(3))
-        else
-          @logger.error(command: to_s, dir:, env: @env, user: @user,
-            seconds: (Time.now - start).round(3))
-        end
+        log_exec(Time.now - start, success: result)
       end
     end
 
     private
+
+    def log_exec(secs, success:)
+      params = {
+        command: to_s, dir:, env: @env, user: @user,
+        status: @status, seconds: secs.round(3)
+      }
+      success ? @logger.info(params) : @logger.error(params)
+    end
 
     def sudo_command
       parts = ['sudo', '-u', @user]
