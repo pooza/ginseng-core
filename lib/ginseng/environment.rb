@@ -74,6 +74,9 @@ module Ginseng
     end
 
     def self.gem_fresh?
+      check = CommandLine.new(['git', 'ls-files', 'Gemfile.lock'])
+      check.exec
+      return true unless check.status.zero? && check.stdout.strip.present?
       cmd = CommandLine.new(['git', 'diff', '--name-only', 'HEAD', '--', 'Gemfile.lock'])
       cmd.exec
       return false unless cmd.status.zero?
