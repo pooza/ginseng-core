@@ -67,13 +67,17 @@ module Ginseng
     end
 
     def self.cert_fresh?
-      Dir.chdir(dir)
-      return `git status`.include?('cacert.pem') == false
+      cmd = CommandLine.new(['git', 'diff', '--name-only', 'HEAD', '--', 'cert/cacert.pem'])
+      cmd.exec
+      return false unless cmd.status.zero?
+      cmd.stdout.strip.empty?
     end
 
     def self.gem_fresh?
-      Dir.chdir(dir)
-      return `git status`.include?('Gemfile.lock') == false
+      cmd = CommandLine.new(['git', 'diff', '--name-only', 'HEAD', '--', 'Gemfile.lock'])
+      cmd.exec
+      return false unless cmd.status.zero?
+      cmd.stdout.strip.empty?
     end
 
     def self.tz
