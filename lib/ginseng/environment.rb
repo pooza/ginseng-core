@@ -74,11 +74,17 @@ module Ginseng
     end
 
     def self.gem_fresh?
-      cmd = CommandLine.new(['bundle', 'outdated'])
+      lock = File.join(dir, 'Gemfile.lock')
+      return true unless File.exist?(lock)
+      before = File.read(lock)
+      cmd = CommandLine.new(['bundle', 'lock', '--update'])
       cmd.exec
-      return cmd.status.zero?
+      return true unless cmd.status.zero?
+      return File.read(lock) == before
     rescue
       return true
+    ensure
+      File.write(lock, before) if before
     end
 
     def self.tz
