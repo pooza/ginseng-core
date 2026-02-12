@@ -67,8 +67,8 @@ module Ginseng
     end
 
     def self.cert_fresh?
-      latest = HTTP.new.get(Config.instance['/cert/url']).to_s
-      return File.read(cert_file) == latest
+      latest = HTTP.new.get(Config.instance['/cert/url']).body
+      return File.binread(cert_file) == latest
     rescue
       return true
     end
@@ -76,6 +76,9 @@ module Ginseng
     def self.gem_fresh?
       lock = File.join(dir, 'Gemfile.lock')
       return true unless File.exist?(lock)
+      check = CommandLine.new(['git', 'ls-files', 'Gemfile.lock'])
+      check.exec
+      return true unless check.status.zero? && check.stdout.strip.present?
       before = File.read(lock)
       cmd = CommandLine.new(['bundle', 'lock', '--update'])
       cmd.exec
