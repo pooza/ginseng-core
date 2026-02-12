@@ -67,20 +67,18 @@ module Ginseng
     end
 
     def self.cert_fresh?
-      cmd = CommandLine.new(['git', 'diff', '--name-only', 'HEAD', '--', 'cert/cacert.pem'])
-      cmd.exec
-      return false unless cmd.status.zero?
-      cmd.stdout.strip.empty?
+      latest = HTTP.new.get(Config.instance['/cert/url']).to_s
+      return File.read(cert_file) == latest
+    rescue
+      return true
     end
 
     def self.gem_fresh?
-      check = CommandLine.new(['git', 'ls-files', 'Gemfile.lock'])
-      check.exec
-      return true unless check.status.zero? && check.stdout.strip.present?
-      cmd = CommandLine.new(['git', 'diff', '--name-only', 'HEAD', '--', 'Gemfile.lock'])
+      cmd = CommandLine.new(['bundle', 'outdated'])
       cmd.exec
-      return false unless cmd.status.zero?
-      cmd.stdout.strip.empty?
+      return cmd.status.zero?
+    rescue
+      return true
     end
 
     def self.tz

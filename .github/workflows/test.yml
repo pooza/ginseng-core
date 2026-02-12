@@ -19,12 +19,9 @@ jobs:
         run: |
           gem install bundler -v '~>4.0'
           bundle install --jobs 4 --retry 3
-          bundle exec rake bundle:update
           bundle exec rake bundle:check
       - name: cert check
-        run: |
-          bundle exec rake cert:update
-          bundle exec rake cert:check
+        run: bundle exec rake cert:check
       - name: Run lint
         run: |
           bundle exec rubocop
