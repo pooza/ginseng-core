@@ -26,9 +26,7 @@ module Ginseng
         message: 'start',
         command: command.to_s,
       )
-      IO.popen(command.to_s, {err: [:child, :out]}).each_line do |line|
-        @logger.info(create_log_entry(line))
-      end
+      exec(command.to_s)
     end
 
     def stop
@@ -78,10 +76,6 @@ module Ginseng
 
     def config_cache_path
       return File.join(environment_class.dir, "tmp/cache/#{name}.yaml")
-    end
-
-    def create_log_entry(line)
-      return {daemon: app_name, output: line.chomp}
     end
 
     def self.start(opts, args)
