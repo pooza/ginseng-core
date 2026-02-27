@@ -35,7 +35,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'nokogiri', '>=1.18.9' # CVE-2025-6021, CVE-2025-6170, CVE-2025-49794, CVE-2025-49795, CVE-2025-49796
   spec.add_dependency 'optparse'
   spec.add_dependency 'rake'
-  spec.add_dependency 'rest-client'
   spec.add_dependency 'sanitize', '>=6.0.2' # CVE-2023-36823
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'

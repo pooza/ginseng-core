@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'httparty'
-require 'rest-client'
+require 'net/http'
 
 module Ginseng
   class HTTP
@@ -93,33 +93,34 @@ module Ginseng
 
     def mkcol(uri, options = {})
       repeat(:mkcol, uri = create_uri(uri), start = Time.now) do
-        response = RestClient::Request.execute(
-          method: :mkcol,
-          url: uri.normalize.to_s,
-          headers: create_headers(options[:headers]),
-        )
-        log(method: :mkcol, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        net_uri = ::URI.parse(uri.normalize.to_s)
+        http = Net::HTTP.new(net_uri.host, net_uri.port)
+        http.use_ssl = net_uri.scheme == 'https'
+        request = Net::HTTP::Mkcol.new(net_uri.request_uri)
+        create_headers(options[:headers]).each {|k, v| request[k] = v}
+        response = http.request(request)
+        code = response.code.to_i
+        log(method: :mkcol, url: uri, status: code, start:)
+        raise GatewayError, "Bad response #{code}" unless code < 400
         return response
       end
     end
 
     def upload(uri, file, options = {})
-      file = File.new(file, 'rb') if file.is_a?(String)
+      file = File.open(file, 'rb') if file.is_a?(String)
       uri = create_uri(uri)
       headers = options[:headers] || {}
       headers['User-Agent'] ||= user_agent
-      payload = options[:payload] || options[:body] || {}
-      payload[:file] = file if file
+      body = options[:payload] || options[:body] || {}
+      body[:file] = file if file
       method = options[:method] || :post
       start = Time.now
-      response = RestClient::Request.execute(
-        method:,
-        url: uri.normalize.to_s,
+      response = HTTParty.public_send(method, uri.normalize, {
         headers:,
-        payload:,
+        body:,
+        multipart: true,
         timeout: @config['/http/timeout/seconds'],
-      )
+      })
       log(method:, multipart: true, url: uri, status: response.code, start:)
       raise GatewayError, "Bad response #{response.code}" unless response.code < 400
       return response
