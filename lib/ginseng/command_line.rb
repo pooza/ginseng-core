@@ -2,6 +2,7 @@
 
 require 'open3'
 require 'shellwords'
+require 'timeout'
 require 'facets/time'
 
 module Ginseng
@@ -39,14 +40,17 @@ module Ginseng
       end.join(' ')
     end
 
-    def exec
+    def exec(timeout: nil)
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          if @user
-            @stdout, @stderr, @status = Open3.capture3(sudo_command, chdir: dir)
-          else
-            @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s, chdir: dir)
+          block = proc do
+            if @user
+              @stdout, @stderr, @status = Open3.capture3(sudo_command, chdir: dir)
+            else
+              @stdout, @stderr, @status = Open3.capture3(@env.stringify_keys, to_s, chdir: dir)
+            end
           end
+          timeout ? Timeout.timeout(timeout, &block) : block.call
         end
       end
       @pid = @status.pid

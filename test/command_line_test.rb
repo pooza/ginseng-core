@@ -57,6 +57,22 @@ module Ginseng
       assert(@command.bundle_install)
     end
 
+    def test_exec_with_timeout
+      @command.args = ['ls', '/']
+      @command.exec(timeout: 10)
+
+      assert_predicate(@command.status, :zero?)
+      assert_predicate(@command.stdout, :present?)
+    end
+
+    def test_exec_timeout_expired
+      @command.args = ['sleep', '10']
+
+      assert_raise(Timeout::Error) do
+        @command.exec(timeout: 1)
+      end
+    end
+
     def test_env
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
