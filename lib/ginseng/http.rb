@@ -107,7 +107,7 @@ module Ginseng
     end
 
     def upload(uri, file, options = {})
-      file = File.open(file, 'rb') if file.is_a?(String)
+      return File.open(file, 'rb') {|f| upload(uri, f, options)} if file.is_a?(String)
       uri = create_uri(uri)
       headers = options[:headers] || {}
       headers['User-Agent'] ||= user_agent
