@@ -19,7 +19,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
   spec.add_dependency 'cgi', '>=0.4.2' # CVE-2025-27219, CVE-2025-27220
   spec.add_dependency 'csv'
-  spec.add_dependency 'daemon-spawn'
   spec.add_dependency 'date', '>=3.2.1' # CVE-2021-41817
   spec.add_dependency 'erb'
   spec.add_dependency 'etc'
