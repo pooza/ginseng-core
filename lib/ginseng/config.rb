@@ -89,6 +89,7 @@ module Ginseng
     end
 
     def errors
+      return [] unless raw['local']
       return JSON::Validator.fully_validate(schema, raw['local'])
     end
 
