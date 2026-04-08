@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>=3.3', '<5.0'
 
   spec.add_dependency 'activesupport', '>=7.0.7.1' # CVE-2023-38037
-  spec.add_dependency 'addressable', '>=2.8.0' # CVE-2021-32740
+  spec.add_dependency 'addressable', '>=2.9.0' # CVE-2026-35611
   spec.add_dependency 'cgi', '>=0.4.2' # CVE-2025-27219, CVE-2025-27220
   spec.add_dependency 'csv'
   spec.add_dependency 'date', '>=3.2.1' # CVE-2021-41817
