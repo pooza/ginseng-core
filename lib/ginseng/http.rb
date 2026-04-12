@@ -131,18 +131,25 @@ module Ginseng
     def repeat(method, uri, start)
       cnt ||= 0
       yield
+    rescue Net::ReadTimeout => e
+      log_retry_error(e, method, uri, start)
+      raise GatewayError, e.message, e.backtrace
     rescue => e
       cnt += 1
-      @logger.error(
-        error: e,
-        method: method.upcase.to_sym,
-        url: uri.to_s,
-        start:,
-        count: cnt,
-      )
+      log_retry_error(e, method, uri, start, count: cnt)
       raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
       sleep(retry_seconds)
       retry
+    end
+
+    def log_retry_error(error, method, uri, start, count: nil)
+      @logger.error(
+        error:,
+        method: method.upcase.to_sym,
+        url: uri.to_s,
+        start:,
+        count:,
+      )
     end
 
     def user_agent
