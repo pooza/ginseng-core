@@ -89,8 +89,15 @@ module Ginseng
     end
 
     def errors
-      return [] unless raw['local']
-      return JSON::Validator.fully_validate(schema, raw['local'])
+      return JSON::Validator.fully_validate(schema, merged_raw)
+    end
+
+    def merged_raw
+      dest = {}
+      basenames.reverse_each do |key|
+        dest = Hash.deep_merge(dest, raw[key]) if raw[key]
+      end
+      return dest
     end
 
     def schema
