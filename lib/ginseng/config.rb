@@ -2,11 +2,17 @@
 
 require 'singleton'
 require 'json-schema'
+require 'date'
 
 module Ginseng
   class Config < Hash
     include Package
     include Singleton
+
+    # YAML.load_file (Psych 4 = safe_load 相当) で許可するクラス。運用者が
+    # config に `founded_on: 2021-03-14` のような日付を素で書いても
+    # Psych::DisallowedClass で落ちないよう Date/Time/DateTime を許可する。
+    PERMITTED_YAML_CLASSES = [Date, Time, DateTime].freeze
 
     attr_reader :raw
 
@@ -22,7 +28,7 @@ module Ginseng
           Dir.glob(File.join(dir, "*#{suffix}")).each do |f|
             key = File.basename(f, suffix)
             next if @raw.key?(key)
-            @raw[key] = YAML.load_file(f)
+            @raw[key] = YAML.load_file(f, permitted_classes: PERMITTED_YAML_CLASSES)
           end
         end
       end
@@ -101,7 +107,8 @@ module Ginseng
     end
 
     def schema
-      @schema ||= YAML.load_file(File.join(environment_class.dir, 'config/schema/base.yaml'))
+      path = File.join(environment_class.dir, 'config/schema/base.yaml')
+      @schema ||= YAML.load_file(path, permitted_classes: PERMITTED_YAML_CLASSES)
       return @schema
     end
 
@@ -119,7 +126,8 @@ module Ginseng
 
     def self.load_file(name)
       name += '.yaml' if File.extname(name).empty?
-      return YAML.load_file(File.join(environment_class.dir, 'config', name))
+      path = File.join(environment_class.dir, 'config', name)
+      return YAML.load_file(path, permitted_classes: PERMITTED_YAML_CLASSES)
     end
   end
 end

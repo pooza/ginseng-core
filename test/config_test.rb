@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'tempfile'
+
 module Ginseng
   class ConfigTest < TestCase
     def setup
@@ -20,6 +22,18 @@ module Ginseng
     def test_config_error
       assert_raise(ConfigError) do
         @config['/xxxxx']
+      end
+    end
+
+    # 運用者が config に `founded_on: 2021-03-14` のように日付を素で書いても
+    # Psych::DisallowedClass で落ちず Date として読めること（クォート不要）。
+    def test_permitted_yaml_classes_allow_dates
+      Tempfile.create(['cfg', '.yaml']) do |f|
+        f.write("founded_on: 2021-03-14\n")
+        f.flush
+        classes = Config::PERMITTED_YAML_CLASSES
+        loaded = YAML.load_file(f.path, permitted_classes: classes)
+        assert_kind_of(Date, loaded['founded_on'])
       end
     end
 
