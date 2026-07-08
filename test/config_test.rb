@@ -33,6 +33,7 @@ module Ginseng
         f.flush
         classes = Config::PERMITTED_YAML_CLASSES
         loaded = YAML.load_file(f.path, permitted_classes: classes)
+
         assert_kind_of(Date, loaded['founded_on'])
       end
     end
