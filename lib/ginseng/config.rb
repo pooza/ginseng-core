@@ -95,7 +95,24 @@ module Ginseng
     end
 
     def errors
-      return JSON::Validator.fully_validate(schema, merged_raw)
+      return JSON::Validator.fully_validate(schema, normalize_temporal(merged_raw))
+    end
+
+    # PERMITTED_YAML_CLASSES で読み込みを許した Date/Time/DateTime を、検証の
+    # 直前に ISO 8601 文字列へ寄せる。JSON Schema にこれらを表す型が無いため、
+    # 生のまま渡すと `type: string` の指定が必ず違反になり、ロード側で許した
+    # 書き方を検証側が拒むことになる。
+    #
+    # キーごとに schema の type を緩める手もあるが、それでは type 検証自体を
+    # 捨てることになり typo も通してしまう。かつ permitted_classes を許した
+    # 以上は任意のキーが日付を受け取りうるので、ここで一括して正規化する。
+    def normalize_temporal(value)
+      case value
+      when Hash then return value.transform_values {|v| normalize_temporal(v)}
+      when Array then return value.map {|v| normalize_temporal(v)}
+      when DateTime, Time, Date then return value.iso8601
+      end
+      return value
     end
 
     def merged_raw
