@@ -38,6 +38,28 @@ module Ginseng
       end
     end
 
+    # ロード側で許した日付が、検証側で type 違反にならないこと (#481)。
+    # JSON Schema に Date を表す型が無いので、生のまま渡すと `type: string` が
+    # 必ず違反になる。
+    def test_normalize_temporal_keeps_schema_valid
+      schema = {'type' => 'object', 'properties' => {'founded_on' => {'type' => 'string'}}}
+      raw = {'founded_on' => Date.new(2021, 3, 14)}
+
+      assert_not_empty(JSON::Validator.fully_validate(schema, raw))
+      assert_empty(JSON::Validator.fully_validate(schema, @config.normalize_temporal(raw)))
+    end
+
+    def test_normalize_temporal
+      assert_equal('2021-03-14', @config.normalize_temporal(Date.new(2021, 3, 14)))
+      assert_equal(
+        {'a' => {'b' => ['2021-03-14']}},
+        @config.normalize_temporal({'a' => {'b' => [Date.new(2021, 3, 14)]}}),
+      )
+      assert_equal('hoge', @config.normalize_temporal('hoge'))
+      assert_equal(1, @config.normalize_temporal(1))
+      assert_nil(@config.normalize_temporal(nil))
+    end
+
     def test_keys
       assert_equal(@config.keys('/package'), ['authors', 'description', 'email', 'license', 'url', 'version'].to_set)
     end
