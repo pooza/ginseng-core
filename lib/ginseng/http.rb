@@ -10,6 +10,9 @@ module Ginseng
     attr_reader :base_uri
     attr_accessor :retry_limit
 
+    # 4xx のうち、時間をおけば結果が変わりうるもの。
+    RETRYABLE_STATUSES = [408, 425, 429].freeze
+
     def initialize
       ENV['SSL_CERT_FILE'] ||= Environment.cert_file
       @logger = logger_class.new
@@ -137,9 +140,24 @@ module Ginseng
     rescue => e
       cnt += 1
       log_retry_error(e, method, uri, start, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless cnt < retry_limit
+      raise GatewayError, e.message, e.backtrace unless retryable?(e) && cnt < retry_limit
       sleep(retry_seconds)
       retry
+    end
+
+    # 再送して結果が変わりうるか。
+    #
+    # ⚠ **恒久的な失敗を再送しない。** 401 / 403 / 422 を投げ直しても結果は同じで、
+    # 待ち時間と相手への負荷とエラーログだけが retry_limit 倍になる。
+    # 408（タイムアウト）/ 425（Too Early）/ 429（レート制限）は時間をおけば
+    # 通るので再送する。ステータスを取り出せない失敗（接続断など）も再送する。
+    #
+    # 方針を変えたいアプリはこのメソッドを override する。
+    def retryable?(error)
+      return true unless error.is_a?(GatewayError)
+      status = error.source_status
+      return true if RETRYABLE_STATUSES.include?(status)
+      return status >= 500
     end
 
     def log_retry_error(error, method, uri, start, count: nil)
