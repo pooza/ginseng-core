@@ -40,6 +40,10 @@ module Ginseng
     return loader
   end
 
+  # ⚠ ricecream は gemspec の依存ではない。アプリが Gemfile に書かなければ存在せず、
+  # `--without development` で入れたバンドルでも消える。ここで LoadError を拾わないと
+  # **`require 'ginseng'` そのものが落ち、アプリが起動できなくなる**。
+  # デバッグ支援が無いだけなので、黙って諦めてよい。
   def self.setup_debug
     require 'ricecream'
     Ricecream.disable
@@ -49,6 +53,8 @@ module Ginseng
     Ricecream.colorize = true
     Ricecream.prefix = "#{Package.name} | "
     Ricecream.define_singleton_method(:arg_to_s, proc {|v| PP.pp(v)})
+  rescue LoadError
+    nil
   end
 
   Bundler.require
