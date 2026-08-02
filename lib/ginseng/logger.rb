@@ -52,23 +52,28 @@ module Ginseng
 
       private
 
+      # ログ出力用にマスクした複製を返す。
+      #
+      # ⚠ 引数は変更しないこと。以前は arg.delete / arg[k]= で入力そのものを
+      # 書き換えており、ログに渡しただけで呼び出し元の Hash から mask_fields の
+      # キーが消えていた（mulukhiya で Sinatra の params が壊れた実例あり）。
+      # 加えて、文字列キーの Hash では symbolize_keys した複製を回しながら元の
+      # arg を delete するためマスクが効かず、シンボルキーが二重に生えたうえで
+      # 素の値がログに出ていた (#478)。
       def mask(arg)
         case arg
         in Hash
-          arg.symbolize_keys.reject {|_, v| v.to_s.empty?}.each do |k, v|
-            if @config['/logger/mask_fields'].include?(k.to_s)
-              arg.delete(k)
-            else
-              arg[k] = mask(v)
-            end
-          end
+          entries = arg.symbolize_keys.reject {|k, v| v.to_s.empty? || mask_field?(k)}
+          return entries.transform_values {|v| mask(v)}
         in Array
-          arg.reject {|v| v.to_s.empty?}.each_with_index do |v, i|
-            arg[i] = mask(v)
-          end
+          return arg.reject {|v| v.to_s.empty?}.map {|v| mask(v)}
         else
+          return arg
         end
-        return arg.clone
+      end
+
+      def mask_field?(key)
+        return @config['/logger/mask_fields'].include?(key.to_s)
       end
     end
   end

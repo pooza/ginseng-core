@@ -4,7 +4,10 @@ module Ginseng
   class StringTest < TestCase
     def test_ellipsize
       assert_equal('キュアソー…', 'キュアソード'.ellipsize(5))
-      assert_equal('hoge…', 'hogehogehoge'.ellipsize!(4))
+      # ellipsize! は破壊的。frozen なリテラルではなく可変な文字列に対して呼ぶ。
+      str = +'hogehogehoge'
+
+      assert_equal('hoge…', str.ellipsize!(4))
     end
 
     def test_nfkc
@@ -35,8 +38,13 @@ module Ginseng
     def test_nokogiri
       require 'nokogiri'
 
+      # frozen なリテラルでもレシーバを壊さず解析できること。
       assert_kind_of(Nokogiri::HTML::Document, ''.nokogiri)
       assert_kind_of(Nokogiri::HTML::Document, '<div>hoge</div>'.nokogiri)
+      html = '<div>hoge</div>'
+
+      assert_kind_of(Nokogiri::HTML::Document, html.nokogiri)
+      assert_equal(Encoding::UTF_8, html.encoding)
     end
   end
 end

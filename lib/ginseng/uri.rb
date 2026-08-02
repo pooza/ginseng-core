@@ -35,7 +35,10 @@ module Ginseng
       leave_encoded = '')
       begin
         unencoded = unencode_component(
-          component.to_s.force_encoding(Encoding::ASCII_8BIT),
+          # dup 必須。to_s は String に対して self を返すため、frozen な文字列を
+          # 渡されると force_encoding が FrozenError になり、下の rescue に飲まれて
+          # 「Can't convert String into String.」という無関係な TypeError に化ける。
+          component.to_s.dup.force_encoding(Encoding::ASCII_8BIT),
           String,
           leave_encoded,
         )

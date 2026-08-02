@@ -67,7 +67,9 @@ module Ginseng
 
       def nokogiri
         require 'nokogiri'
-        return Nokogiri::HTML.parse(force_encoding('utf-8'), nil, 'utf-8')
+        # dup 必須。force_encoding はレシーバを破壊するため、frozen な文字列
+        # （Ruby 4 のリテラル等）では FrozenError になる。
+        return Nokogiri::HTML.parse(dup.force_encoding('utf-8'), nil, 'utf-8')
       end
 
       def hex2bin
