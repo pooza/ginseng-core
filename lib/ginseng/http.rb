@@ -13,6 +13,9 @@ module Ginseng
     # 4xx のうち、時間をおけば結果が変わりうるもの。
     RETRYABLE_STATUSES = [408, 425, 429].freeze
 
+    # host_validator 使用時に追うリダイレクトの上限。
+    MAX_REDIRECTS = 8
+
     def initialize
       ENV['SSL_CERT_FILE'] ||= Environment.cert_file
       @logger = logger_class.new
@@ -50,9 +53,19 @@ module Ginseng
       end
     end
 
+    # options[:host_validator] に「ホスト名を受けて真偽値を返す callable」を渡すと、
+    # リダイレクトを自前で追い、**各ホップのホストを検証**する。
+    #
+    # HTTParty は既定でリダイレクトを追従するため、呼び出し側で初段のホストだけ
+    # 検証しても、リダイレクト先は素通りになり "見せかけの安全" にしかならない
+    # (mulukhiya-toot-proxy#4410)。かといって follow_redirects: false で一律に
+    # 追従を切ると、正規に 302 を返す相手（Google Apps Script 等）が壊れる。
     def get(uri, options = {})
       options[:headers] ||= {}
       options[:headers]['User-Agent'] ||= user_agent
+      if validator = options.delete(:host_validator)
+        return get_validating_hops(create_uri(uri), options, validator)
+      end
       repeat(:get, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.get(uri.normalize, options)
         log(method: :get, url: uri, status: response.code, start:)
@@ -130,6 +143,38 @@ module Ginseng
     end
 
     private
+
+    def get_validating_hops(uri, options, validator)
+      options = options.merge(follow_redirects: false)
+      limit = options.delete(:max_redirects) || MAX_REDIRECTS
+      (limit + 1).times do
+        # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
+        # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
+        validate_host!(uri, validator)
+        response = repeat(:get, uri, start = Time.now) do
+          r = HTTParty.get(uri.normalize, options)
+          log(method: :get, url: uri, status: r.code, start:)
+          raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+          r
+        end
+        location = redirect_location(response)
+        return response unless location
+        uri = create_uri(::URI.join(uri.to_s, location).to_s)
+      end
+      raise GatewayError, "Too many redirects (#{limit})"
+    end
+
+    def redirect_location(response)
+      return nil unless response.code.between?(300, 399)
+      location = response.headers['location']
+      return nil unless location.present?
+      return location
+    end
+
+    def validate_host!(uri, validator)
+      return if validator.call(uri.host)
+      raise GatewayError, "Rejected host '#{uri.host}'"
+    end
 
     def repeat(method, uri, start)
       cnt ||= 0
