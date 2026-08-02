@@ -14,8 +14,13 @@ module Ginseng
       return false
     end
 
+    # disable? のケースは omission として報告する。単に実行を飛ばすと test-unit は
+    # 「.」＝ pass として集計するため、前提（DB・外部サービス・アカウント等）を
+    # 満たさない環境では 1 行も実行されていないのに 100% passed と出て、
+    # 「守れているつもりの緑」になる (#488)。
     def run_test
-      super unless disable?
+      return omit("#{self.class}: 前提を満たさないためスキップ (disable?)") if disable?
+      super
     end
 
     def fixture(name)
