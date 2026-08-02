@@ -29,10 +29,12 @@ module Ginseng
     def test_dir
       assert_equal(@command.dir, Environment.dir)
       @command.dir = '/etc'
-      @command.args = ['ls']
+      @command.args = ['pwd']
       @command.exec
 
-      assert_equal('/etc', Dir.pwd)
+      # chdir が効くのは子プロセスだけ。親の Dir.pwd を見ていたため、この
+      # アサーションは導入以来ずっと落ちていた。
+      assert_equal('/etc', @command.stdout.chomp)
     end
 
     def test_exec
@@ -79,6 +81,35 @@ module Ginseng
       @command.exec
 
       assert_includes(@command.stdout, 'HOGE=fugafuga')
+    end
+
+    # Ruby パッチアップを跨ぐデプロイで、旧 Ruby の親から引き継いだ
+    # RBENV_VERSION が子を旧 Ruby へ倒すのを防ぐ (#480)。
+    def test_exec_does_not_inherit_rbenv_version
+      original = ENV.fetch('RBENV_VERSION', nil)
+      ENV['RBENV_VERSION'] = '0.0.0-should-not-leak'
+      @command.args = ['env']
+      @command.exec
+
+      assert_not_includes(@command.stdout, 'RBENV_VERSION=')
+    ensure
+      ENV['RBENV_VERSION'] = original
+    end
+
+    # 呼び出し側が明示指定した場合はそちらを優先する。
+    def test_env_overrides_unset
+      @command.env = {RBENV_VERSION: '3.4.9'}
+      @command.args = ['env']
+      @command.exec
+
+      assert_includes(@command.stdout, 'RBENV_VERSION=3.4.9')
+    end
+
+    def test_sudo_command_unsets_rbenv_version
+      @command.user = 'nobody'
+      @command.args = ['env']
+
+      assert_includes(@command.send(:sudo_command), 'env -u RBENV_VERSION')
     end
   end
 end

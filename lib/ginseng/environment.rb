@@ -24,8 +24,17 @@ module Ginseng
       udp.close
     end
 
+    # 実行環境。ENV['RACK_ENV'] / ENV['RAILS_ENV'] を config より優先して見る。
+    # config だけを見ていたため、rc.d が RACK_ENV=production を渡していても
+    # /environment 未設定のアプリは常に :development に倒れ、本番の Puma が
+    # development モードで起動してスタックトレースを外部公開していた
+    # （cure-api #302） (#479)。
     def self.type
-      return Config.instance['/environment'].to_sym rescue :development
+      env = [ENV.fetch('RACK_ENV', nil), ENV.fetch('RAILS_ENV', nil)].find {|v| v.to_s.present?}
+      return env.to_sym if env
+      return Config.instance['/environment'].to_sym
+    rescue
+      return :development
     end
 
     def self.development?

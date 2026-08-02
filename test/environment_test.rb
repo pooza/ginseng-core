@@ -27,6 +27,27 @@ module Ginseng
       assert_equal(:development, Environment.type)
     end
 
+    # rc.d が RACK_ENV=production を渡していても config だけを見て development に
+    # 倒れていた（本番 Puma が development で起動する事故、cure-api #302） (#479)。
+    def test_type_prefers_rack_env
+      original = ENV.fetch('RACK_ENV', nil)
+      ENV['RACK_ENV'] = 'production'
+
+      assert_equal(:production, Environment.type)
+      assert_true(Environment.production?)
+    ensure
+      ENV['RACK_ENV'] = original
+    end
+
+    def test_type_ignores_empty_rack_env
+      original = ENV.fetch('RACK_ENV', nil)
+      ENV['RACK_ENV'] = ''
+
+      assert_equal(:development, Environment.type)
+    ensure
+      ENV['RACK_ENV'] = original
+    end
+
     def test_development?
       assert_boolean(Environment.development?)
     end
