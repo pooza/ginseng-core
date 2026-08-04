@@ -63,5 +63,55 @@ module Ginseng
         @logger.create_message(a: {b: {secret: 'x', keep: 'y'}}),
       )
     end
+
+    # URL の**クエリに埋まった**資格情報が落ちること
+    # (pooza/mulukhiya-toot-proxy#4511)。キー名は `url` なので mask_fields では
+    # 素通りする。mulukhiya の listener がフルスコープのボットトークンを平文で
+    # syslog へ書き続けていた実例がある。
+    def test_create_message_masks_url_credentials
+      message = @logger.create_message(
+        url: 'wss://example.com/api/v1/streaming?access_token=SECRET&stream=user',
+      )
+
+      assert_not_include(message[:url], 'SECRET')
+      assert_include(message[:url], '[FILTERED]')
+      assert_include(message[:url], 'stream=user', '無関係なパラメータは残す')
+      assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
+    end
+
+    # Misskey のトークンパラメータ `i` も落ちること。汎用名なので URL のクエリに
+    # 限って判定している。
+    def test_create_message_masks_misskey_token_param
+      message = @logger.create_message(url: 'https://example.com/streaming?i=SECRET')
+
+      assert_not_include(message[:url], 'SECRET')
+
+      # Hash のキーとしての :i は URL ではないので落とさない（落とすと無関係な
+      # 値まで消える）。
+      assert_equal({i: 'plain value'}, @logger.create_message(i: 'plain value'))
+    end
+
+    # 資格情報を含まない URL・URL でない文字列は素通しすること。
+    def test_create_message_keeps_harmless_strings
+      url = 'https://example.com/path?page=2&sort=desc'
+
+      assert_equal(url, @logger.create_message(url:)[:url])
+      assert_equal('not a url? really', @logger.create_message(message: 'not a url? really')[:message])
+      assert_equal('/api/v1/statuses?token=x', @logger.create_message(message: '/api/v1/statuses?token=x')[:message], 'スキームが無ければ URL 扱いしない')
+    end
+
+    # 壊れた URL でも落ちないこと（ログ出力で例外を上げるのが最悪）。
+    def test_create_message_survives_malformed_url
+      assert_nothing_raised do
+        @logger.create_message(url: 'http://[bad?token=x')
+      end
+    end
+
+    # 配列やネストの中の URL にも効くこと。
+    def test_create_message_masks_url_in_nested_values
+      message = @logger.create_message(a: ['https://example.com/?token=SECRET'])
+
+      assert_not_include(message.dig(:a, 0), 'SECRET')
+    end
   end
 end

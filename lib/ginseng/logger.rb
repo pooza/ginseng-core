@@ -14,6 +14,32 @@ module Ginseng
     class Logger < Syslog::Logger
       include Package
 
+      FILTERED = '[FILTERED]'
+      # query_values= が値に使う encode 規則。encode_component の既定の
+      # charclass では角括弧が残ってしまい、実際の出力と一致しない。
+      FILTERED_ENCODED = Addressable::URI.encode_component(
+        FILTERED,
+        Addressable::URI::CharacterClasses::UNRESERVED,
+      ).freeze
+
+      # URL のクエリに現れたら落とす資格情報パラメータの既定値。
+      # config の `/logger/mask_query_params` で上書きできる。
+      MASK_QUERY_PARAMS = [
+        'access_token',
+        'api_key',
+        'apikey',
+        'client_secret',
+        'code',
+        'i',
+        'key',
+        'password',
+        'refresh_token',
+        'secret',
+        'token',
+      ].freeze
+
+      URL_PATTERN = %r{\A[a-z][a-z0-9+.-]*://}i
+
       def initialize(name = nil)
         @config = config_class.instance
         name ||= package_class.name
@@ -67,6 +93,8 @@ module Ginseng
           return entries.transform_values {|v| mask(v)}
         in Array
           return arg.reject {|v| v.to_s.empty?}.map {|v| mask(v)}
+        in String
+          return mask_url(arg)
         else
           return arg
         end
@@ -74,6 +102,50 @@ module Ginseng
 
       def mask_field?(key)
         return @config['/logger/mask_fields'].include?(key.to_s)
+      end
+
+      # URL のクエリに埋まった資格情報を落とす
+      # (pooza/mulukhiya-toot-proxy#4511)。
+      #
+      # mask_field? はキー名でしか判定できないため、`url: "...?access_token=xxx"`
+      # のように**値の文字列の中に埋まった**トークンは素通りしていた。実際に
+      # mulukhiya の listener がフルスコープのボットトークンを平文で syslog へ
+      # 書き続けていた。HTTP#log も毎リクエスト url: を出すので、局所対処では
+      # なく Logger 側に置く。
+      #
+      # ⚠ 判定は URL のクエリに限ること。`i` は Misskey のトークンパラメータだが
+      # 汎用名すぎるので、Hash のキーや素の文字列にまで広げると無関係な値まで
+      # 落としてしまう。
+      def mask_url(value)
+        return value unless value.include?('?')
+        return value unless value.match?(URL_PATTERN)
+        uri = Addressable::URI.parse(value)
+        query = uri.query_values(Array)
+        return value if query.blank?
+        return value unless query.any? {|k, _| mask_query_param?(k)}
+        uri.query_values = query.map {|k, v| [k, mask_query_param?(k) ? FILTERED : v]}
+        # query_values= は値を percent-encode するので、目印の角括弧が
+        # `%5BFILTERED%5D` になってログが読みにくい。自分で入れた目印だけ戻す。
+        return uri.to_s.gsub(FILTERED_ENCODED, FILTERED)
+      rescue Addressable::URI::InvalidURIError
+        return value
+      end
+
+      def mask_query_param?(key)
+        return mask_query_params.include?(key.to_s.downcase)
+      end
+
+      # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
+      # （config の不備で資格情報が平文に戻るほうが事故が大きい）。
+      def mask_query_params
+        @mask_query_params ||= begin
+          configured = begin
+            @config['/logger/mask_query_params']
+          rescue ConfigError
+            nil
+          end
+          (configured || MASK_QUERY_PARAMS).to_set {|v| v.to_s.downcase}
+        end
       end
     end
   end

@@ -1,5 +1,5 @@
 package:
-  version: 1.15.31
+  version: 1.15.32
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -32,3 +32,18 @@ logger:
     - password
     - token
     - secret
+  # URL のクエリに現れたら [FILTERED] へ落とすパラメータ
+  # (pooza/mulukhiya-toot-proxy#4511)。mask_fields はキー名でしか判定できないので、
+  # 値の文字列に埋まった資格情報はこちらで落とす。
+  mask_query_params:
+    - access_token
+    - api_key
+    - apikey
+    - client_secret
+    - code
+    - i
+    - key
+    - password
+    - refresh_token
+    - secret
+    - token
