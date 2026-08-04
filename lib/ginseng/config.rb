@@ -37,7 +37,17 @@ module Ginseng
       end
     end
 
-    alias reload load
+    # alias にすると定義時点の Ginseng::Config#load を束縛してしまい、サブクラスが
+    # load をオーバーライドしても reload からは呼ばれない。サブクラスが load で
+    # 足していた設定が reload 後に丸ごと消える (#491)。メソッド定義にして動的束縛に
+    # する。
+    #
+    # ⚠ load が冪等であることはサブクラス側の責任。update(@raw[key].key_flatten) が
+    # 返す配列は @raw の実体そのものなので、そこへ push すると load のたびに積み増さる。
+    # サブクラスで配列に足すなら dup してから足すこと。
+    def reload
+      return load
+    end
 
     def dirs
       return [

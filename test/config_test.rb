@@ -118,5 +118,29 @@ module Ginseng
     def test_load_file
       assert_kind_of(Hash, Config.load_file('autoload'))
     end
+
+    # reload がサブクラスの load を呼ぶこと (#491)。alias reload load だと定義時点の
+    # Ginseng::Config#load が束縛され、サブクラスが load で足した設定が reload 後に
+    # 消える。Singleton を挟まず素の Class.new で動的束縛だけを見る。
+    def test_reload_calls_overridden_load
+      klass = Class.new(Config) do
+        include Singleton
+
+        attr_reader :load_count
+
+        def load
+          @load_count = (@load_count || 0) + 1
+          self['/subclass_key'] = 'loaded'
+        end
+      end
+      instance = klass.instance
+
+      assert_equal(1, instance.load_count, '初期化で 1 回だけ load される')
+      instance['/subclass_key'] = nil
+      instance.reload
+
+      assert_equal(2, instance.load_count, 'reload でサブクラスの load が呼ばれる')
+      assert_equal('loaded', instance['/subclass_key'], 'サブクラスが足した設定が残る')
+    end
   end
 end
