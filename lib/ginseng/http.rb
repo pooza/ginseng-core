@@ -42,15 +42,11 @@ module Ginseng
       return uri
     end
 
+    # サイズのプリフライト等で GET の前に HEAD を撃つ呼び出し側があり、GET だけを
+    # 検証しても HEAD が素通りするなら SSRF 対策として意味を成さないので、head も
+    # get と同じく options[:host_validator] を受ける (mulukhiya-toot-proxy#4523)。
     def head(uri, options = {})
-      options[:headers] ||= {}
-      options[:headers]['User-Agent'] ||= user_agent
-      repeat(:get, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.head(uri.normalize, options)
-        log(method: :head, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        return response
-      end
+      return request(:head, uri, options)
     end
 
     # options[:host_validator] に「ホスト名を受けて真偽値を返す callable」を渡すと、
@@ -61,17 +57,7 @@ module Ginseng
     # (mulukhiya-toot-proxy#4410)。かといって follow_redirects: false で一律に
     # 追従を切ると、正規に 302 を返す相手（Google Apps Script 等）が壊れる。
     def get(uri, options = {})
-      options[:headers] ||= {}
-      options[:headers]['User-Agent'] ||= user_agent
-      if validator = options.delete(:host_validator)
-        return get_validating_hops(create_uri(uri), options, validator)
-      end
-      repeat(:get, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.get(uri.normalize, options)
-        log(method: :get, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        return response
-      end
+      return request(:get, uri, options)
     end
 
     def post(uri, options = {})
@@ -144,16 +130,31 @@ module Ginseng
 
     private
 
-    def get_validating_hops(uri, options, validator)
+    # host_validator を持たない冪等メソッド（GET / HEAD）の共通経路。
+    def request(method, uri, options)
+      options[:headers] ||= {}
+      options[:headers]['User-Agent'] ||= user_agent
+      if validator = options.delete(:host_validator)
+        return request_validating_hops(method, create_uri(uri), options, validator)
+      end
+      repeat(method, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.public_send(method, uri.normalize, options)
+        log(method:, url: uri, status: response.code, start:)
+        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        return response
+      end
+    end
+
+    def request_validating_hops(method, uri, options, validator)
       options = options.merge(follow_redirects: false)
       limit = options.delete(:max_redirects) || MAX_REDIRECTS
       (limit + 1).times do
         # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
         # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
         validate_host!(uri, validator)
-        response = repeat(:get, uri, start = Time.now) do
-          r = HTTParty.get(uri.normalize, options)
-          log(method: :get, url: uri, status: r.code, start:)
+        response = repeat(method, uri, start = Time.now) do
+          r = HTTParty.public_send(method, uri.normalize, options)
+          log(method:, url: uri, status: r.code, start:)
           raise GatewayError, "Bad response #{r.code}" unless r.code < 400
           r
         end
