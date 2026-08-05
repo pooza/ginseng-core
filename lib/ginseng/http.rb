@@ -61,36 +61,15 @@ module Ginseng
     end
 
     def post(uri, options = {})
-      options[:headers] = create_headers(options[:headers])
-      options[:body] = create_body(options[:body], options[:headers])
-      repeat(:post, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.post(uri.normalize, options)
-        log(method: :post, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        return response
-      end
+      return request_with_body(:post, uri, options)
     end
 
     def delete(uri, options = {})
-      options[:headers] = create_headers(options[:headers])
-      options[:body] = create_body(options[:body], options[:headers])
-      repeat(:delete, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.delete(uri.normalize, options)
-        log(method: :post, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        return response
-      end
+      return request_with_body(:delete, uri, options)
     end
 
     def put(uri, options = {})
-      options[:headers] = create_headers(options[:headers])
-      options[:body] = create_body(options[:body], options[:headers])
-      repeat(:delete, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.put(uri.normalize, options)
-        log(method: :put, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
-        return response
-      end
+      return request_with_body(:put, uri, options)
     end
 
     def mkcol(uri, options = {})
@@ -103,7 +82,7 @@ module Ginseng
         response = http.request(request)
         code = response.code.to_i
         log(method: :mkcol, url: uri, status: code, start:)
-        raise GatewayError, "Bad response #{code}" unless code < 400
+        bad_response!(response, code) unless code < 400
         return response
       end
     end
@@ -124,11 +103,26 @@ module Ginseng
         timeout: @config['/http/timeout/seconds'],
       })
       log(method:, multipart: true, url: uri, status: response.code, start:)
-      raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+      bad_response!(response) unless response.code < 400
       return response
     end
 
     private
+
+    # body を伴うメソッド（POST / DELETE / PUT）の共通経路。
+    #
+    # 括り出す前は delete が `method: :post` でログし、put が `repeat(:delete, ...)`
+    # を呼んでいた（いずれもコピペ由来）。ここに寄せて解消している。
+    def request_with_body(method, uri, options)
+      options[:headers] = create_headers(options[:headers])
+      options[:body] = create_body(options[:body], options[:headers])
+      repeat(method, uri = create_uri(uri), start = Time.now) do
+        response = HTTParty.public_send(method, uri.normalize, options)
+        log(method:, url: uri, status: response.code, start:)
+        bad_response!(response) unless response.code < 400
+        return response
+      end
+    end
 
     # host_validator を持たない冪等メソッド（GET / HEAD）の共通経路。
     def request(method, uri, options)
@@ -140,7 +134,7 @@ module Ginseng
       repeat(method, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.public_send(method, uri.normalize, options)
         log(method:, url: uri, status: response.code, start:)
-        raise GatewayError, "Bad response #{response.code}" unless response.code < 400
+        bad_response!(response) unless response.code < 400
         return response
       end
     end
@@ -155,7 +149,7 @@ module Ginseng
         response = repeat(method, uri, start = Time.now) do
           r = HTTParty.public_send(method, uri.normalize, options)
           log(method:, url: uri, status: r.code, start:)
-          raise GatewayError, "Bad response #{r.code}" unless r.code < 400
+          bad_response!(r) unless r.code < 400
           r
         end
         location = redirect_location(response)
@@ -182,13 +176,33 @@ module Ginseng
       yield
     rescue Net::ReadTimeout => e
       log_retry_error(e, method, uri, start)
-      raise GatewayError, e.message, e.backtrace
+      raise gateway_error(e)
     rescue => e
       cnt += 1
       log_retry_error(e, method, uri, start, count: cnt)
-      raise GatewayError, e.message, e.backtrace unless retryable?(e) && cnt < retry_limit
+      raise gateway_error(e) unless retryable?(e) && cnt < retry_limit
       sleep(retry_seconds)
       retry
+    end
+
+    # 上流のレスポンスを添えて GatewayError を投げる。
+    #
+    # ⚠ message の書式は変えない。`source_status` の正規表現フォールバックや、
+    # 呼び出し側の文字列マッチ (mulukhiya-toot-proxy の annict_service 等) が
+    # これに依存している。**添えるだけ**にとどめる (mulukhiya-toot-proxy#4480)。
+    def bad_response!(response, code = nil)
+      error = GatewayError.new("Bad response #{code || response.code}")
+      error.response = response
+      raise error
+    end
+
+    # 既に GatewayError ならそのまま投げ直す。包み直すと response（上流ボディ）が
+    # 落ちる (mulukhiya-toot-proxy#4480)。
+    def gateway_error(error)
+      return error if error.is_a?(GatewayError)
+      wrapped = GatewayError.new(error.message)
+      wrapped.set_backtrace(error.backtrace)
+      return wrapped
     end
 
     # 再送して結果が変わりうるか。
