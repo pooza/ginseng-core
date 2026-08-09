@@ -29,7 +29,17 @@ module Ginseng
     def connection
       http = super
       address = options.dig(:connection_adapter_options, :pinned_address)
-      http.ipaddr = address if address.present?
+      return http if address.blank?
+      # ⚠ **プロキシ経由では pinning が効かない。**Net::HTTP#connect は proxy? の
+      # とき @ipaddr を見ずにプロキシへ繋ぎ、平文なら絶対 URI、HTTPS なら CONNECT で
+      # ホスト名を渡す。つまり**名前を解決するのはプロキシ**で、リバインディングは
+      # そのまま成立する。「pin したつもり」で素通りするより落とす（fail-closed）。
+      #
+      # ⚠ `Net::HTTP.new(host, port)` の proxy 引数は既定が `:ENV` なので、
+      # `http_proxy` / `https_proxy` を置いた環境では**明示指定していなくても**
+      # proxy? が true になる。
+      raise GatewayError, "Cannot pin '#{address}' through proxy" if http.proxy?
+      http.ipaddr = address
       return http
     end
   end

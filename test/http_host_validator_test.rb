@@ -177,6 +177,47 @@ module Ginseng
       assert_equal('example.com', connection.address)
     end
 
+    # ⚠ **プロキシ経由では pinning が効かない**（接続先はプロキシで、名前を
+    # 解決するのもプロキシ）。素通りさせるくらいなら落とす。
+    def test_adapter_refuses_to_pin_through_explicit_proxy
+      error = assert_raise(GatewayError) do
+        PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
+          http_proxyaddr: 'proxy.example',
+          http_proxyport: 8080,
+          connection_adapter_options: {pinned_address: '203.0.113.1'},
+        })
+      end
+
+      assert_match(/Cannot pin/, error.message)
+    end
+
+    # ⚠ Net::HTTP.new の proxy 引数は既定が :ENV。明示していなくても
+    # http_proxy を置いた環境では proxy? が true になる。
+    def test_adapter_refuses_to_pin_through_env_proxy
+      saved = ENV.fetch('http_proxy', nil)
+      ENV['http_proxy'] = 'http://proxy.example:8080'
+      begin
+        assert_raise(GatewayError) do
+          PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
+            connection_adapter_options: {pinned_address: '203.0.113.1'},
+          })
+        end
+      ensure
+        saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
+      end
+    end
+
+    # プロキシがあっても pinning を要求していなければ従来どおり通す。
+    def test_adapter_allows_proxy_without_pinning
+      connection = PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
+        http_proxyaddr: 'proxy.example',
+        http_proxyport: 8080,
+      })
+
+      assert_true(connection.proxy?)
+      assert_nil(connection.ipaddr)
+    end
+
     # pinning を有効にしたホップでもリクエスト自体は通ること。
     def test_get_with_pinning_validator_succeeds
       WebMock.stub_request(:get, 'https://example.com/exec').to_return(status: 200, body: 'ok')
