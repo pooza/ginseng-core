@@ -186,7 +186,7 @@ module Ginseng
     # ⚠ **プロキシ経由では pinning が効かない**（接続先はプロキシで、名前を
     # 解決するのもプロキシ）。素通りさせるくらいなら落とす。
     def test_adapter_refuses_to_pin_through_explicit_proxy
-      error = assert_raise(GatewayError) do
+      error = assert_raise(PinningError) do
         PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
           http_proxyaddr: 'proxy.example',
           http_proxyport: 8080,
@@ -203,7 +203,7 @@ module Ginseng
       saved = ENV.fetch('http_proxy', nil)
       ENV['http_proxy'] = 'http://proxy.example:8080'
       begin
-        assert_raise(GatewayError) do
+        assert_raise(PinningError) do
           PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
             connection_adapter_options: {pinned_address: '203.0.113.1'},
           })
@@ -211,6 +211,28 @@ module Ginseng
       ensure
         saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
       end
+    end
+
+    # ⚠ **pinning できないことを再送で解決しようとしない。**プロキシ設定は試行の
+    # 間に変わらないのに、GatewayError のままだと source_status が 502 で
+    # 「上流の一時障害」と読まれ、既定で 5 回叩き直して 4 秒眠る。
+    def test_pinning_error_is_not_retryable
+      assert_false(@http.send(:retryable?, PinningError.new('Cannot pin')))
+      assert_true(@http.send(:retryable?, GatewayError.new('Bad response 503')))
+    end
+
+    def test_get_does_not_retry_proxy_rejection
+      saved = ENV.fetch('http_proxy', nil)
+      ENV['http_proxy'] = 'http://proxy.example:8080'
+      begin
+        assert_raise(PinningError) do
+          @http.get('http://example.com/exec', host_validator: ->(_host) {'203.0.113.1'})
+        end
+      ensure
+        saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
+      end
+
+      assert_not_requested(:get, 'http://example.com/exec')
     end
 
     # プロキシがあっても pinning を要求していなければ従来どおり通す。

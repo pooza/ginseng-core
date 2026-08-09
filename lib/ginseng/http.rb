@@ -220,6 +220,10 @@ module Ginseng
     #
     # 方針を変えたいアプリはこのメソッドを override する。
     def retryable?(error)
+      # ⚠ pinning できない = 設定の問題なので、試行の間に変わらない。既定では
+      # source_status が 502 になり「上流の一時障害」として 5 回叩き直して
+      # しまうため、ここで明示的に落とす。
+      return false if error.is_a?(PinningError)
       return true unless error.is_a?(GatewayError)
       status = error.source_status
       return true if RETRYABLE_STATUSES.include?(status)
