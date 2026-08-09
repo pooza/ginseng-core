@@ -131,6 +131,39 @@ module Ginseng
       assert_not_include(body.keys, 'password')
     end
 
+    # ⚠ ブロック形式は Syslog::Logger の既存インタフェース。必須引数にすると
+    # `logger.warn {expensive}` が ArgumentError で落ちる (#499 の Codex P2)。
+    data('debug', :debug)
+    data('warn', :warn)
+    data('fatal', :fatal)
+    def test_severity_accepts_block_form(severity)
+      captured = capture_syslog {@logger.send(severity) {{url: 'https://example.com/?token=SECRET'}}}
+      body = JSON.parse(captured.first)
+
+      assert_equal(1, captured.size)
+      assert_not_include(body['url'], 'SECRET')
+    end
+
+    # severity が無効ならブロックを評価しない（遅延の意味が失われる）。
+    data('debug', :debug)
+    data('warn', :warn)
+    data('fatal', :fatal)
+    def test_severity_skips_block_when_disabled(severity)
+      called = false
+      @logger.level = ::Logger::Severity::UNKNOWN
+      captured = capture_syslog do
+        @logger.send(severity) do
+          called = true
+          'message'
+        end
+      end
+
+      assert_empty(captured)
+      assert_false(called)
+    ensure
+      @logger.level = ::Logger::Severity::DEBUG
+    end
+
     private
 
     # Syslog::Logger の各 severity は add へ集約されるので、そこで捕まえる。
