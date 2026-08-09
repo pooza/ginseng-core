@@ -231,6 +231,7 @@ module Ginseng
       ensure
         saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
       end
+
       assert_not_requested(:get, 'http://example.com/exec')
     end
 
