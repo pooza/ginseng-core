@@ -35,7 +35,17 @@ module Ginseng
     # ⚠ **JSON として読めた場合のみ**返す。上流が nginx の HTML エラーページを
     # 返すこともあり、それを素通しするとプロキシが他人の HTML を吐くことになる。
     # サイズ上限も掛ける（巨大なエラーページを丸ごとパースしない）。
+    # ⚠ メモ化は max_bytes ごとに持つ。上限を変えて呼び直したときに前の結果を
+    # 返してしまうと、上限の意味が消える。nil も結果なので key? で判定する。
     def source_body(max_bytes: MAX_SOURCE_BODY_BYTES)
+      @source_body ||= {}
+      return @source_body[max_bytes] if @source_body.key?(max_bytes)
+      return @source_body[max_bytes] = parse_source_body(max_bytes)
+    end
+
+    private
+
+    def parse_source_body(max_bytes)
       body = response&.body.to_s
       return nil if body.empty? || body.bytesize > max_bytes
       parsed = JSON.parse(body)
