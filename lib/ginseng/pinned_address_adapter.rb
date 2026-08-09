@@ -15,10 +15,11 @@ module Ginseng
   # `Net::HTTP#ipaddr=` は **接続先だけ**を IP に差し替える。`Host:` ヘッダと
   # TLS の SNI・証明書検証はホスト名のまま行われるので HTTPS の検証は壊れない。
   class PinnedAddressAdapter < HTTParty::ConnectionAdapter
-    # 接続先を address に固定した options を返す。address が nil なら素通し
-    # （真偽値を返す従来の validator は pinning しない）。
+    # 接続先を address に固定した options を返す。⚠ **String のときだけ**固定する。
+    # 真偽値を返す従来の validator の戻りをそのまま渡されても pinning しない
+    # （`ipaddr = true` を差すと接続時に落ちる）。
     def self.pin(options, address)
-      return options unless address
+      return options unless address.is_a?(String)
       return options.merge(
         connection_adapter: self,
         connection_adapter_options:

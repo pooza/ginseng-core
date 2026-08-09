@@ -156,6 +156,12 @@ module Ginseng
       assert_equal({timeout: 3}, PinnedAddressAdapter.pin({timeout: 3}, nil))
     end
 
+    # ⚠ 真偽値を返す従来の validator の戻りをそのまま渡されても pinning しない
+    # （`ipaddr = true` を差すと接続時に落ちる）。
+    def test_pin_address_ignores_non_string
+      assert_equal({timeout: 3}, PinnedAddressAdapter.pin({timeout: 3}, true))
+    end
+
     # 実際に Net::HTTP の接続先が差し替わること。⚠ Host ヘッダと TLS の
     # SNI・証明書検証はホスト名のままでなければならない（IP で検証すると
     # HTTPS が全滅する）。
