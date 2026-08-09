@@ -39,7 +39,7 @@ module Ginseng
       # ⚠ `Net::HTTP.new(host, port)` の proxy 引数は既定が `:ENV` なので、
       # `http_proxy` / `https_proxy` を置いた環境では**明示指定していなくても**
       # proxy? が true になる。
-      raise GatewayError, "Cannot pin '#{address}' through proxy" if http.proxy?
+      raise PinningError, "Cannot pin '#{address}' through proxy" if http.proxy?
       http.ipaddr = address
       return http
     end
