@@ -113,5 +113,35 @@ module Ginseng
 
       assert_not_include(message.dig(:a, 0), 'SECRET')
     end
+
+    # ⚠ **info / error だけを見ていると穴に気づけない** (#499)。severity を
+    # 変えただけで create_message を素通りし、JSON 化もマスキングもされない
+    # 状態に戻る。実際に mulukhiya が warn で URL を出していた。
+    data('debug', :debug)
+    data('warn', :warn)
+    data('fatal', :fatal)
+    data('info', :info)
+    def test_severity_goes_through_create_message(severity)
+      captured = capture_syslog {@logger.send(severity, url: 'https://example.com/?token=SECRET', password: 'hoge')}
+      # JSON であること（Hash#to_s へ倒れていない）。
+      body = JSON.parse(captured.first)
+
+      assert_equal(1, captured.size)
+      assert_not_include(body['url'], 'SECRET')
+      assert_not_include(body.keys, 'password')
+    end
+
+    private
+
+    # Syslog::Logger の各 severity は add へ集約されるので、そこで捕まえる。
+    def capture_syslog
+      captured = []
+      @logger.define_singleton_method(:add) do |_severity, message = nil, _progname = nil|
+        captured.push(message)
+        true
+      end
+      yield
+      return captured
+    end
   end
 end

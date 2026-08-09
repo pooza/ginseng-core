@@ -8,6 +8,15 @@ module Ginseng
 
       def error(message)
       end
+
+      def debug(message)
+      end
+
+      def warn(message)
+      end
+
+      def fatal(message)
+      end
     end
   else
     require 'syslog/logger'
@@ -55,6 +64,18 @@ module Ginseng
         return unless message.is_a?(StandardError)
         message.backtrace.each do |entry|
           super("  #{entry}")
+        end
+      end
+
+      # ⚠ **info / error 以外の severity も create_message を通すこと** (#499)。
+      # ここを空けておくと、`warn` を使った瞬間に出力が Hash#to_s へ戻り、
+      # mask / mask_url（#478、pooza/mulukhiya-toot-proxy#4511）が丸ごと効かなく
+      # なる。severity は syslog の重要度として正当な使い分けなので、呼び出し側を
+      # info へ書き換えて回るのではなくここで塞ぐ。
+      # error はバックトレース展開があるので上で個別に定義している。
+      [:debug, :warn, :fatal].each do |severity|
+        define_method(severity) do |message|
+          super(create_message(message).to_json)
         end
       end
 
