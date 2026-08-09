@@ -145,9 +145,11 @@ module Ginseng
       (limit + 1).times do
         # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
         # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
-        validate_host!(uri, validator)
+        # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
+        # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
+        hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
         response = repeat(method, uri, start = Time.now) do
-          r = HTTParty.public_send(method, uri.normalize, options)
+          r = HTTParty.public_send(method, uri.normalize, hop_options)
           log(method:, url: uri, status: r.code, start:)
           bad_response!(r) unless r.code < 400
           r
@@ -166,9 +168,13 @@ module Ginseng
       return location
     end
 
+    # validator が **IP アドレス文字列**を返した場合は、その IP を接続先として
+    # 返す (pooza/mulukhiya-toot-proxy#4524)。真偽値を返す従来の validator は
+    # そのまま動く（検証のみで pinning はしない）。
     def validate_host!(uri, validator)
-      return if validator.call(uri.host)
-      raise GatewayError, "Rejected host '#{uri.host}'"
+      result = validator.call(uri.host)
+      raise GatewayError, "Rejected host '#{uri.host}'" unless result
+      return result.is_a?(String) ? result : nil
     end
 
     def repeat(method, uri, start)
