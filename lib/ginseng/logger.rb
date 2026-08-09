@@ -73,8 +73,15 @@ module Ginseng
       # なる。severity は syslog の重要度として正当な使い分けなので、呼び出し側を
       # info へ書き換えて回るのではなくここで塞ぐ。
       # error はバックトレース展開があるので上で個別に定義している。
+      #
+      # ⚠ **ブロック形式 (`logger.warn {expensive}`) を殺さないこと。**Syslog::Logger
+      # の severity メソッドは message 省略 + ブロックを受けるので、必須引数にすると
+      # 既存の呼び出しが ArgumentError になる。severity が無効なときはブロックを
+      # 評価しない（遅延の意味が失われる）。
       [:debug, :warn, :fatal].each do |severity|
-        define_method(severity) do |message|
+        define_method(severity) do |message = nil, &block|
+          return true unless send(:"#{severity}?")
+          message = block.call if message.nil? && block
           super(create_message(message).to_json)
         end
       end
