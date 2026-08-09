@@ -84,6 +84,29 @@ module Ginseng
       assert_equal(502, error.source_status)
     end
 
+    # メモ化しても結果が変わらないこと。エラー経路は source_body を複数回
+    # 呼ぶ（silent 判定 → レンダリング）ので、毎回 JSON.parse していた
+    # (pooza/mulukhiya-toot-proxy#4537)。
+    def test_source_body_is_memoized
+      WebMock.stub_request(:get, UPSTREAM).to_return(status: 400, body: {error: 'x'}.to_json)
+
+      error = assert_raise(GatewayError) {@http.get(UPSTREAM)}
+
+      assert_same(error.source_body, error.source_body)
+    end
+
+    # ⚠ メモ化は max_bytes ごと。上限を変えて呼び直したときに前の結果を
+    # 返すと、上限の意味が消える。
+    def test_source_body_memoization_respects_max_bytes
+      WebMock.stub_request(:get, UPSTREAM).to_return(status: 400, body: {error: 'x'}.to_json)
+
+      error = assert_raise(GatewayError) {@http.get(UPSTREAM)}
+
+      assert_equal('x', error.source_body['error'])
+      assert_nil(error.source_body(max_bytes: 4))
+      assert_equal('x', error.source_body['error'])
+    end
+
     # ⚠ repeat が包み直すと response が落ちる。再送対象（5xx）でも、
     # 打ち切り時に上流のボディが残っていること。
     def test_response_survives_retry_exhaustion
