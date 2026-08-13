@@ -1,5 +1,12 @@
 # frozen_string_literal: true
 
+# ⚠⚠ **`Addressable::URI` を下でクラス定義時に使うので、ここで必ず読む。**
+# 1.15.32（#493）で `FILTERED_ENCODED` を足したとき require を書き忘れており、
+# **`uri.rb` が先に読まれていれば偶然動く**という読み込み順依存になっていた。
+# ⚠ 実際に `pooza/cure-api` の常駐が
+# `uninitialized constant Ginseng::Logger::Addressable` で起動しなくなった（2026-08-13）。
+require 'addressable/uri'
+
 module Ginseng
   if Environment.win?
     class Logger
