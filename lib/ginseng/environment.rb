@@ -75,13 +75,32 @@ module Ginseng
       return File.join(dir, 'cert/cacert.pem')
     end
 
+    # CA 証明書 (cert/cacert.pem) が最新か。
+    #
+    # ⚠ **取得に失敗したときに true（＝更新不要）を返さない** (#511)。
+    # 取得先が落ちている・`/cert/url` が typo・TLS 検証に失敗した、のいずれも
+    # 「鮮度に問題なし」ではない。true に倒すと**古い CA を使い続けることに誰も
+    # 気付けず、しかも失敗するほど静かになる**。
+    #
+    # ⚠ **例外を飲むこと自体は妥当**（鮮度確認に失敗して起動しないのは困る）。
+    # 問題は飲んだうえで安全側でない値を返すことなので、値だけ倒す。
     def self.cert_fresh?
       latest = HTTP.new.get(Config.instance['/cert/url']).body
       return File.binread(cert_file) == latest
-    rescue
-      return true
+    rescue => e
+      warn "cert freshness check failed: #{e.class} #{e.message}"
+      return false
     end
 
+    # Gemfile.lock が最新か。
+    #
+    # ⚠ **確かめられなかったときに true を返さない** (#511)。`cert_fresh?` と
+    # 同型で、`rake bundle:check` が「最新」と答えたのに実は何も確かめていない、
+    # という状態を作らないため。⚠ **モロヘイヤはこれを CI のゲートに使っている**
+    # ので、true に倒すとゲートが黙って no-op になる。
+    #
+    # ⚠ **「見るものが無い」と「見られなかった」は別。**lock が無い・git の管理下に
+    # 無いのは前者なので true のままでよい。
     def self.gem_fresh?
       lock = File.join(dir, 'Gemfile.lock')
       return true unless File.exist?(lock)
@@ -91,10 +110,14 @@ module Ginseng
       before = File.read(lock)
       cmd = CommandLine.new(['bundle', 'lock', '--update'])
       cmd.exec
-      return true unless cmd.status.zero?
+      unless cmd.status.zero?
+        warn "gem freshness check failed: 'bundle lock --update' exited #{cmd.status}"
+        return false
+      end
       return File.read(lock) == before
-    rescue
-      return true
+    rescue => e
+      warn "gem freshness check failed: #{e.class} #{e.message}"
+      return false
     ensure
       File.write(lock, before) if before
     end
