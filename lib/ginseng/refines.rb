@@ -186,11 +186,32 @@ module Ginseng
     end
 
     module ::Process
-      def self.alive?(pid)
+      # プロセスの生死。:alive / :dead / :unknown を返す。
+      #
+      # ⚠ **真偽 2 値では足りない** (#510)。`Errno::ESRCH`（存在しない）と
+      # `Errno::EPERM`（**存在するが触れない**＝別ユーザーのプロセス）は違うことを
+      # 意味するので、後者を「死んでいる」に読み替えない。
+      #
+      # ⚠ **`EPERM` を :alive にも寄せない。** pid が再利用されて他人のプロセスに
+      # なっている場合、それは「うちのデーモン」ではない。分からないことは
+      # :unknown と答える。
+      def self.alive_state(pid)
         kill(0, pid)
-        return true
-      rescue
-        return false
+        return :alive
+      rescue Errno::ESRCH
+        return :dead
+      rescue StandardError
+        # `Errno::EPERM`（存在するが触れない）と、pid として解釈できない引数など。
+        # ⚠ **どちらも「死んでいる」に倒さない。**例外を投げない契約は保つ
+        # （既存の呼び出し側が rescue していないため）。
+        return :unknown
+      end
+
+      # ⚠ **:unknown は false 側に落ちる。**「生きていると断定できるか」の述語なので
+      # それでよいが、**「死んでいる」と読み替えないこと**。原因を出すなら
+      # alive_state を見る (#510)。
+      def self.alive?(pid)
+        return alive_state(pid) == :alive
       end
     end
   end
