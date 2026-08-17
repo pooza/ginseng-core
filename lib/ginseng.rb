@@ -8,6 +8,8 @@ require 'zeitwerk'
 require 'yaml'
 require 'yajl'
 require 'yajl/json_gem'
+require 'json-schema'
+require 'addressable/uri'
 
 ActiveSupport::Inflector.inflections do |inflect|
   inflect.acronym 'API'
@@ -40,6 +42,39 @@ module Ginseng
     return loader
   end
 
+  # json-schema の `uri` は Addressable でパースできるかしか見ない (JSON::Schema::UriFormat)
+  # ため、`これはURLではない` や `precure.ml` のような相対参照も「妥当な URI」として通る。
+  # 弾けるのは `::::` のような構文破綻だけで、format: uri は事実上何も検証していない。
+  #
+  # ⚠ `validate_formats: true` を渡しても変わらない。json-schema 6 は format を既定で
+  # 検証しており、緩いのはフラグではなく uri の検証内容そのもの。フラグの問題だと
+  # 読むと「立てたのに直らない」で終わる。
+  #
+  # RFC 3986 / JSON Schema の uri は絶対 URI（スキーム必須）を指し、相対を許すのは
+  # uri-reference の側なので、スキームを要求するのは仕様への追従であって独自拡張ではない。
+  # 書いてあるのに何も弾かない指定は「守っているつもりで無防備」で、利用アプリ 2 つで
+  # 実際に穴になっていた (pooza/makoto2#35 / pooza/tomato-shrieker#1461)。
+  #
+  # ⚠⚠ スキームを http(s) には限定しない。postgres:// / redis:// も妥当な URI で、
+  # モロヘイヤが dsn に format: uri を使っている。「http でなければならない」はアプリ側の
+  # 要件なので、schema の pattern で書く。したがって `htps://example.com` のような
+  # スキーム名の typo はここでは止まらない。
+  #
+  # 非文字列は素通しする。型の誤りは type が報告する担当で、ここで二重に鳴らすと
+  # 1 つの誤りが 2 行のエラーになる。
+  def self.setup_json_schema
+    JSON::Validator.register_format_validator('uri', proc {|value|
+      next unless value.is_a?(String)
+      uri = begin
+        Addressable::URI.parse(value)
+      rescue Addressable::URI::InvalidURIError
+        nil
+      end
+      next if uri&.absolute?
+      raise JSON::Schema::CustomFormatError, 'must be an absolute URI (scheme required)'
+    })
+  end
+
   # ⚠ ricecream は gemspec の依存ではない。アプリが Gemfile に書かなければ存在せず、
   # `--without development` で入れたバンドルでも消える。ここで LoadError を拾わないと
   # **`require 'ginseng'` そのものが落ち、アプリが起動できなくなる**。
@@ -59,5 +94,6 @@ module Ginseng
 
   Bundler.require
   loader.setup
+  setup_json_schema
   setup_debug
 end
