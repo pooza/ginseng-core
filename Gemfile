@@ -4,11 +4,12 @@ gemspec
 group :development do
   gem 'pp'
   gem 'ricecream'
-  gem 'rubocop'
-  gem 'rubocop-minitest'
-  gem 'rubocop-performance'
-  gem 'rubocop-rake'
-  gem 'test-unit'
+          gem 'test-unit'
   gem 'timecop'
   gem 'webmock'
+end
+
+group :development, :test do
+  # ⚠ rubocop 本体とプラグインはこの gem が依存として持つ。設定の正本も同じ場所。
+  gem 'ginseng-style', github: 'pooza/ginseng-style', branch: 'main', require: false
 end
