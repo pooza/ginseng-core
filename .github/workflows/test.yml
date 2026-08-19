@@ -1,6 +1,10 @@
 name: test
 on:
-  - push
+  push:
+  # ⚠ push 契機だけだと、更新が止まったときに赤へ気づけない。
+  # cert:check は cacert.pem が古くなると赤になるので、週次で検知したい。
+  schedule:
+    - cron: '25 0 * * 1'
 env:
   CI: 'true'
 jobs:
@@ -14,14 +18,14 @@ jobs:
           - ruby:3.4
           - ruby:4.0
     steps:
-      - uses: actions/checkout@v3
-      - name: bundle install
-        run: |
-          gem install bundler -v '~>4.0'
-          bundle install --jobs 4 --retry 3
-          bundle exec rake bundle:check
-      - name: cert check
-        run: bundle exec rake cert:check
-      - name: Run lint
-        run: |
-          bundle exec rubocop
+      - uses: actions/checkout@v5
+      # ⚠ 手順の正本は pooza/ginseng-style。ここには matrix と schedule だけ置く。
+      - uses: pooza/ginseng-style/.github/actions/ruby-check@main
+        with:
+          # ⚠ 証明書を持つのはこの gem だけ。⚠⚠ cert:update は CI では回さない。
+          # cacert.pem をコミットして差分をレビューする設計（b9ddf32）。
+          cert-check: 'true'
+          # ⚠⚠ 209 件のうち 13 件が、外部サーバー・シークレット（Slack / LINE）・
+          # SMTP・ホストの /etc/cron.frequently に依存していて CI では通らない。
+          # 方針が決まるまで保留する。詳細と選択肢は #520 にある。
+          test: 'false'
