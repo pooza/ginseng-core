@@ -1,0 +1,79 @@
+name: cert
+
+# ⚠⚠ **「気付ける」と「CI が死ぬ」を分ける (#515)。**
+#
+# 上流（curl 配布の CA バンドル）は数か月おきに更新される。これまでは `test` の
+# `cert check` が赤になって知らせる形だったが、⚠ **赤になると lint も test も
+# skipped になり、その回の CI は何も検査しない**。実際 2026-08-13 の main で
+# そうなり、赤が常態化していたので誰も気付かなかった（2 度目 — #437）。
+#
+# ⚠ **更新の当番をここへ寄せる。** 週次で取りに行き、**差分があれば PR を出す**。
+# 検査を止めずに気付ける形にするのが目的で、⚠ **自動ではマージしない**
+# （バンドルの差分は人が見る。b9ddf32 と同じ運用）。
+on:
+  schedule:
+    - cron: '35 1 * * 1'
+  # ⚠ 手で回せるようにしておく（schedule は既定ブランチでしか動かない）。
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container: ruby:4.0
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: bundle install
+        run: |
+          gem install bundler -v '~>4.0'
+          bundle install --jobs 4 --retry 3
+
+      # ⚠ 取得先は config/lib.yaml の /cert/url。**ワークフローに URL を書かない**
+      # （2 箇所に持つと必ずずれる）。
+      - name: cert update
+        run: bundle exec rake cert:update
+
+      - name: open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if git diff --quiet -- cert/cacert.pem; then
+            echo 'cert/cacert.pem は最新。PR は出さない。'
+            exit 0
+          fi
+          branch="chore/cacert-$(date -u +%Y%m%d)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add cert/cacert.pem
+          git commit -m 'chore: cacert.pem を上流へ追随する (#515)'
+          git push -u origin "$branch"
+          # ⚠ このコンテナに gh は無いので API を直に叩く。JSON の組み立ては ruby で
+          # 行う（シェルでクォートを組むと、差分の中身で壊れる）。
+          ruby -rjson -e '
+            branch = ARGV.first
+            puts({
+              title: "chore: cacert.pem を上流へ追随する (#515)",
+              head: branch,
+              base: "main",
+              body: [
+                "週次の cert ワークフローが上流の更新を検知したので PR を出します (#515)。",
+                "",
+                "- 取得先は `config/lib.yaml` の `/cert/url`",
+                "- ⚠ **差分は人が見てからマージしてください**（自動マージはしません）",
+                "- ⚠ `rake cert:check` はこのファイルと上流を突き合わせるので、マージ後に緑へ戻ります",
+              ].join("\n"),
+            }.to_json)
+          ' "$branch" > /tmp/pr.json
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls" \
+            -d @/tmp/pr.json
