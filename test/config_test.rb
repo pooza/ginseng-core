@@ -57,14 +57,28 @@ module Ginseng
       )
       # ⚠⚠ **小数秒を落とさない (#530)。** 引数無しの iso8601 は秒で丸めるので、
       # enum / pattern が秒までの値だけを許していても小数秒付きの値が通っていた。
+      # ⚠ 桁は**値が必要とするぶんだけ**（`.5` を `.500` へ揃えない。揃えると
+      # 秒までを想定した pattern が落ちる側の問題が形を変えて残る）。
       assert_equal(
-        '2021-03-14T12:34:56.500Z',
+        '2021-03-14T12:34:56.5Z',
         @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56, 500_000)),
       )
       assert_equal(
         '2021-03-14T12:34:56.123456Z',
         @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56, 123_456)),
       )
+      # ⚠⚠ **10 桁以上でも切り詰めない (#550)。** 切り詰めると「検証した値」と
+      # 「Config が返す値」が食い違い、#530 が消そうとした穴が再現する。
+      assert_equal(
+        '2021-03-14T12:34:56.1234567891Z',
+        @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56 + Rational(1_234_567_891, 10**10))),
+      )
+      # ⚠ 10 進で表せない分母（DateTime の演算で作れる）でも止まること。
+      assert_nothing_raised do
+        Timeout.timeout(5) do
+          @config.normalize_temporal(DateTime.new(2021, 3, 14, 12, 34, Rational(1, 3)))
+        end
+      end
       # ⚠ 持っていない値に .000 を足さない（秒までを想定した pattern が落ちる）。
       assert_equal(
         '2021-03-14T12:34:56Z',
@@ -75,7 +89,7 @@ module Ginseng
         @config.normalize_temporal(DateTime.new(2021, 3, 14, 12, 34, 56)),
       )
       assert_equal(
-        '2021-03-14T12:34:56.500+00:00',
+        '2021-03-14T12:34:56.5+00:00',
         @config.normalize_temporal(DateTime.new(2021, 3, 14, 12, 34, Rational(565, 10))),
       )
       assert_equal('hoge', @config.normalize_temporal('hoge'))

@@ -147,6 +147,39 @@ module Ginseng
       assert_requested(:get, @url, times: @http.retry_limit)
     end
 
+    # ⚠⚠ **上限は Retry-After 由来の値にだけ掛ける (#549)。** 固定値にも掛けると、
+    # `/http/retry/seconds` を上限より大きくしているアプリで、**ヘッダの無い 503 や
+    # 接続断まで 1 回で諦める**ようになる（#525 が「ヘッダが無ければ従来どおり」と
+    # 約束した挙動に反する）。
+    def test_ceiling_does_not_apply_to_fixed_interval
+      Config.instance['/http/retry/seconds'] = 120
+      stub_request(:get, @url).to_return(status: 503)
+
+      assert_raise(GatewayError) {capture_sleep {HTTP.new.get(@url)}}
+
+      assert_equal([120] * (@http.retry_limit - 1), @slept)
+      assert_requested(:get, @url, times: @http.retry_limit)
+    end
+
+    def test_ceiling_does_not_apply_to_connection_error
+      Config.instance['/http/retry/seconds'] = 120
+      stub_request(:get, @url).to_raise(SocketError.new('getaddrinfo'))
+
+      assert_raise(GatewayError) {capture_sleep {HTTP.new.get(@url)}}
+
+      assert_equal([120] * (@http.retry_limit - 1), @slept)
+    end
+
+    # ⚠ mkcol は Net::HTTPResponse を添える。**headers を持たない**ので、
+    # `response[name]` でも読めること (#549)。
+    def test_retry_after_is_read_from_net_http_response
+      stub_request(:mkcol, @url).to_return(status: 429, headers: {'Retry-After' => '3'})
+
+      assert_raise(GatewayError) {capture_sleep {@http.mkcol('/api')}}
+
+      assert_equal([3] * (@http.retry_limit - 1), @slept)
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。
