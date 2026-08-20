@@ -24,12 +24,15 @@ module Ginseng
         cnt += 1
         log_retry_error(e, method, uri, start, count: cnt)
         raise gateway_error(e) unless retryable?(e) && cnt < retry_limit
-        seconds = retry_wait(e)
+        seconds = retry_after(e)
         # ⚠⚠ **相手が長い待ちを指定したら、待たずに諦めて呼び出し側へ返す (#525)。**
         # プロセスを何分も止めるのは呼び出し側の期待を超える。**「次の機会に回す」
         # 判断は呼ぶ側のもの**なので、こちらは例外で返す。
-        raise gateway_error(e) if seconds > max_retry_seconds
-        sleep(seconds)
+        # 🔴 **上限は `Retry-After` 由来の値にだけ掛ける (#549)。** 固定値にも
+        # 掛けると、`/http/retry/seconds` を 60 より大きくしているアプリで
+        # **ヘッダの無い 503 や接続断まで 1 回で諦める**ようになる。
+        raise gateway_error(e) if seconds && seconds > max_retry_seconds
+        sleep(seconds || retry_seconds)
         retry
       end
 
@@ -68,33 +71,38 @@ module Ginseng
         return @config['/http/retry/seconds']
       end
 
-      # 次の再送までの待ち時間。
+      # `Retry-After` を秒数として読む。⚠ **読めなければ nil**（呼び出し側は
+      # 固定値へ倒す）。
       #
       # ⚠⚠ **429 は「いつ再開してよいか」を相手が明示している唯一のステータス**
-      # なので、`Retry-After` があればそれに従う (#525、pooza/makoto2#100)。
-      # ⚠ **固定値で叩き直すと、規制されている最中に retry_limit 回連打して規制を
-      # 長引かせる方向に効く。** 408 / 425 は「相手が意図的に断っている」わけでは
-      # ないので、従来どおり固定値のまま。
-      def retry_wait(error)
-        return retry_after(error) || retry_seconds
-      end
-
-      # `Retry-After` を秒数として読む。読めなければ nil。
+      # なので、そこだけ従う (#525、pooza/makoto2#100)。⚠ **固定値で叩き直すと、
+      # 規制されている最中に retry_limit 回連打して規制を長引かせる方向に効く。**
+      # 408 / 425 は「相手が意図的に断っている」わけではないので固定値のまま。
       #
       # ⚠ **秒数と HTTP-date の両方の形がある** (RFC 9110)。⚠ 過去の日付や負の値は
       # 0 に倒す（`sleep` に負数を渡すと ArgumentError になる）。
       def retry_after(error)
         return nil unless error.is_a?(GatewayError)
         return nil unless error.source_status == 429
-        response = error.response
-        return nil unless response.respond_to?(:headers)
-        value = response.headers['retry-after'].to_s.strip
+        value = retry_after_header(error.response).to_s.strip
         return nil if value.empty?
         return [value.to_i, 0].max if value.match?(/\A[[:digit:]]+\z/)
         return [(Time.httpdate(value) - Time.now).ceil, 0].max
       rescue ArgumentError
         # HTTP-date として読めない値。⚠ **待ち方が分からないだけなので、
         # 従来どおりの固定値へ倒す**（ここで raise すると再送そのものが消える）。
+        return nil
+      end
+
+      # 応答から `Retry-After` を取り出す。
+      #
+      # ⚠⚠ **応答の型が 2 つある (#549)。** `HTTParty::Response` は `headers` を
+      # 持つが、`#mkcol` が添える `Net::HTTPResponse` は持たず `response[name]`
+      # で読む。⚠ **`HTTParty::Response#[]` は body（パース結果）を引く**ので、
+      # `headers` を先に見ること。
+      def retry_after_header(response)
+        return response.headers['retry-after'] if response.respond_to?(:headers)
+        return response['retry-after'] if response.respond_to?(:[])
         return nil
       end
 
