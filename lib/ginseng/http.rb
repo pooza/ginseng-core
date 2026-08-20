@@ -44,8 +44,14 @@ module Ginseng
       # 見える。⚠ 同じ値を `ca_file` 相当へ直接渡す利用者
       # (mulukhiya-toot-proxy の Listener#root_cert_file) では、存在しないパスだと
       # `SSL_CTX_load_verify_file` が即座に SSLError で落ちる。
+      #
+      # ⚠ **立てたことを記録する (#556)。** `with_system_cert_store` が外してよいのは
+      # **自分で立てた値だけ**で、運用者が渡した企業内 CA まで外すと TLS ごと壊れる。
       cert_file = environment_class.cert_file
-      ENV['SSL_CERT_FILE'] ||= cert_file if File.exist?(cert_file)
+      if ENV.fetch('SSL_CERT_FILE', nil).nil? && File.exist?(cert_file)
+        ENV['SSL_CERT_FILE'] = cert_file
+        Ginseng.managed_cert_file = cert_file
+      end
       @logger = logger_class.new
       @config = config_class.instance
       @retry_limit = @config['/http/retry/limit']

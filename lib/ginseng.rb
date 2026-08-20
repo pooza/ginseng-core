@@ -53,6 +53,12 @@ module Ginseng
     return @task_environment ||= Environment
   end
 
+  # ⚠ **この gem が `SSL_CERT_FILE` に立てた値 (#556)。** 運用者が渡した値と
+  # 区別するために覚えておく。立てていなければ nil。
+  class << self
+    attr_accessor :managed_cert_file
+  end
+
   # ⚠⚠ **CA バンドルの取得だけは OS の CA ストアで検証する (#554)。**
   #
   # `cert:update` / `cert_fresh?` は `/cert/url` を取りに行くが、`HTTP#initialize`
@@ -65,7 +71,13 @@ module Ginseng
   # ので、ブロックの中で `HTTP.new` すると外した意味が無くなる。
   #
   # ⚠ `ENV` はプロセス全体で共有なので、**取得のあいだだけ**外して必ず戻す。
+  #
+  # 🔴 **外すのは自分で立てた値だけ (#556)。** 運用者が `SSL_CERT_FILE` で企業内 CA や
+  # プラットフォームのトラストストアを渡している環境があり、**無条件に外すと
+  # `cert:update` / `cert:check` が TLS ごと失敗する**。外したかったのは「これから
+  # 置き換える対象のバンドル」だけ。
   def self.with_system_cert_store
+    return yield unless ENV.fetch('SSL_CERT_FILE', nil) == managed_cert_file
     original = ENV.delete('SSL_CERT_FILE')
     return yield
   ensure

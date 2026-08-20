@@ -37,6 +37,7 @@ module Ginseng
 
     def setup
       @original = ENV.fetch('SSL_CERT_FILE', nil)
+      @original_managed = Ginseng.managed_cert_file
     end
 
     def teardown
@@ -45,6 +46,7 @@ module Ginseng
       else
         ENV.delete('SSL_CERT_FILE')
       end
+      Ginseng.managed_cert_file = @original_managed
     end
 
     def test_does_not_point_at_missing_file
@@ -95,22 +97,40 @@ module Ginseng
     # これから置き換える当のバンドルで取得先を検証すると、それが古くなった時点で
     # 更新できなくなる（鶏と卵）。
     def test_with_system_cert_store_hides_env
-      ENV['SSL_CERT_FILE'] = '/somewhere/bundle.pem'
+      ENV.delete('SSL_CERT_FILE')
+      HTTP.new
+      installed = ENV.fetch('SSL_CERT_FILE', nil)
       seen = 'not yielded'
 
       Ginseng.with_system_cert_store {seen = ENV.fetch('SSL_CERT_FILE', nil)}
 
+      assert_equal(Environment.cert_file, installed, '自分で立てた値であること')
       assert_nil(seen, 'ブロックの中では外れていること')
-      assert_equal('/somewhere/bundle.pem', ENV.fetch('SSL_CERT_FILE', nil), '戻すこと')
+      assert_equal(installed, ENV.fetch('SSL_CERT_FILE', nil), '戻すこと')
+    end
+
+    # 🔴 **運用者が明示した値は外さない (#556)。** 企業内 CA やプラットフォームの
+    # トラストストアを SSL_CERT_FILE で渡している環境があり、外すと TLS ごと壊れる。
+    def test_with_system_cert_store_keeps_operator_value
+      ENV['SSL_CERT_FILE'] = '/somewhere/corporate.pem'
+      HTTP.new
+      seen = nil
+
+      Ginseng.with_system_cert_store {seen = ENV.fetch('SSL_CERT_FILE', nil)}
+
+      assert_equal('/somewhere/corporate.pem', seen, 'ブロックの中でも残ること')
+      assert_equal('/somewhere/corporate.pem', ENV.fetch('SSL_CERT_FILE', nil))
     end
 
     # ⚠ 例外が出ても戻すこと（戻さないと以降の通信が OS ストアに倒れる）。
     def test_with_system_cert_store_restores_on_error
-      ENV['SSL_CERT_FILE'] = '/somewhere/bundle.pem'
+      ENV.delete('SSL_CERT_FILE')
+      HTTP.new
+      installed = ENV.fetch('SSL_CERT_FILE', nil)
 
       assert_raise(RuntimeError) {Ginseng.with_system_cert_store {raise 'boom'}}
 
-      assert_equal('/somewhere/bundle.pem', ENV.fetch('SSL_CERT_FILE', nil))
+      assert_equal(installed, ENV.fetch('SSL_CERT_FILE', nil))
     end
 
     # 元から立っていなければ、戻したあとも立たないこと。
