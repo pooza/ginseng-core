@@ -47,13 +47,25 @@ jobs:
             echo 'cert/cacert.pem は最新。PR は出さない。'
             exit 0
           fi
-          branch="chore/cacert-$(date -u +%Y%m%d)"
+          # ⚠⚠ **ブランチ名は固定する (#562)。** 日付を含めると、前回の PR が
+          # 未マージのまま次の週次が回ったときに**同じ差分でもう 1 本積む**。
+          # 人がレビューして押す運用（自動マージしない）と噛み合わない。
+          branch='chore/cacert'
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git switch -c "$branch"
+          git switch -C "$branch"
           git add cert/cacert.pem
           git commit -m 'chore: cacert.pem を上流へ追随する (#515)'
-          git push -u origin "$branch"
+          # ⚠ 毎回そのブランチを更新する。開いている PR があれば差分はそこへ載る。
+          git push --force origin "$branch"
+          if curl -fsS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:$branch" \
+            | ruby -rjson -e 'exit JSON.parse($stdin.read).empty? ? 1 : 0'; then
+            echo '既に PR が開いている。ブランチを更新しただけで終わる。'
+            exit 0
+          fi
           # ⚠ このコンテナに gh は無いので API を直に叩く。JSON の組み立ては ruby で
           # 行う（シェルでクォートを組むと、差分の中身で壊れる）。
           ruby -rjson -e '
