@@ -6,24 +6,10 @@ ENV['BUNDLE_GEMFILE'] = File.join(dir, 'Gemfile')
 
 require 'ginseng'
 
-namespace :cert do
-  desc 'update cert'
-  task :update do
-    puts "fetch #{Ginseng::Environment.cert_file}"
-    File.write(
-      Ginseng::Environment.cert_file,
-      Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']),
-    )
-  end
-
-  desc 'check cert'
-  task :check do
-    unless Ginseng::Environment.cert_fresh?
-      warn "'#{Ginseng::Environment.cert_file}' is not fresh."
-      exit 1
-    end
-  end
-end
+# ⚠ cert タスクは gem が配る側（lib/tasks/cert.rake）に置いた (#512)。
+# **この Rakefile も利用アプリと同じ入り口を通る**ので、配ったものが壊れていれば
+# 自分の CI（rake cert:check）が先に落ちる。
+Ginseng.load_tasks
 
 namespace :bundle do
   desc 'update gems'

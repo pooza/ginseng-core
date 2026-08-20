@@ -32,6 +32,17 @@ module Ginseng
     return File.expand_path('..', __dir__)
   end
 
+  # gem が配る rake タスクを読む。⚠ **利用アプリの Rakefile から呼ぶ入り口**
+  # (#512)。`cert:update` / `cert:check` を 3 つのアプリに 3 回書かないため。
+  #
+  # ```ruby
+  # require 'ginseng'
+  # Ginseng.load_tasks
+  # ```
+  def self.load_tasks
+    Dir.glob(File.join(__dir__, 'tasks/*.rake')).each {|f| load(f)}
+  end
+
   def self.loader
     config = YAML.load_file(File.join(dir, 'config/autoload.yaml'))
     loader = Zeitwerk::Loader.new
