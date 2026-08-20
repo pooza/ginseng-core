@@ -23,6 +23,17 @@ module Ginseng
       super
     end
 
+    # その設定が在るか。⚠ **無い前提を「落ちる」ではなく「飛ばす」へ倒す**ための
+    # 判定 (#508)。⚠⚠ **シークレットを要求するテストは、CI では動かせないだけで
+    # 壊れているわけではない。** 落とすと赤が常態化し、本物の回帰が埋もれる。
+    #
+    # ⚠ 値そのものは見ない（`ConfigError` を真偽値へ落とすのが目的）。
+    def config?(key)
+      return config_class.instance[key].present?
+    rescue ConfigError
+      return false
+    end
+
     def fixture(name)
       return File.read(File.join(self.class.fixture_dir, name))
     end

@@ -4,10 +4,15 @@ module Ginseng
   class LineServiceTest < TestCase
     def disable?
       return true if environment_class.win?
+      # ⚠ **`test_say` は実際に LINE へ送る (#508)。** トークンが無ければ飛ばす。
+      return true unless config?('/line/token')
       return false
     end
 
     def setup
+      # ⚠ setup は run_test（omit の判定）より先に走る。トークンが無い環境では
+      # ここで ConfigError になるので、飛ばす条件を見てから作る (#508)。
+      return if disable?
       @service = LineService.new
     end
 

@@ -8,6 +8,24 @@ module Ginseng
       @config = Config.instance
     end
 
+    # ⚠⚠ **`config/local.*` は gitignore されているので CI には存在しない (#508)。**
+    # 無ければ空のものを置いて、置いた場合だけ片付ける。⚠ **既に在るものには
+    # 触れない**（運用者の local 設定を消さない）。
+    def with_local_file
+      created = nil
+      unless @config.local_file_path
+        created = File.join(environment_class.dir, 'config/local.yaml')
+        File.write(created, "---\n{}\n")
+        @config.reload
+      end
+      yield @config.local_file_path
+    ensure
+      if created
+        FileUtils.rm_f(created)
+        @config.reload
+      end
+    end
+
     def test_instance
       assert_kind_of(Config, @config)
     end
@@ -126,23 +144,33 @@ module Ginseng
     end
 
     def test_local_file_path
-      assert_kind_of(String, @config.local_file_path)
-      assert_path_exist(@config.local_file_path)
+      with_local_file do |path|
+        assert_kind_of(String, path)
+        assert_path_exist(path)
+      end
+    end
+
+    # 無ければ nil。⚠ **「見つからない」を例外にしない**（起動できなくなる）。
+    def test_local_file_path_without_file
+      assert_nothing_raised do
+        @config.local_file_path
+      end
     end
 
     def test_update_file
-      @config.update_file(hoge: {fuga: 1})
-      local_config = YAML.load_file(@config.local_file_path)
+      with_local_file do |path|
+        @config.update_file(hoge: {fuga: 1})
 
-      assert_equal(1, local_config.dig('hoge', 'fuga'))
-      @config.update_file(hoge: {fuga: 2})
-      local_config = YAML.load_file(@config.local_file_path)
+        assert_equal(1, YAML.load_file(path).dig('hoge', 'fuga'))
 
-      assert_equal(2, local_config.dig('hoge', 'fuga'))
-      @config.update_file(hoge: nil)
-      local_config = YAML.load_file(@config.local_file_path)
+        @config.update_file(hoge: {fuga: 2})
 
-      assert_nil(local_config.dig('hoge', 'fuga'))
+        assert_equal(2, YAML.load_file(path).dig('hoge', 'fuga'))
+
+        @config.update_file(hoge: nil)
+
+        assert_nil(YAML.load_file(path).dig('hoge', 'fuga'))
+      end
     end
 
     def test_deep_merge
