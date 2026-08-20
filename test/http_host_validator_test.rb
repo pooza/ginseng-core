@@ -34,6 +34,37 @@ module Ginseng
       assert_equal('{"ok":true}', response.body)
     end
 
+    # ⚠⚠ **同じ options を head と get で使い回しても validator が残ること (#528)。**
+    # 以前は request が options.delete(:host_validator) で呼び出し側の hash を壊して
+    # いたため、**プリフライト (HEAD) を通した時点で validator が消え、本命の GET が
+    # 無検証で撃たれていた**。#head のコメントが勧めている使い方そのものが壊れており、
+    # 「プリフライトを足したせいで検証が外れる」という裏返しだった。
+    def test_keeps_host_validator_for_reused_options
+      WebMock.stub_request(:head, 'https://example.com/large.png').to_return(status: 200)
+      WebMock.stub_request(:get, 'https://example.com/large.png').to_return(status: 200, body: 'x')
+      hosts = []
+      options = {host_validator: ->(host) {hosts.push(host) && true}}
+
+      @http.head('https://example.com/large.png', options)
+      @http.get('https://example.com/large.png', options)
+
+      assert_equal(['example.com', 'example.com'], hosts)
+      assert_equal([:host_validator], options.keys)
+    end
+
+    # ⚠ ヘッダも呼び出し側の hash を汚さない。User-Agent が書き戻されると、
+    # 同じ hash を使い回す次の要求へ持ち越される。
+    def test_does_not_pollute_caller_headers
+      WebMock.stub_request(:get, 'https://example.com/').to_return(status: 200, body: 'x')
+      headers = {}
+      options = {headers:}
+
+      @http.get('https://example.com/', options)
+
+      assert_empty(headers)
+      assert_equal([:headers], options.keys)
+    end
+
     def test_rejects_redirect_to_internal_host
       WebMock.stub_request(:get, 'https://example.com/exec')
         .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/latest/meta-data/'})

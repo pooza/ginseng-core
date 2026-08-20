@@ -125,8 +125,19 @@ module Ginseng
     end
 
     # host_validator を持たない冪等メソッド（GET / HEAD）の共通経路。
+    #
+    # ⚠⚠ **呼び出し側の hash を壊さないこと (#528)。**以前はここで
+    # `options.delete(:host_validator)` していたため、**同じ hash を head と get で
+    # 使い回す呼び出しで、2 回目から validator が消えて無検証になっていた**。
+    # それは `#head` のコメントがまさに勧めている「サイズのプリフライト」の形で、
+    # **プリフライトを足したせいで本命の GET の検証が外れる**という裏返しだった
+    # (mulukhiya-toot-proxy#4576 で実際に踏んだ)。
+    #
+    # ⚠ `headers` も複製する。`||=` と `[]=` は呼び出し側が渡した hash に
+    # User-Agent を書き込んでしまう（次の要求へ持ち越される）。
     def request(method, uri, options)
-      options[:headers] ||= {}
+      options = options.dup
+      options[:headers] = (options[:headers] || {}).dup
       options[:headers]['User-Agent'] ||= user_agent
       if validator = options.delete(:host_validator)
         return request_validating_hops(method, create_uri(uri), options, validator)
