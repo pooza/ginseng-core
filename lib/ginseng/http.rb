@@ -6,6 +6,7 @@ require 'net/http'
 module Ginseng
   class HTTP
     include Package
+    include ByteLimitMethods
 
     attr_reader :base_uri
     attr_accessor :retry_limit
@@ -139,18 +140,19 @@ module Ginseng
       options = options.dup
       options[:headers] = (options[:headers] || {}).dup
       options[:headers]['User-Agent'] ||= user_agent
+      max_bytes = options.delete(:max_bytes)
       if validator = options.delete(:host_validator)
-        return request_validating_hops(method, create_uri(uri), options, validator)
+        return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
       end
       repeat(method, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.public_send(method, uri.normalize, options)
+        response = execute(method, uri, options, max_bytes)
         log(method:, url: uri, status: response.code, start:)
         bad_response!(response) unless response.code < 400
         return response
       end
     end
 
-    def request_validating_hops(method, uri, options, validator)
+    def request_validating_hops(method, uri, options, validator, max_bytes = nil)
       options = options.merge(follow_redirects: false)
       limit = options.delete(:max_redirects) || MAX_REDIRECTS
       (limit + 1).times do
@@ -160,7 +162,7 @@ module Ginseng
         # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
         hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
         response = repeat(method, uri, start = Time.now) do
-          r = HTTParty.public_send(method, uri.normalize, hop_options)
+          r = execute(method, uri, hop_options, max_bytes)
           log(method:, url: uri, status: r.code, start:)
           bad_response!(r) unless r.code < 400
           r
@@ -234,7 +236,9 @@ module Ginseng
       # ⚠ pinning できない = 設定の問題なので、試行の間に変わらない。既定では
       # source_status が 502 になり「上流の一時障害」として 5 回叩き直して
       # しまうため、ここで明示的に落とす。
-      return false if error.is_a?(PinningError)
+      # ⚠ 上限超過 (TooLargeError) も同じ。相手が同じものを返す限り同じ場所で
+      # 超えるだけで、再送のたびに上限ぶんの転送とメモリを食う (#526)。
+      return false if error.is_a?(PinningError) || error.is_a?(TooLargeError)
       return true unless error.is_a?(GatewayError)
       status = error.source_status
       return true if RETRYABLE_STATUSES.include?(status)
