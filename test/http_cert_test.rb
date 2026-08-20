@@ -91,6 +91,37 @@ module Ginseng
       assert_equal(Environment.cert_file, ENV.fetch('SSL_CERT_FILE', nil))
     end
 
+    # ⚠⚠ **CA バンドルの取得は OS の CA ストアで検証する (#554)。**
+    # これから置き換える当のバンドルで取得先を検証すると、それが古くなった時点で
+    # 更新できなくなる（鶏と卵）。
+    def test_with_system_cert_store_hides_env
+      ENV['SSL_CERT_FILE'] = '/somewhere/bundle.pem'
+      seen = 'not yielded'
+
+      Ginseng.with_system_cert_store {seen = ENV.fetch('SSL_CERT_FILE', nil)}
+
+      assert_nil(seen, 'ブロックの中では外れていること')
+      assert_equal('/somewhere/bundle.pem', ENV.fetch('SSL_CERT_FILE', nil), '戻すこと')
+    end
+
+    # ⚠ 例外が出ても戻すこと（戻さないと以降の通信が OS ストアに倒れる）。
+    def test_with_system_cert_store_restores_on_error
+      ENV['SSL_CERT_FILE'] = '/somewhere/bundle.pem'
+
+      assert_raise(RuntimeError) {Ginseng.with_system_cert_store {raise 'boom'}}
+
+      assert_equal('/somewhere/bundle.pem', ENV.fetch('SSL_CERT_FILE', nil))
+    end
+
+    # 元から立っていなければ、戻したあとも立たないこと。
+    def test_with_system_cert_store_keeps_unset
+      ENV.delete('SSL_CERT_FILE')
+
+      Ginseng.with_system_cert_store {nil}
+
+      assert_nil(ENV.fetch('SSL_CERT_FILE', nil))
+    end
+
     # ⚠ 呼び出し側が明示した値は上書きしない（従来どおり）。
     def test_keeps_explicit_value
       ENV['SSL_CERT_FILE'] = '/somewhere/else.pem'

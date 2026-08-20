@@ -53,6 +53,25 @@ module Ginseng
     return @task_environment ||= Environment
   end
 
+  # ⚠⚠ **CA バンドルの取得だけは OS の CA ストアで検証する (#554)。**
+  #
+  # `cert:update` / `cert_fresh?` は `/cert/url` を取りに行くが、`HTTP#initialize`
+  # は（在れば）自分の `cacert.pem` を `SSL_CERT_FILE` に立てる。⚠ つまり
+  # **これから置き換えようとしている当のバンドルで取得先の TLS を検証**していた。
+  # そのバンドルが古くて取得先を検証できなくなった瞬間、**更新も鮮度確認もできなく
+  # なる**（鶏と卵。#515 の「当番が居ない」と組み合わさると静かに詰む）。
+  #
+  # ⚠ **HTTP のインスタンスを作ってから呼ぶこと。** `initialize` が env を立てる
+  # ので、ブロックの中で `HTTP.new` すると外した意味が無くなる。
+  #
+  # ⚠ `ENV` はプロセス全体で共有なので、**取得のあいだだけ**外して必ず戻す。
+  def self.with_system_cert_store
+    original = ENV.delete('SSL_CERT_FILE')
+    return yield
+  ensure
+    ENV['SSL_CERT_FILE'] = original if original
+  end
+
   def self.loader
     config = YAML.load_file(File.join(dir, 'config/autoload.yaml'))
     loader = Zeitwerk::Loader.new

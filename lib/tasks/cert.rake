@@ -26,7 +26,12 @@ namespace :cert do
     puts "fetch #{file}"
     # ⚠ 利用アプリには cert/ ディレクトリそのものが無い。
     FileUtils.mkdir_p(File.dirname(file))
-    File.write(file, Ginseng::HTTP.new.get(Ginseng::Config.instance['/cert/url']).body)
+    # ⚠⚠ **取得は OS の CA ストアで検証する (#554)。** これから置き換える当の
+    # バンドルで検証すると、それが古くなった時点で更新できなくなる（鶏と卵）。
+    # ⚠ `HTTP#initialize` が env を立てるので、**作ってから**外す。
+    http = Ginseng::HTTP.new
+    body = Ginseng.with_system_cert_store {http.get(Ginseng::Config.instance['/cert/url']).body}
+    File.write(file, body)
   end
 
   desc 'check cert'

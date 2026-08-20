@@ -14,8 +14,8 @@ module Ginseng
     # Psych::DisallowedClass で落ちないよう Date/Time/DateTime を許可する。
     PERMITTED_YAML_CLASSES = [Date, Time, DateTime].freeze
 
-    # 小数秒に許す最大桁数。⚠ 10 進で有限に表せない分母（`1/3` 等）で
-    # 無限ループにしないための打ち切り (#550)。
+    # ⚠ **10 進で有限に表せない分母（`1/3` 等）のときだけ**使う打ち切り
+    # (#550 / #553)。有限小数は桁数が厳密に求まるので、こちらは通らない。
     MAX_TEMPORAL_PRECISION = 18
 
     attr_reader :raw
@@ -141,18 +141,34 @@ module Ginseng
 
     # 小数秒を表すのに要る桁数。持っていなければ 0。
     #
-    # ⚠ **桁数は導出する (#550)。** 候補を [3, 6, 9] に限って打ち切ると、
-    # **10 桁以上の小数秒（Psych は Rational のまま保持する）が切り詰められ**、
-    # 「検証した値」と「Config が返す値」の食い違いが再現する。
+    # ⚠⚠ **桁を「試して数える」のをやめる (#553)。** #530（候補を [3, 6, 9] に限る）
+    # → #550（18 桁で打ち切る）と、**同じ形で 2 回漏れている** — どちらも
+    # 「検証した値」と「Config が返す値」の食い違いを桁数を変えて再現させた。
     #
-    # ⚠⚠ **上限は置く。** `1/3` のように 10 進で有限に表せない分母は `DateTime` の
-    # 演算で作れるので、無いと無限ループになる。
+    # **有限小数になるのは分母が `2^a * 5^b` のときだけ**で、その桁数は `max(a, b)`
+    # として**厳密に求まる**（打ち切り不要）。⚠ それ以外（`1/3` 等・`DateTime` の
+    # 演算で作れる）は 10 進で表せないので、そこだけ上限へ倒す。
     def temporal_precision(value)
       fraction = value.is_a?(Time) ? value.subsec : value.sec_fraction
       return 0 if fraction.zero?
-      digits = 0
-      digits += 1 while digits < MAX_TEMPORAL_PRECISION && (fraction * (10**digits)).denominator > 1
-      return digits
+      return decimal_digits(fraction.denominator) || MAX_TEMPORAL_PRECISION
+    end
+
+    # 分母が `2^a * 5^b` なら有限小数で表すのに要る桁数 `max(a, b)`。
+    # 10 進で有限に表せないなら nil。
+    def decimal_digits(denominator)
+      twos = 0
+      fives = 0
+      while (denominator % 2).zero?
+        denominator /= 2
+        twos += 1
+      end
+      while (denominator % 5).zero?
+        denominator /= 5
+        fives += 1
+      end
+      return nil unless denominator == 1
+      return [twos, fives].max
     end
 
     def merged_raw
