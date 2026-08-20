@@ -82,7 +82,8 @@ module Ginseng
 
       assert_raise(SystemExit) {daemon.send(:run_stop)}
       # ⚠ assert_path_exists は Minitest のもので test-unit には無い。
-      assert(File.exist?(daemon.pid_file)) # rubocop:disable Minitest/AssertPathExists
+      # cop は ginseng-style の正本で切ってあるので、行内の disable は要らない (#535)。
+      assert(File.exist?(daemon.pid_file))
       assert_equal(Process.pid, daemon.pid)
     end
 
