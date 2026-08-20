@@ -31,15 +31,21 @@ module Ginseng
     MAX_RETRY_SECONDS = 60
 
     def initialize
-      # ⚠⚠ **存在しないパスを指さない (#512)。** 利用アプリには `cert/cacert.pem`
-      # が無いことがあり（`cert:update` を持っていなかったため一度も作られない）、
-      # その状態で `SSL_CERT_FILE` を立てると **「env 経由だからたまたま無害」**な
-      # 状態になる。⚠ 同じ値を `ca_file` 相当へ直接渡す利用者
-      # (mulukhiya-toot-proxy の Listener#root_cert_file) では、
+      # ⚠⚠ **自分（アプリ）の cert を見る (#548)。** ここで `Environment` と書くと
+      # 字面どおり `Ginseng::Environment` ＝ **gem のルート**に解決される。利用アプリ
+      # では `Package` が指す Environment（`Makoto::Environment` 等）が正しい。
+      #
+      # 🔴 直す前は、**利用アプリが「自分の `Gemfile.lock` が刺した gem リビジョン
+      # に同梱された CA バンドル」を使っていた**（実測: makoto2 が 2026-07-30 の版）。
+      # ⚠ `Gemfile.lock` を更新するまで古いままで、しかも誰にも見えない。
+      #
+      # ⚠ **無ければ立てない (#512)。** OS の CA ストアに倒れる。**固定したいなら
+      # `rake cert:update` で自分の `cert/cacert.pem` を持つ** — そのほうが状態が
+      # 見える。⚠ 同じ値を `ca_file` 相当へ直接渡す利用者
+      # (mulukhiya-toot-proxy の Listener#root_cert_file) では、存在しないパスだと
       # `SSL_CTX_load_verify_file` が即座に SSLError で落ちる。
-      # ⚠ OpenSSL のビルドやディストロが変われば env 側も効き始める（そのときの
-      # 壊れ方は「HTTPS が全部落ちる」）ので、無害なうちに直しておく。
-      ENV['SSL_CERT_FILE'] ||= Environment.cert_file if File.exist?(Environment.cert_file)
+      cert_file = environment_class.cert_file
+      ENV['SSL_CERT_FILE'] ||= cert_file if File.exist?(cert_file)
       @logger = logger_class.new
       @config = config_class.instance
       @retry_limit = @config['/http/retry/limit']

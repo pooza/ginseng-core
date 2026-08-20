@@ -35,12 +35,22 @@ module Ginseng
   # gem が配る rake タスクを読む。⚠ **利用アプリの Rakefile から呼ぶ入り口**
   # (#512)。`cert:update` / `cert:check` を 3 つのアプリに 3 回書かないため。
   #
+  # ⚠⚠ **自分の Environment を渡すこと (#548)。** 省略すると `Ginseng::Environment`
+  # ＝ **gem のルート**が使われ、`cert:update` が**依存の中身へ書き込む**（読み取り
+  # 専用なら失敗する）。アプリの `cert/cacert.pem` は相変わらず作られない。
+  #
   # ```ruby
-  # require 'ginseng'
-  # Ginseng.load_tasks
+  # require 'makoto'
+  # Ginseng.load_tasks(environment: Makoto::Environment)
   # ```
-  def self.load_tasks
+  def self.load_tasks(environment: Environment)
+    @task_environment = environment
     Dir.glob(File.join(__dir__, 'tasks/*.rake')).each {|f| load(f)}
+  end
+
+  # 配った rake タスクが見る Environment。
+  def self.task_environment
+    return @task_environment ||= Environment
   end
 
   def self.loader
