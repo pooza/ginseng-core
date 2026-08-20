@@ -2,6 +2,10 @@
 
 module Ginseng
   class LoggerTest < TestCase
+    # ⚠ 不正な UTF-8 バイト列。`\xE3\x81` は 3 バイト文字の途中で切れている
+    # (#518)。`{s: BROKEN_BYTES}.to_json` は JSON::GeneratorError を上げる。
+    BROKEN_BYTES = "\xE3\x81ho"
+
     def disable?
       return true if environment_class.win?
       return false
@@ -162,6 +166,66 @@ module Ginseng
       assert_false(called)
     ensure
       @logger.level = ::Logger::Severity::DEBUG
+    end
+
+    # ⚠⚠ **不正なバイト列でログが 1 行丸ごと消えてはいけない (#518)。**
+    # `create_message` には rescue があるのに `to_json` はその外にあり、
+    # JSON::GeneratorError がそのまま呼び出し側へ抜けていた。⚠ ログを出そうと
+    # した側が落ちるので、**症状が原因から遠いところに出る**（mulukhiya では
+    # リクエストログが残らないうえ、本来と違う 401 でクライアントへ返っていた）。
+    data('値', {s: BROKEN_BYTES})
+    data('キー', {BROKEN_BYTES => 'value'})
+    data('文字列', BROKEN_BYTES)
+    data('配列', [BROKEN_BYTES])
+    data('binary', {s: BROKEN_BYTES.b})
+    def test_info_survives_broken_bytes(message)
+      captured = capture_syslog {@logger.info(message)}
+      body = JSON.parse(captured.first)
+
+      assert_equal(1, captured.size, '1 行出ること')
+      assert_true(body['_encoding_error'], '直したことを隠さない')
+    end
+
+    # ⚠ **壊れていない部分は残すこと。** 行ごと捨てるのと変わらなくなる。
+    def test_info_keeps_readable_part_of_broken_bytes
+      captured = capture_syslog {@logger.info(url: 'https://example.com/', s: BROKEN_BYTES)}
+      body = JSON.parse(captured.first)
+
+      assert_equal('https://example.com/', body['url'])
+      assert_include(body['s'], 'ho')
+    end
+
+    # ⚠⚠ **scrub してもマスクは効いたままであること。** ここが抜けると、
+    # 「壊れたバイト列を送れば資格情報が平文で出る」という穴になる。
+    def test_info_masks_even_when_scrubbed
+      captured = capture_syslog do
+        @logger.info(password: 'hoge', url: "https://example.com/?token=SECRET&s=#{BROKEN_BYTES}")
+      end
+      body = JSON.parse(captured.first)
+
+      assert_true(body['_encoding_error'])
+      assert_not_include(body.keys, 'password')
+      assert_not_include(body['url'], 'SECRET')
+    end
+
+    # 壊れていないメッセージに印を付けないこと（付くと意味を失う）。
+    def test_info_does_not_mark_healthy_message
+      captured = capture_syslog {@logger.info(message: 'あいうえお')}
+      body = JSON.parse(captured.first)
+
+      assert_equal('あいうえお', body['message'])
+      assert_not_include(body.keys, '_encoding_error')
+    end
+
+    # error はバックトレースを個別に出すので、そちらでも落ちないこと。
+    def test_error_survives_broken_bytes
+      error = StandardError.new("broken #{BROKEN_BYTES}")
+      error.set_backtrace(["#{BROKEN_BYTES}:1:in 'x'"])
+
+      captured = capture_syslog {@logger.error(error)}
+
+      assert_operator(captured.size, :>=, 2, '本体とバックトレースが出ること')
+      assert_true(JSON.parse(captured.first)['_encoding_error'])
     end
 
     private
