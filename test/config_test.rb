@@ -55,6 +55,29 @@ module Ginseng
         {'a' => {'b' => ['2021-03-14']}},
         @config.normalize_temporal({'a' => {'b' => [Date.new(2021, 3, 14)]}}),
       )
+      # ⚠⚠ **小数秒を落とさない (#530)。** 引数無しの iso8601 は秒で丸めるので、
+      # enum / pattern が秒までの値だけを許していても小数秒付きの値が通っていた。
+      assert_equal(
+        '2021-03-14T12:34:56.500Z',
+        @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56, 500_000)),
+      )
+      assert_equal(
+        '2021-03-14T12:34:56.123456Z',
+        @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56, 123_456)),
+      )
+      # ⚠ 持っていない値に .000 を足さない（秒までを想定した pattern が落ちる）。
+      assert_equal(
+        '2021-03-14T12:34:56Z',
+        @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56)),
+      )
+      assert_equal(
+        '2021-03-14T12:34:56+00:00',
+        @config.normalize_temporal(DateTime.new(2021, 3, 14, 12, 34, 56)),
+      )
+      assert_equal(
+        '2021-03-14T12:34:56.500+00:00',
+        @config.normalize_temporal(DateTime.new(2021, 3, 14, 12, 34, Rational(565, 10))),
+      )
       assert_equal('hoge', @config.normalize_temporal('hoge'))
       assert_equal(1, @config.normalize_temporal(1))
       assert_nil(@config.normalize_temporal(nil))

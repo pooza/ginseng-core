@@ -11,6 +11,9 @@ module Ginseng
   class GatewayErrorResponseTest < TestCase
     UPSTREAM = 'https://example.com/api/notes/create'
 
+    # 上流のレスポンスの代役。source_body / source_status が見るのは code と body だけ。
+    FakeResponse = Struct.new(:code, :body)
+
     def setup
       @http = HTTP.new
       @http.retry_limit = 1
@@ -105,6 +108,31 @@ module Ginseng
       assert_equal('x', error.source_body['error'])
       assert_nil(error.source_body(max_bytes: 4))
       assert_equal('x', error.source_body['error'])
+    end
+
+    # ⚠⚠ **response を後から差し替えたら source_body も付いてくること (#531)。**
+    # メモ化は max_bytes ごとで、**nil も結果として持つ**（key? で判定する）ので、
+    # 評価したあとに response を添えると「添えたのに読めない」になっていた。
+    def test_source_body_follows_replaced_response
+      error = GatewayError.new('Bad response 500')
+
+      assert_nil(error.source_body, 'response が無いうちは nil（ここでメモ化される）')
+
+      error.response = FakeResponse.new(500, {error: 'later'}.to_json)
+
+      assert_equal('later', error.source_body['error'])
+    end
+
+    # 差し替え前の値を返し続けないこと。
+    def test_source_body_is_dropped_on_replacement
+      error = GatewayError.new('Bad response 500')
+      error.response = FakeResponse.new(500, {error: 'first'}.to_json)
+
+      assert_equal('first', error.source_body['error'])
+
+      error.response = FakeResponse.new(500, {error: 'second'}.to_json)
+
+      assert_equal('second', error.source_body['error'])
     end
 
     # ⚠ repeat が包み直すと response が落ちる。再送対象（5xx）でも、

@@ -11,7 +11,16 @@ module Ginseng
     # 上流が返した理由（Misskey の `TOO_MANY_DRAFTS`、Mastodon の
     # `Validation failed: ...` 等）がプロキシの中で失われる
     # (mulukhiya-toot-proxy#4480)。**添えるだけで、メッセージ書式は変えない。**
-    attr_accessor :response
+    attr_reader :response
+
+    # ⚠ **差し替えたらメモ化を捨てる (#531)。** `source_body` は max_bytes ごとに
+    # メモ化していて、⚠⚠ **`nil` も結果として持つ**（`key?` で判定する）ので、
+    # 評価したあとに response を後付けすると**前のレスポンス由来の値を返し続ける**。
+    # 例外を掴んでから response を添える呼び出し側で「添えたのに読めない」になる。
+    def response=(value)
+      @source_body = nil
+      @response = value
+    end
 
     def status
       return 502

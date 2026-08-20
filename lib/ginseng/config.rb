@@ -116,13 +116,30 @@ module Ginseng
     # キーごとに schema の type を緩める手もあるが、それでは type 検証自体を
     # 捨てることになり typo も通してしまう。かつ permitted_classes を許した
     # 以上は任意のキーが日付を受け取りうるので、ここで一括して正規化する。
+    # ⚠⚠ **小数秒を落とさないこと (#530)。** 引数無しの `iso8601` は秒で丸めるので、
+    # `2021-03-14T12:34:56.5Z` が `…56Z` として検証される。⚠ **`enum` や `pattern`
+    # で秒までの値だけを許していると、小数秒付きの値が通ってしまう**（`Config` が
+    # 返す値は小数秒を持ったまま）。
+    #
+    # ⚠ **持っていない値に `.000` を足さない。** 秒までを想定した `pattern` /
+    # `enum` が逆に落ちる。桁は**値が必要とするぶんだけ**渡す。
+    # ⚠ `Date` は精度引数を取らず、`DateTime` は `Date` のサブクラスなので、
+    # `when` の順番を入れ替えないこと。
     def normalize_temporal(value)
       case value
       when Hash then return value.transform_values {|v| normalize_temporal(v)}
       when Array then return value.map {|v| normalize_temporal(v)}
-      when DateTime, Time, Date then return value.iso8601
+      when DateTime, Time then return value.iso8601(temporal_precision(value))
+      when Date then return value.iso8601
       end
       return value
+    end
+
+    # 小数秒を表すのに要る桁数。持っていなければ 0。
+    def temporal_precision(value)
+      fraction = value.is_a?(Time) ? value.subsec : value.sec_fraction
+      return 0 if fraction.zero?
+      return [3, 6, 9].find {|digits| (fraction * (10**digits)).denominator == 1} || 9
     end
 
     def merged_raw
