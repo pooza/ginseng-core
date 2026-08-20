@@ -147,8 +147,12 @@ module Ginseng
       options[:headers] = create_headers((options[:headers] || {}).dup)
       options[:body] = create_body(options[:body], options[:headers])
       options[:timeout] ||= timeout
+      # ⚠ **GET と同じく max_bytes を効かせる (#538)。** 取り出さないまま
+      # HTTParty へ渡すと**黙って捨てられる**ので、呼び出し側は「上限を付けた」と
+      # 思い込んだまま上限なしで受け取っていた。
+      max_bytes = options.delete(:max_bytes)
       repeat(method, uri = create_uri(uri), start = Time.now) do
-        response = HTTParty.public_send(method, uri.normalize, options)
+        response = execute(method, uri, options, max_bytes)
         log(method:, url: uri, status: response.code, start:)
         bad_response!(response) unless response.code < 400
         return response

@@ -73,6 +73,38 @@ module Ginseng
       assert_equal(50, response.body.bytesize)
     end
 
+    # ⚠⚠ **body を伴うメソッドでも効くこと (#538)。**取り出さないまま HTTParty へ
+    # 渡すと**黙って捨てられ**、呼び出し側は「上限を付けた」と思い込んだまま
+    # 上限なしで受け取る。get で効くものが post で効かないことは、シグネチャから
+    # は分からない。
+    data('post', :post)
+    data('put', :put)
+    data('delete', :delete)
+    def test_max_bytes_works_with_body_methods(method)
+      WebMock.stub_request(method, URL).to_return(status: 200, body: 'y' * 1000)
+
+      assert_raise(TooLargeError) {@http.send(method, URL, body: {a: 1}, max_bytes: 100)}
+    end
+
+    data('post', :post)
+    data('put', :put)
+    data('delete', :delete)
+    def test_body_methods_allow_within_limit(method)
+      WebMock.stub_request(method, URL).to_return(status: 200, body: 'y' * 50)
+
+      assert_equal(50, @http.send(method, URL, body: {a: 1}, max_bytes: 100).body.bytesize)
+    end
+
+    # ⚠ max_bytes がキーとして残って HTTParty へ流れないこと。
+    def test_body_methods_keep_caller_options_intact
+      WebMock.stub_request(:post, URL).to_return(status: 200, body: 'y')
+      options = {body: {a: 1}, max_bytes: 100}
+
+      @http.post(URL, options)
+
+      assert_equal({body: {a: 1}, max_bytes: 100}, options)
+    end
+
     # 呼び出し側の hash を壊さない (#528 と同じ約束)。
     def test_keeps_caller_options_intact
       WebMock.stub_request(:get, URL).to_return(status: 200, body: 'x')
