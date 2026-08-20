@@ -111,6 +111,61 @@ module Ginseng
       end
     end
 
+    # ⚠⚠ **トップレベルに渡した値もマスクすること (#529)。**
+    # 以前は Hash / {error:} / StandardError しか受けず、それ以外は
+    # NoMatchingPatternError → rescue で**素通し**していた。
+    # ⚠ `logger.info(url)` は最も自然な呼び方なので、経路としては太い。
+    def test_create_message_masks_top_level_string
+      message = @logger.create_message('https://example.com/?access_token=SECRET')
+
+      assert_not_include(message, 'SECRET')
+      assert_include(message, '[FILTERED]')
+    end
+
+    def test_create_message_masks_top_level_array
+      message = @logger.create_message(['https://example.com/?token=SECRET'])
+
+      assert_not_include(message.first, 'SECRET')
+    end
+
+    # ⚠ `error:` に例外以外が入る呼び方がある。型を見ずに backtrace を呼ぶと
+    # NoMethodError → rescue → **その行のマスクが丸ごと外れる**（password まで
+    # 平文で出ていた）。
+    def test_create_message_masks_error_key_without_exception
+      message = @logger.create_message(error: 'https://example.com/?token=SECRET', password: 'hoge')
+
+      assert_not_include(message[:error], 'SECRET')
+      assert_not_include(message.keys, :password)
+    end
+
+    # 例外の message にも URL が埋まることがある。
+    def test_create_message_masks_standard_error_message
+      message = @logger.create_message(StandardError.new('https://example.com/?token=SECRET'))
+
+      assert_not_include(message[:message], 'SECRET')
+    end
+
+    # raise していない例外（backtrace が nil）でも落ちないこと。
+    def test_create_message_accepts_unraised_error
+      message = @logger.create_message(error: StandardError.new('unraised'), class: 'X')
+
+      assert_equal('unraised', message.dig(:error, :message))
+    end
+
+    # ⚠⚠ **マスクを通せなかったら中身を出さない (fail closed)。** 素の src を
+    # 返すと、まさにマスクしたかった値が平文で出る（#518 で踏んだ型）。
+    def test_create_message_fails_closed
+      @logger.define_singleton_method(:mask) {|_arg| raise 'boom'}
+
+      message = @logger.create_message(password: 'hoge', url: 'https://example.com/?token=SECRET')
+
+      assert_true(message[:_mask_error])
+      assert_equal('Hash', message[:class])
+      assert_equal(['password', 'url'], message[:keys])
+      assert_not_include(message.to_json, 'SECRET')
+      assert_not_include(message.to_json, 'hoge')
+    end
+
     # 配列やネストの中の URL にも効くこと。
     def test_create_message_masks_url_in_nested_values
       message = @logger.create_message(a: ['https://example.com/?token=SECRET'])

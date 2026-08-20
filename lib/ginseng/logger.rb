@@ -59,6 +59,9 @@ module Ginseng
       # 不正なバイト列を落として出したことの印 (#518)。
       ENCODING_ERROR_FIELD = :_encoding_error
 
+      # ⚠ マスクを通せなかったので中身を出さなかったことの印 (#529)。
+      MASK_ERROR_FIELD = :_mask_error
+
       def initialize(name = nil)
         @config = config_class.instance
         name ||= package_class.name
@@ -128,22 +131,46 @@ module Ginseng
         return create_scrubbed_entry(src)
       end
 
+      # ⚠⚠ **どの形で渡されても mask を通すこと (#529)。**
+      #
+      # 以前は `Hash` と `{error:}` と `StandardError` しか受けず、**それ以外は
+      # `NoMatchingPatternError` → 下の `rescue` で素通し**していた。⚠ 実測では
+      # 3 つの経路が平文で出ていた。
+      #
+      # ```
+      # logger.info('https://example.com/?access_token=SECRET')   # トップレベルの文字列
+      # logger.info(['https://example.com/?token=SECRET'])        # トップレベルの配列
+      # logger.info(error: 'https://...?token=SECRET', password: 'hoge')  # error: が例外でない
+      # ```
+      #
+      # ⚠ **`logger.info(url)` は最も自然な呼び方**なので、経路としては太い。
       def create_message(src)
         case src
-        in {error: error}
-          file, line = error.backtrace.first.split(':')
+        # ⚠ **型を見ること。** `error:` に例外以外が入る呼び方があり
+        # (`logger.info(error: 'message')`)、型を見ずに backtrace を呼ぶと
+        # NoMethodError → rescue → **その行のマスクが丸ごと外れる**。
+        in {error: StandardError => error}
+          file, line = error.backtrace&.first.to_s.split(':')
           return mask(src.merge(error: {
             message: error.message,
-            file: file.sub("#{Environment.dir}/", ''),
+            file: file.to_s.sub("#{Environment.dir}/", ''),
             line: line.to_i,
           }))
-        in Hash
-          return mask(src)
         in StandardError
-          return src.to_h
+          # ⚠ **message に URL が埋まっていることがある**ので mask を通す。
+          return mask(src.to_h)
+        else
+          # Hash / Array / String / それ以外を全部ここで受ける。mask は型ごとに
+          # 分岐するので、ここで型を絞る必要は無い。
+          return mask(src)
         end
       rescue
-        return src
+        # ⚠⚠ **fail closed (#529)。** ここへ来た時点で mask を通せていないので、
+        # 素の src を返すと資格情報が平文で出る（#518 で実際に踏んだ型）。
+        # ⚠ キー名は mask が元から残す側なので、手掛かりとして添える。
+        entry = {MASK_ERROR_FIELD => true, class: src.class.to_s}
+        entry[:keys] = src.keys.map(&:to_s) if src.is_a?(Hash)
+        return entry
       end
 
       private
