@@ -91,6 +91,35 @@ module Ginseng
       assert_raise(SystemExit) {create.send(:run_stop)}
     end
 
+    # 🔴 **後継の pid ファイルを消さないこと (#532)。**
+    #
+    # 相手が TERM を先に処理して自分の trap で pid ファイルを消し、supervisor が
+    # 後継を起動して**新しい pid を書いた**あとに、こちらの remove_pid が走ると、
+    # **後継の pid ファイルが消える**。⚠⚠ 後継はどの pid ファイルからも辿れなく
+    # なり、次の start が 2 本目を立てる（#509 と同じ結末の、別のレース）。
+    def test_run_stop_keeps_pid_of_successor
+      daemon = create(pid: unused_pid)
+      successor = Process.pid
+      # send_signal の中で「相手が消して後継が書き直した」状態を作る。
+      daemon.define_singleton_method(:send_signal) do |_signal, _pid|
+        File.write(pid_file, successor.to_s)
+      end
+
+      daemon.send(:run_stop)
+
+      assert_equal(successor, daemon.pid, '後継の pid ファイルが残ること')
+    end
+
+    # 自分が知っている pid のままなら、従来どおり消す。
+    def test_run_stop_removes_own_pid
+      daemon = create(pid: unused_pid)
+
+      daemon.send(:run_stop)
+
+      assert_nil(daemon.pid)
+      assert_path_not_exist(daemon.pid_file)
+    end
+
     private
 
     def create(pid: nil, error: nil)
