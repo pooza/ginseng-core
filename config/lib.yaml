@@ -20,6 +20,9 @@ http:
   retry:
     limit: 5
     seconds: 1
+    # ⚠ 429 の Retry-After として受け入れる上限（秒）。これを超える待ちを
+    # 指定されたら、待たずに諦めて呼び出し側へ返す (#525)。
+    max_seconds: 60
   timeout:
     seconds: 30
 line:
