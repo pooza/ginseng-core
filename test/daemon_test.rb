@@ -120,6 +120,24 @@ module Ginseng
       assert_path_not_exist(daemon.pid_file)
     end
 
+    # ⚠⚠ **読む直前に消えても例外にしない (#561)。** 相手の trap が消した直後に
+    # `File.read` すると `Errno::ENOENT` になり、🔴 `run_restart` が `run_stop` の
+    # 途中で抜けて**止めただけで後継を fork しない**。
+    def test_pid_tolerates_concurrent_removal
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:file?)
+      # File.file? の直後に消える状況を作る。
+      File.define_singleton_method(:file?) do |path|
+        FileUtils.rm_f(path) if path == target
+        original.call(path) || path == target
+      end
+
+      assert_nil(daemon.pid)
+    ensure
+      File.define_singleton_method(:file?, original) if original
+    end
+
     private
 
     def create(pid: nil, error: nil)

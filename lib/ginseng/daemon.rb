@@ -55,6 +55,11 @@ module Ginseng
     def pid
       return File.read(pid_file).to_i if File.file?(pid_file)
       return nil
+    rescue Errno::ENOENT
+      # ⚠⚠ **読む直前に消えることがある (#561)。** 相手の trap が消した直後で、
+      # 「無い」と同じ意味なので nil に倒す。🔴 ここで例外を上げると
+      # `run_restart` が `run_stop` の途中で抜け、**止めただけで後継を fork しない**。
+      return nil
     end
 
     # pid ファイルが指すプロセスの状態。:alive / :dead / :unknown (#510)。
