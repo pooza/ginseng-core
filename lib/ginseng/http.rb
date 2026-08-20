@@ -26,6 +26,10 @@ module Ginseng
     # host_validator 使用時に追うリダイレクトの上限。
     MAX_REDIRECTS = 8
 
+    # `Retry-After` として受け入れる上限（秒）。⚠ `/http/retry/max_seconds` で
+    # 上書きできる。これを超える待ちを指定されたら、待たずに諦める (#525)。
+    MAX_RETRY_SECONDS = 60
+
     def initialize
       ENV['SSL_CERT_FILE'] ||= Environment.cert_file
       @logger = logger_class.new

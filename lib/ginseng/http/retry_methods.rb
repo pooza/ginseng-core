@@ -24,7 +24,12 @@ module Ginseng
         cnt += 1
         log_retry_error(e, method, uri, start, count: cnt)
         raise gateway_error(e) unless retryable?(e) && cnt < retry_limit
-        sleep(retry_seconds)
+        seconds = retry_wait(e)
+        # ⚠⚠ **相手が長い待ちを指定したら、待たずに諦めて呼び出し側へ返す (#525)。**
+        # プロセスを何分も止めるのは呼び出し側の期待を超える。**「次の機会に回す」
+        # 判断は呼ぶ側のもの**なので、こちらは例外で返す。
+        raise gateway_error(e) if seconds > max_retry_seconds
+        sleep(seconds)
         retry
       end
 
@@ -61,6 +66,46 @@ module Ginseng
 
       def retry_seconds
         return @config['/http/retry/seconds']
+      end
+
+      # 次の再送までの待ち時間。
+      #
+      # ⚠⚠ **429 は「いつ再開してよいか」を相手が明示している唯一のステータス**
+      # なので、`Retry-After` があればそれに従う (#525、pooza/makoto2#100)。
+      # ⚠ **固定値で叩き直すと、規制されている最中に retry_limit 回連打して規制を
+      # 長引かせる方向に効く。** 408 / 425 は「相手が意図的に断っている」わけでは
+      # ないので、従来どおり固定値のまま。
+      def retry_wait(error)
+        return retry_after(error) || retry_seconds
+      end
+
+      # `Retry-After` を秒数として読む。読めなければ nil。
+      #
+      # ⚠ **秒数と HTTP-date の両方の形がある** (RFC 9110)。⚠ 過去の日付や負の値は
+      # 0 に倒す（`sleep` に負数を渡すと ArgumentError になる）。
+      def retry_after(error)
+        return nil unless error.is_a?(GatewayError)
+        return nil unless error.source_status == 429
+        response = error.response
+        return nil unless response.respond_to?(:headers)
+        value = response.headers['retry-after'].to_s.strip
+        return nil if value.empty?
+        return [value.to_i, 0].max if value.match?(/\A[[:digit:]]+\z/)
+        return [(Time.httpdate(value) - Time.now).ceil, 0].max
+      rescue ArgumentError
+        # HTTP-date として読めない値。⚠ **待ち方が分からないだけなので、
+        # 従来どおりの固定値へ倒す**（ここで raise すると再送そのものが消える）。
+        return nil
+      end
+
+      # `Retry-After` として受け入れる上限。⚠ **設定が無ければ既定へ倒す**
+      # （利用側の config には無いキーなので、ConfigError を通さない）。
+      def max_retry_seconds
+        @max_retry_seconds ||= begin
+          @config['/http/retry/max_seconds']
+        rescue ConfigError
+          MAX_RETRY_SECONDS
+        end
       end
     end
   end
