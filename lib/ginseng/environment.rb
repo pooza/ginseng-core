@@ -85,7 +85,10 @@ module Ginseng
     # ⚠ **例外を飲むこと自体は妥当**（鮮度確認に失敗して起動しないのは困る）。
     # 問題は飲んだうえで安全側でない値を返すことなので、値だけ倒す。
     def self.cert_fresh?
-      latest = HTTP.new.get(Config.instance['/cert/url']).body
+      # ⚠ 取得は OS の CA ストアで検証する (#554)。**インスタンスを作ってから**
+      # 外すこと（`HTTP#initialize` が env を立てる）。
+      http = HTTP.new
+      latest = Ginseng.with_system_cert_store {http.get(Config.instance['/cert/url']).body}
       return File.binread(cert_file) == latest
     rescue => e
       warn "cert freshness check failed: #{e.class} #{e.message}"

@@ -73,6 +73,14 @@ module Ginseng
         '2021-03-14T12:34:56.1234567891Z',
         @config.normalize_temporal(Time.utc(2021, 3, 14, 12, 34, 56 + Rational(1_234_567_891, 10**10))),
       )
+      # ⚠⚠ **19 桁以上でも切り詰めない (#553)。** 有限小数なら桁数は厳密に
+      # 求まるので、打ち切りは掛けない。
+      assert_equal(
+        '2021-03-14T12:34:56.1234567890123456789Z',
+        @config.normalize_temporal(
+          Time.utc(2021, 3, 14, 12, 34, 56 + Rational(1_234_567_890_123_456_789, 10**19)),
+        ),
+      )
       # ⚠ 10 進で表せない分母（DateTime の演算で作れる）でも止まること。
       assert_nothing_raised do
         Timeout.timeout(5) do
