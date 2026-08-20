@@ -108,7 +108,19 @@ module Ginseng
       File.write(pid_file, Process.pid.to_s)
     end
 
-    def remove_pid
+    # ⚠⚠ **自分が知っている pid のままのときだけ消す (#532)。**
+    #
+    # 相手が `TERM` を先に処理して**自分の trap で pid ファイルを消し**、
+    # supervisor が後継を起動して**新しい pid を書いた**あとに、こちらの
+    # `remove_pid` が走ると、**後継の pid ファイルを消す**。🔴 後継はどの pid
+    # ファイルからも辿れなくなり、次の `start` が 2 本目を立てる — #509 で塞いだ
+    # 「停止コマンド自身が孤児を作る」の、別のレースとしての再現。
+    #
+    # ⚠ **読んでから消すまでの隙間は残る。** 完全に閉じるには削除の責任を 1
+    # プロセスへ寄せる必要があり、それは別の設計判断（#532 に記録）。
+    def remove_pid(expected = nil)
+      return FileUtils.rm_f(pid_file) if expected.nil?
+      return unless pid == expected
       FileUtils.rm_f(pid_file)
     end
 
@@ -137,13 +149,14 @@ module Ginseng
       abort_if_running!
       puts motd
       write_pid
+      # ⚠ 自分の pid ファイルだけを消す (#532)。後継が書き直していたら触らない。
       trap('TERM') do
-        remove_pid
+        remove_pid(Process.pid)
         stop
         exit
       end
       trap('INT') do
-        remove_pid
+        remove_pid(Process.pid)
         stop
         exit
       end
@@ -162,10 +175,11 @@ module Ginseng
         exit 1
       end
       send_signal('TERM', p)
-      remove_pid
+      # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
+      remove_pid(p)
     rescue Errno::ESRCH
-      # 既に居ないので pid ファイルは消してよい（従来どおり）。
-      remove_pid
+      # 既に居ないので pid ファイルは消してよい（⚠ ただし中身が p のときだけ）。
+      remove_pid(p)
       warn 'PID file found, but process was not running.'
     rescue Errno::EPERM
       # ⚠ **pid ファイルは残す。**消すと生きたままのプロセスが辿れなくなる。
