@@ -31,7 +31,15 @@ module Ginseng
     MAX_RETRY_SECONDS = 60
 
     def initialize
-      ENV['SSL_CERT_FILE'] ||= Environment.cert_file
+      # ⚠⚠ **存在しないパスを指さない (#512)。** 利用アプリには `cert/cacert.pem`
+      # が無いことがあり（`cert:update` を持っていなかったため一度も作られない）、
+      # その状態で `SSL_CERT_FILE` を立てると **「env 経由だからたまたま無害」**な
+      # 状態になる。⚠ 同じ値を `ca_file` 相当へ直接渡す利用者
+      # (mulukhiya-toot-proxy の Listener#root_cert_file) では、
+      # `SSL_CTX_load_verify_file` が即座に SSLError で落ちる。
+      # ⚠ OpenSSL のビルドやディストロが変われば env 側も効き始める（そのときの
+      # 壊れ方は「HTTPS が全部落ちる」）ので、無害なうちに直しておく。
+      ENV['SSL_CERT_FILE'] ||= Environment.cert_file if File.exist?(Environment.cert_file)
       @logger = logger_class.new
       @config = config_class.instance
       @retry_limit = @config['/http/retry/limit']
