@@ -14,6 +14,10 @@ module Ginseng
     # Psych::DisallowedClass で落ちないよう Date/Time/DateTime を許可する。
     PERMITTED_YAML_CLASSES = [Date, Time, DateTime].freeze
 
+    # 小数秒に許す最大桁数。⚠ 10 進で有限に表せない分母（`1/3` 等）で
+    # 無限ループにしないための打ち切り (#550)。
+    MAX_TEMPORAL_PRECISION = 18
+
     attr_reader :raw
 
     def initialize
@@ -136,10 +140,19 @@ module Ginseng
     end
 
     # 小数秒を表すのに要る桁数。持っていなければ 0。
+    #
+    # ⚠ **桁数は導出する (#550)。** 候補を [3, 6, 9] に限って打ち切ると、
+    # **10 桁以上の小数秒（Psych は Rational のまま保持する）が切り詰められ**、
+    # 「検証した値」と「Config が返す値」の食い違いが再現する。
+    #
+    # ⚠⚠ **上限は置く。** `1/3` のように 10 進で有限に表せない分母は `DateTime` の
+    # 演算で作れるので、無いと無限ループになる。
     def temporal_precision(value)
       fraction = value.is_a?(Time) ? value.subsec : value.sec_fraction
       return 0 if fraction.zero?
-      return [3, 6, 9].find {|digits| (fraction * (10**digits)).denominator == 1} || 9
+      digits = 0
+      digits += 1 while digits < MAX_TEMPORAL_PRECISION && (fraction * (10**digits)).denominator > 1
+      return digits
     end
 
     def merged_raw
