@@ -12,6 +12,13 @@ module Ginseng
     attr_reader :base_uri
     attr_accessor :retry_limit
 
+    # ⚠⚠ **`/http/timeout/seconds` を HTTParty へ渡すのはこの属性経由 (#514)。**
+    # 渡していなかった間、get / post / put / delete の実効は **Net::HTTP 既定の
+    # 60 秒**で、設定は upload にしか効いていなかった。無人で回るボットでは
+    # 再送と掛け算になって滞留する（pooza/makoto2#90 で踏んだ）。
+    # ⚠ 呼び出し側が `options[:timeout]` を明示したときは、そちらを優先する。
+    attr_accessor :timeout
+
     # 4xx のうち、時間をおけば結果が変わりうるもの。
     RETRYABLE_STATUSES = [408, 425, 429].freeze
 
@@ -23,6 +30,7 @@ module Ginseng
       @logger = logger_class.new
       @config = config_class.instance
       @retry_limit = @config['/http/retry/limit']
+      @timeout = @config['/http/timeout/seconds']
     end
 
     def base_uri=(uri)
@@ -92,9 +100,11 @@ module Ginseng
     def upload(uri, file, options = {})
       return File.open(file, 'rb') {|f| upload(uri, f, options)} if file.is_a?(String)
       uri = create_uri(uri)
-      headers = options[:headers] || {}
+      # ⚠ 呼び出し側の hash を壊さない (#537)。`||=` と `[]=` は渡された hash
+      # そのものへ書き込むので、使い回されると次の要求へ持ち越される。
+      headers = (options[:headers] || {}).dup
       headers['User-Agent'] ||= user_agent
-      body = options[:payload] || options[:body] || {}
+      body = (options[:payload] || options[:body] || {}).dup
       body[:file] = file if file
       method = options[:method] || :post
       start = Time.now
@@ -102,7 +112,7 @@ module Ginseng
         headers:,
         body:,
         multipart: true,
-        timeout: @config['/http/timeout/seconds'],
+        timeout: options[:timeout] || timeout,
       })
       log(method:, multipart: true, url: uri, status: response.code, start:)
       bad_response!(response) unless response.code < 400
@@ -116,8 +126,14 @@ module Ginseng
     # 括り出す前は delete が `method: :post` でログし、put が `repeat(:delete, ...)`
     # を呼んでいた（いずれもコピペ由来）。ここに寄せて解消している。
     def request_with_body(method, uri, options)
-      options[:headers] = create_headers(options[:headers])
+      # ⚠ 呼び出し側の hash を壊さない (#537)。GET / HEAD の経路は #528 で直したが、
+      # こちらは同じ型のまま残っていた。⚠⚠ `create_headers` は**渡された hash
+      # そのもの**へ Content-Type を書き込むので、headers を使い回す呼び出しでは、
+      # JSON でない次の要求へ持ち越される。
+      options = options.dup
+      options[:headers] = create_headers((options[:headers] || {}).dup)
       options[:body] = create_body(options[:body], options[:headers])
+      options[:timeout] ||= timeout
       repeat(method, uri = create_uri(uri), start = Time.now) do
         response = HTTParty.public_send(method, uri.normalize, options)
         log(method:, url: uri, status: response.code, start:)
@@ -141,6 +157,7 @@ module Ginseng
       options = options.dup
       options[:headers] = (options[:headers] || {}).dup
       options[:headers]['User-Agent'] ||= user_agent
+      options[:timeout] ||= timeout
       max_bytes = options.delete(:max_bytes)
       if validator = options.delete(:host_validator)
         return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
