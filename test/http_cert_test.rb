@@ -8,6 +8,33 @@ module Ginseng
   # ⚠ **同じ値を `ca_file` 相当へ渡す利用者**（mulukhiya-toot-proxy の
   # `Listener#root_cert_file`）では `SSL_CTX_load_verify_file` が落ちる。
   class HTTPCertTest < TestCase
+    # 利用アプリの Environment の代役。⚠ アプリは Ginseng::Environment を継承し、
+    # dir を自分のルートへ差し替える（makoto2 の Makoto::Environment と同じ形）。
+    class AppEnvironment < Environment
+      def self.dir
+        return '/nonexistent/app'
+      end
+    end
+
+    # cert を持っているアプリの代役。
+    class PresentAppEnvironment < Environment
+      def self.dir
+        return Ginseng::Environment.dir
+      end
+    end
+
+    class AppHTTP < HTTP
+      def environment_class
+        return AppEnvironment
+      end
+    end
+
+    class PresentAppHTTP < HTTP
+      def environment_class
+        return PresentAppEnvironment
+      end
+    end
+
     def setup
       @original = ENV.fetch('SSL_CERT_FILE', nil)
     end
@@ -42,6 +69,26 @@ module Ginseng
 
       assert_equal(Environment.cert_file, ENV.fetch('SSL_CERT_FILE', nil))
       assert_path_exist(Environment.cert_file)
+    end
+
+    # ⚠⚠ **アプリの Environment を見ること (#548)。** `Ginseng::Environment` は
+    # **gem のルート**を指すので、利用アプリでは「自分の `Gemfile.lock` が刺した
+    # gem リビジョンに同梱された CA バンドル」を使い続けることになっていた。
+    def test_uses_environment_of_the_application
+      ENV.delete('SSL_CERT_FILE')
+
+      AppHTTP.new
+
+      assert_nil(ENV.fetch('SSL_CERT_FILE', nil), 'アプリ側に cert が無ければ立てない')
+    end
+
+    # アプリ側に在れば、そちらを立てる。
+    def test_uses_application_cert_when_present
+      ENV.delete('SSL_CERT_FILE')
+
+      PresentAppHTTP.new
+
+      assert_equal(Environment.cert_file, ENV.fetch('SSL_CERT_FILE', nil))
     end
 
     # ⚠ 呼び出し側が明示した値は上書きしない（従来どおり）。
