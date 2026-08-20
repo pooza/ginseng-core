@@ -22,9 +22,12 @@ jobs:
       # ⚠ 手順の正本は pooza/ginseng-style。ここには matrix と schedule だけ置く。
       - uses: pooza/ginseng-style/.github/actions/ruby-check@main
         with:
-          # ⚠ 証明書を持つのはこの gem だけ。⚠⚠ cert:update は CI では回さない。
-          # cacert.pem をコミットして差分をレビューする設計（b9ddf32）。
-          cert-check: 'true'
+          # ⚠⚠ **鮮度確認はこのワークフローから外した (#515)。**
+          # 古くなると `cert check` で落ち、**lint も test も skipped になって
+          # その回の CI は何も検査しなくなる**（2026-08-13 に実際に発生。2 度目）。
+          # ⚠ **「気付ける」と「CI が死ぬ」を分ける** — 追随は週次の cert.yml が
+          # PR で知らせる。
+          cert-check: 'false'
           # ⚠⚠ **2026-08-21 に test を有効化した (#508 / #520)。**
           # それまで 13 件が外部サーバー・シークレット・ホスト依存で通らず、
           # **この gem だけ CI がテストを走らせていなかった**（緑は lint が通った
