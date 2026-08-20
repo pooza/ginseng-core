@@ -56,6 +56,9 @@ module Ginseng
 
       URL_PATTERN = %r{\A[a-z][a-z0-9+.-]*://}i
 
+      # 不正なバイト列を落として出したことの印 (#518)。
+      ENCODING_ERROR_FIELD = :_encoding_error
+
       def initialize(name = nil)
         @config = config_class.instance
         name ||= package_class.name
@@ -63,14 +66,14 @@ module Ginseng
       end
 
       def info(message)
-        super(create_message(message).to_json)
+        super(create_entry(message))
       end
 
       def error(message)
-        super(create_message(message).to_json)
+        super(create_entry(message))
         return unless message.is_a?(StandardError)
         message.backtrace.each do |entry|
-          super("  #{entry}")
+          super("  #{scrub(entry)}")
         end
       end
 
@@ -89,8 +92,40 @@ module Ginseng
         define_method(severity) do |message = nil, &block|
           return true unless send(:"#{severity}?")
           message = block.call if message.nil? && block
-          super(create_message(message).to_json)
+          super(create_entry(message))
         end
+      end
+
+      # syslog へ渡す 1 行を組み立てる。**必ず妥当な UTF-8 を返し、例外を上げない**
+      # (#518)。
+      #
+      # ⚠⚠ **不正なバイト列の壊れ方は環境で 2 通りある。両方を塞ぐ。**
+      #
+      # 1. **例外**: 素の json gem の generator では `JSON::GeneratorError` が上がる。
+      #    `create_message` には rescue があるのに `to_json` はその外にあったので、
+      #    **ログを出そうとした側が落ちて 1 行丸ごと消えていた**（依頼元の
+      #    mulukhiya-toot-proxy で発生。リクエストログが残らないだけでなく、
+      #    rescue が走って本来と違う 401 でクライアントへ返っていた）
+      # 2. ⚠ **素通し**: この gem は `yajl/json_gem` を読むので、**Yajl は例外を
+      #    上げず不正なバイト列をそのまま出す**。⚠⚠ **syslog に妥当でない UTF-8 の
+      #    行が残り、ログを JSON として読む側がそこで落ちる**（実測で確認した）
+      #
+      # ⚠ ログは最後の観測手段なので、**壊れたバイト列を落としてでも 1 行出す**。
+      # 投稿本文と違い、化けた表示より無音のほうが害が大きい。⚠ 直したことが
+      # 分かるよう `_encoding_error: true` を添える。黙って直すが、黙って直した
+      # ことは隠さない。
+      #
+      # 🔴 **判定は mask より前に行うこと。** 不正なバイト列を含む文字列を
+      # `mask_url` の正規表現にかけると ArgumentError が上がり、
+      # **`create_message` の rescue が素の src を返す ＝ マスクが丸ごと外れる**。
+      # ⚠⚠ 実測では `password:` と URL の `access_token=` が**平文のまま**出た。
+      def create_entry(src)
+        return create_scrubbed_entry(src) if broken?(src)
+        entry = create_message(src).to_json
+        return entry if entry.valid_encoding?
+        return create_scrubbed_entry(src)
+      rescue JSON::GeneratorError, EncodingError
+        return create_scrubbed_entry(src)
       end
 
       def create_message(src)
@@ -112,6 +147,59 @@ module Ginseng
       end
 
       private
+
+      # ⚠⚠ **scrub してから create_message をやり直す。** mask を通し直さないと
+      # マスクが外れたままになる（上記）。
+      def create_scrubbed_entry(src)
+        message = scrub(create_message(scrub(src)))
+        message = {message:} unless message.is_a?(Hash)
+        entry = message.merge(ENCODING_ERROR_FIELD => true).to_json
+        return entry if entry.valid_encoding?
+        return {ENCODING_ERROR_FIELD => true}.to_json
+      rescue JSON::GeneratorError, EncodingError
+        # ⚠ ここまで来たら中身は諦める。**行が消えたことだけは残す**
+        # （無音だと、そもそも出そうとしたことすら追えない）。
+        return {ENCODING_ERROR_FIELD => true}.to_json
+      end
+
+      # JSON にできないバイト列を含むか。⚠ **判定だけで複製を作らない**
+      # （毎行通るので、壊れていない側にコストを乗せない）。
+      def broken?(value)
+        case value
+        in Hash
+          return value.any? {|k, v| broken?(k) || broken?(v)}
+        in Array
+          return value.any? {|v| broken?(v)}
+        in String
+          return true unless value.valid_encoding?
+          # ⚠ ASCII-8BIT は「妥当」だが、非 ASCII を含むと JSON にできない。
+          return value.encoding == Encoding::BINARY && !value.ascii_only?
+        else
+          return false
+        end
+      end
+
+      # 不正なバイト列を `?` へ落とした複製を返す。
+      #
+      # ⚠ **UTF-8 以外の妥当な文字列は壊さないこと。**Shift_JIS のような正しい
+      # 文字列まで `?` にすると、読めたはずのログが読めなくなる。
+      def scrub(value)
+        case value
+        in Hash
+          return value.to_h {|k, v| [scrub(k), scrub(v)]}
+        in Array
+          return value.map {|v| scrub(v)}
+        in Symbol
+          return scrub(value.to_s).to_sym
+        in String
+          return value.scrub('?') if value.encoding == Encoding::UTF_8
+          return value.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '?')
+        else
+          return value
+        end
+      rescue EncodingError
+        return value.to_s.dup.force_encoding(Encoding::UTF_8).scrub('?')
+      end
 
       # ログ出力用にマスクした複製を返す。
       #
@@ -162,7 +250,11 @@ module Ginseng
         # query_values= は値を percent-encode するので、目印の角括弧が
         # `%5BFILTERED%5D` になってログが読みにくい。自分で入れた目印だけ戻す。
         return uri.to_s.gsub(FILTERED_ENCODED, FILTERED)
-      rescue Addressable::URI::InvalidURIError
+      # ⚠⚠ **不正なバイト列は正規表現の時点で ArgumentError を上げる (#518)。**
+      # ここで受けないと create_message の rescue まで飛び、**mask ごと素通りして
+      # mask_fields のキーまで平文で出る**。⚠ ログ経路は create_entry が先に scrub
+      # するのでここへは来ないが、create_message を直接呼ぶ利用側のために塞ぐ。
+      rescue Addressable::URI::InvalidURIError, ArgumentError, Encoding::CompatibilityError
         return value
       end
 
