@@ -4,6 +4,10 @@ module Ginseng
   class SlackTest < TestCase
     def disable?
       return true if environment_class.win?
+      # ⚠⚠ **設定が無ければ飛ばす (#508)。** 落とすと CI の赤が常態化し、本物の
+      # 回帰が埋もれる。⚠ **`test_post` は実際に Slack へ投稿する**ので、hooks を
+      # 持たない環境（CI）では走らせてはいけない。
+      return true unless config?('/slack/hooks')
       return false
     end
 

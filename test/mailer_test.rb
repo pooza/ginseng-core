@@ -36,7 +36,11 @@ module Ginseng
       @mailer.to = prev
     end
 
+    # ⚠ **宛先が無ければ飛ばす (#508)。** ⚠⚠ **これは sendmail で実際に送る**ので、
+    # 宛先を持たない環境（CI）では走らせない。他のテストは送らないので落とさない。
     def test_deliver
+      omit('/mail/to が無いので送信できない') unless config?('/mail/to')
+
       @mailer.deliver('タイトル', 'ボディ')
     end
   end
