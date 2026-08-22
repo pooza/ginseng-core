@@ -10,11 +10,17 @@ module Ginseng
     # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割で、
     # 中身は一切変えていない。
     module HostValidationMethods
+      # ⚠⚠ **オリジンをまたいで持ち出してはいけないヘッダ (#527)。**いずれも
+      # 「どのオリジンに対する資格情報か」が値の側に書かれていないので、
+      # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
+      CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
         options = options.merge(follow_redirects: false)
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
+        origin = origin_of(uri)
         (limit + 1).times do
           # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
           # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
@@ -30,8 +36,40 @@ module Ginseng
           location = redirect_location(response)
           return response unless location
           uri = create_uri(::URI.join(uri.to_s, location).to_s)
+          options = redirect_options(options, origin, uri)
         end
         raise GatewayError, "Too many redirects (#{limit})"
+      end
+
+      # リダイレクト先へ持ち越す options を作る (#527)。
+      #
+      # ⚠⚠ **初段の query / body を撃ち直さない。** Location は撃ち直す先を
+      # クエリまで含めて指しているので、初段のクエリを足すと **Location が
+      # 求めてもいないパラメータが次のホップに付いて回る**。そこに秘密が
+      # 入っていれば、そのまま別のホストへ渡ることになる。
+      #
+      # ⚠⚠ **オリジンが変わったら資格情報を落とす。** `host_validator` が
+      # 「公開ホストかどうか」を見る実装だと、**リダイレクト先が公開ホスト
+      # でありさえすれば通る**ので、この経路は validator では塞げない。
+      #
+      # ⚠ **一度落ちたら戻らない。** 比較の相手は初段のオリジンで固定だが、
+      # 落とした options を持ち回るので `A → B → A` と戻ってきても復活しない
+      # （fail-closed 側に倒している）。
+      def redirect_options(options, origin, uri)
+        options = options.except(:query, :body)
+        return options if origin == origin_of(uri)
+        headers = options[:headers]
+        return options if headers.blank?
+        return options.merge(
+          headers: headers.reject {|k, _v| CREDENTIAL_HEADERS.include?(k.to_s.downcase)},
+        )
+      end
+
+      # scheme / host / port の三つ組。⚠ **既定ポートを補って比較する。**
+      # `https://example.com` と `https://example.com:443` は同じオリジンで、
+      # ここで別物と見ると資格情報が無駄に落ちる。
+      def origin_of(uri)
+        return [uri.normalized_scheme, uri.normalized_host, uri.inferred_port]
       end
 
       def redirect_location(response)
