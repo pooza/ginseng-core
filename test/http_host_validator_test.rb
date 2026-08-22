@@ -266,6 +266,176 @@ module Ginseng
       assert_not_requested(:get, 'http://example.com/exec')
     end
 
+    # ------------------------------------------------------------------
+    # #527: リダイレクト追従時に初段の query と資格情報を撃ち直していた
+    # ------------------------------------------------------------------
+
+    # ⚠⚠ **初段のクエリを次のホップへ持ち越さない。** Location はクエリまで
+    # 含めて次に撃つ先を指しているので、初段の分を足すと **Location が求めても
+    # いないパラメータが付いて回る**。そこに秘密が入っていれば別ホストへ渡る。
+    def test_drops_initial_query_on_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec').with(query: {'token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      response = @http.get(
+        'https://a.example/exec',
+        query: {token: 'secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_equal('ok', response.body)
+      assert_not_requested(:get, 'https://b.example/echo', query: {'token' => 'secret'})
+    end
+
+    # 同じオリジンの中でも撃ち直さない。Location が正。
+    def test_drops_initial_query_on_same_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec').with(query: {'token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => '/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        query: {token: 'secret'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_not_requested(:get, 'https://a.example/echo', query: {'token' => 'secret'})
+    end
+
+    # ⚠ 落とすのは**初段の** query であって、Location 自身が持つクエリは残す。
+    def test_keeps_query_carried_by_location
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo?sig=abc'})
+      WebMock.stub_request(:get, 'https://b.example/echo').with(query: {'sig' => 'abc'})
+        .to_return(status: 200, body: 'ok')
+
+      response = @http.get('https://a.example/exec', host_validator: public_hosts('a.example', 'b.example'))
+
+      assert_equal('ok', response.body)
+    end
+
+    # ⚠⚠ **本丸。** `Authorization` / `Cookie` はオリジンに紐づく。
+    # host_validator が「公開ホストか」しか見ない実装だと、**リダイレクト先が
+    # 公開ホストでありさえすれば通る**ので、この経路は validator では塞げない。
+    def test_drops_credentials_on_cross_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'Authorization' => 'Bearer secret', 'Cookie' => 'session=secret', 'X-Trace' => 'keep'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/exec') do |req|
+        req.headers['Authorization'] == 'Bearer secret'
+      end
+      assert_requested(:get, 'https://b.example/echo') do |req|
+        req.headers['Authorization'].nil? && req.headers['Cookie'].nil? && req.headers['X-Trace'] == 'keep'
+      end
+    end
+
+    # ⚠ ヘッダ名の大小は当てにできない。呼び出し側は素の hash を渡してくる。
+    def test_drops_credentials_regardless_of_header_case
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'authorization' => 'Bearer secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://b.example/echo') {|req| req.headers['Authorization'].nil?}
+    end
+
+    # 同一オリジンの中では落とす必要が無い。落とすと普通の認証付き取得が壊れる。
+    def test_keeps_credentials_on_same_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => '/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'Authorization' => 'Bearer secret'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/echo') do |req|
+        req.headers['Authorization'] == 'Bearer secret'
+      end
+    end
+
+    # ⚠ 既定ポートを明示しただけでは別オリジンではない。ここを取り違えると
+    # 資格情報が無駄に落ちる。
+    def test_keeps_credentials_when_only_default_port_is_explicit
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://a.example:443/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'Authorization' => 'Bearer secret'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/echo') do |req|
+        req.headers['Authorization'] == 'Bearer secret'
+      end
+    end
+
+    # ⚠ **https → http の格下げも別オリジン。** ホストが同じでも平文へ落ちる。
+    def test_drops_credentials_on_scheme_downgrade
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'http://a.example/echo'})
+      WebMock.stub_request(:get, 'http://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'Authorization' => 'Bearer secret'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_requested(:get, 'http://a.example/echo') {|req| req.headers['Authorization'].nil?}
+    end
+
+    # ⚠⚠ **一度落ちたら戻らない。** `A → B → A` と戻ってきても復活させない。
+    # 戻せる作りにすると、B が「A へ戻す」だけで資格情報を引き出せてしまう。
+    def test_credentials_stay_dropped_after_returning_to_the_first_origin
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/hop'})
+      WebMock.stub_request(:get, 'https://b.example/hop')
+        .to_return(status: 302, headers: {'Location' => 'https://a.example/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'Authorization' => 'Bearer secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/echo') {|req| req.headers['Authorization'].nil?}
+    end
+
+    # ⚠ 呼び出し側の hash を壊さない (#528 / #537 と同じ不変条件)。ここで
+    # 資格情報を落とすようになったので、呼び出し側の headers から消えていない
+    # ことを見ておく。
+    def test_dropping_credentials_does_not_pollute_caller_headers
+      WebMock.stub_request(:get, 'https://a.example/exec').with(query: {'token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+      headers = {'Authorization' => 'Bearer secret'}
+      options = {headers:, query: {token: 'secret'}, host_validator: public_hosts('a.example', 'b.example')}
+
+      @http.get('https://a.example/exec', options)
+
+      assert_equal({'Authorization' => 'Bearer secret'}, headers)
+      assert_equal({token: 'secret'}, options[:query])
+    end
+
     # プロキシがあっても pinning を要求していなければ従来どおり通す。
     def test_adapter_allows_proxy_without_pinning
       connection = PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
