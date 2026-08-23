@@ -5,7 +5,7 @@ inherit_gem:
   ginseng-style: config/rubocop.yml
 
 AllCops:
-  TargetRubyVersion: 3.3
+  TargetRubyVersion: 3.4
 # ⚠ この gem だけ frozen string literal のマジックコメントを要求する。
 # 正本は Enabled: false（他のリポジトリは付けない）。
 Style/FrozenStringLiteralComment:
