@@ -125,26 +125,36 @@ module Ginseng
     def upload(uri, file, options = {})
       return File.open(file, 'rb') {|f| upload(uri, f, options)} if file.is_a?(String)
       uri = create_uri(uri)
-      # ⚠ 呼び出し側の hash を壊さない (#537)。`||=` と `[]=` は渡された hash
-      # そのものへ書き込むので、使い回されると次の要求へ持ち越される。
-      headers = (options[:headers] || {}).dup
-      headers['User-Agent'] ||= user_agent
-      body = (options[:payload] || options[:body] || {}).dup
-      body[:file] = file if file
       method = options[:method] || :post
+      hop_options = upload_options(file, options)
+      # ⚠⚠ **ここも validator を黙って捨てていた (#569)。** 利用側は「あれは
+      # version / filename を見るリクエストパラメータの hash だから」と解釈して
+      # 自分で delete していた (mulukhiya-toot-proxy#4576) — **渡せてしまうのに
+      # 効かない**ので、そう読むほかなかった。
+      # ⚠ 307 / 308 で body を撃ち直すとき、multipart の IO は
+      # `rewind_body!` が巻き戻す。
+      if validator = options[:host_validator]
+        return request_validating_hops(method, uri, hop_options, validator)
+      end
       start = Time.now
-      response = HTTParty.public_send(method, uri.normalize, {
-        headers:,
-        body:,
-        multipart: true,
-        timeout: options[:timeout] || timeout,
-      })
+      response = HTTParty.public_send(method, uri.normalize, hop_options)
       log(method:, multipart: true, url: uri, status: response.code, start:)
       bad_response!(response) unless response.code < 400
       return response
     end
 
     private
+
+    # `upload` が HTTParty へ渡す options。⚠ **呼び出し側の hash を壊さない
+    # (#537)。** `||=` と `[]=` は渡された hash そのものへ書き込むので、
+    # 使い回されると次の要求へ持ち越される。
+    def upload_options(file, options)
+      headers = (options[:headers] || {}).dup
+      headers['User-Agent'] ||= user_agent
+      body = (options[:payload] || options[:body] || {}).dup
+      body[:file] = file if file
+      return {headers:, body:, multipart: true, timeout: options[:timeout] || timeout}
+    end
 
     # body を伴うメソッド（POST / DELETE / PUT）の共通経路。
     #
@@ -163,6 +173,15 @@ module Ginseng
       # HTTParty へ渡すと**黙って捨てられる**ので、呼び出し側は「上限を付けた」と
       # 思い込んだまま上限なしで受け取っていた。
       max_bytes = options.delete(:max_bytes)
+      # ⚠⚠ **GET / HEAD と同じく validator を通す (#569)。** ここに分岐が無かった
+      # 間、`options[:host_validator]` は HTTParty へ知らないオプションとして渡り
+      # **捨てられていた**。`follow_redirects` は既定の true のままなので、
+      # 🔴 **初段すら検証せずリダイレクトを追い、リンクローカルまで到達した**
+      # （webmock で実測）。⚠ 黙って無視するのが最悪で、呼び出し側は「渡した
+      # つもりで無検証」になる — `#head` のコメントが言っているのと同じ形。
+      if validator = options.delete(:host_validator)
+        return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
+      end
       repeat(method, uri = create_uri(uri), start = Time.now) do
         response = execute(method, uri, options, max_bytes)
         log(method:, url: uri, status: response.code, start:)

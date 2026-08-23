@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'webmock/test_unit'
+require 'tempfile'
 
 module Ginseng
   # host_validator によるリダイレクト各ホップの検証 (mulukhiya-toot-proxy#4410)
@@ -539,6 +540,144 @@ module Ginseng
 
       assert_equal({username: 'user', password: 'secret'}, basic_auth)
       assert_equal(basic_auth, options[:basic_auth])
+    end
+
+    # ------------------------------------------------------------------
+    # #569: body を伴うメソッドが host_validator を黙って無視していた
+    # ------------------------------------------------------------------
+
+    # 🔴 **本丸。** `request_with_body` には validator の分岐が無く、
+    # `options[:host_validator]` は HTTParty へ知らないオプションとして渡って
+    # 捨てられていた。⚠⚠ `follow_redirects` は既定の true のままなので、
+    # **初段すら検証せずリダイレクトを追い、リンクローカルまで到達していた。**
+    def test_post_validates_every_hop
+      WebMock.stub_request(:post, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/latest/meta-data/'})
+
+      error = assert_raise(GatewayError) do
+        @http.post('https://a.example/exec', body: {}, host_validator: public_hosts('a.example'))
+      end
+
+      assert_match(/Rejected host/, error.message)
+      assert_not_requested(:get, 'http://169.254.169.254/latest/meta-data/')
+    end
+
+    # ⚠ 「拒否されなかった」のではなく「一度も検証していなかった」。初段が
+    # validator を通ることを、渡されたホスト名そのもので見る。
+    def test_post_validates_first_hop
+      WebMock.stub_request(:post, 'https://a.example/exec').to_return(status: 200, body: 'ok')
+      hosts = []
+
+      @http.post('https://a.example/exec', body: {}, host_validator: ->(host) {hosts.push(host) && true})
+
+      assert_equal(['a.example'], hosts)
+    end
+
+    def test_put_and_delete_validate_hops
+      [:put, :delete].each do |method|
+        WebMock.reset!
+        WebMock.stub_request(method, 'https://a.example/exec')
+          .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/meta'})
+
+        assert_raise(GatewayError) do
+          @http.public_send(method, 'https://a.example/exec', body: {}, host_validator: public_hosts('a.example'))
+        end
+
+        assert_not_requested(:get, 'http://169.254.169.254/meta')
+      end
+    end
+
+    # ⚠⚠ **302 では POST が GET に化け、body が落ちる。** これは HTTParty の
+    # `handle_redirection` と同じ規則で、**validator を足したせいで結果が
+    # 変わってはいけない**。
+    def test_post_becomes_get_on_found_redirect
+      WebMock.stub_request(:post, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.post(
+        'https://a.example/exec',
+        body: {token: 'secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://b.example/echo') {|req| req.body.nil? || req.body.empty?}
+    end
+
+    # ⚠⚠ **307 / 308 はメソッドごと保つ。** ここで body を落とすと、
+    # **空の POST を撃つ**ことになる。
+    def test_post_keeps_method_and_body_on_temporary_redirect
+      WebMock.stub_request(:post, 'https://a.example/exec')
+        .to_return(status: 307, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:post, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.post(
+        'https://a.example/exec',
+        body: {token: 'secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:post, 'https://b.example/echo') {|req| req.body == {token: 'secret'}.to_json}
+    end
+
+    # validator を渡さない従来の呼び出しは HTTParty のまま。
+    def test_post_without_validator_keeps_httparty_behavior
+      WebMock.stub_request(:post, 'https://example.com/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://example.com/echo'})
+      WebMock.stub_request(:get, 'https://example.com/echo').to_return(status: 200, body: 'ok')
+
+      assert_equal('ok', @http.post('https://example.com/exec', body: {}).body)
+    end
+
+    # ⚠ 呼び出し側の hash を壊さない (#528 と同じ不変条件)。GET / HEAD の経路は
+    # 直っていたが、こちらは分岐そのものが無かったので今回が初めて。
+    def test_post_does_not_pollute_caller_options
+      WebMock.stub_request(:post, 'https://a.example/exec').to_return(status: 200, body: 'ok')
+      options = {body: {}, host_validator: public_hosts('a.example')}
+
+      @http.post('https://a.example/exec', options)
+      @http.post('https://a.example/exec', options)
+
+      assert_equal([:body, :host_validator], options.keys)
+      assert_requested(:post, 'https://a.example/exec', times: 2)
+    end
+
+    # ⚠ `upload` も同じ穴だった。利用側は「あれはリクエストパラメータの hash
+    # だから」と解釈して自分で delete していた (mulukhiya-toot-proxy#4576) —
+    # **渡せてしまうのに効かない**ので、そう読むほかなかった。
+    def test_upload_validates_hops
+      WebMock.stub_request(:post, 'https://a.example/up')
+        .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/meta'})
+
+      Tempfile.create('probe') do |f|
+        f.write('CONTENTS')
+        f.flush
+        f.rewind
+
+        assert_raise(GatewayError) do
+          @http.upload('https://a.example/up', f, host_validator: public_hosts('a.example'))
+        end
+      end
+
+      assert_not_requested(:get, 'http://169.254.169.254/meta')
+    end
+
+    # ⚠⚠ **multipart の IO は前のホップで読み切っている。** 巻き戻さないと
+    # 307 の撃ち直しで**空のファイルを送る**。
+    def test_upload_rewinds_file_on_temporary_redirect
+      WebMock.stub_request(:post, 'https://a.example/up')
+        .to_return(status: 307, headers: {'Location' => 'https://b.example/up'})
+      WebMock.stub_request(:post, 'https://b.example/up').to_return(status: 200, body: 'ok')
+
+      Tempfile.create('probe') do |f|
+        f.write('CONTENTS')
+        f.flush
+        f.rewind
+
+        @http.upload('https://a.example/up', f, host_validator: public_hosts('a.example', 'b.example'))
+      end
+
+      assert_requested(:post, 'https://b.example/up') {|req| req.body.include?('CONTENTS')}
     end
 
     # プロキシがあっても pinning を要求していなければ従来どおり通す。
