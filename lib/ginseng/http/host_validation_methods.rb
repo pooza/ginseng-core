@@ -15,6 +15,21 @@ module Ginseng
       # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
       CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
 
+      # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
+      # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
+      # ヘッダを見ているだけでは落としきれない。
+      #
+      # 🔴 **上流の抑止は、この経路では効かない。** HTTParty は自分でホップを
+      # 追ったときだけ `@changed_hosts` を立てて Basic 認証を止めるが、ここは
+      # `follow_redirects: false` で**ホップごとに Request を作り直す**ので、
+      # 毎回 `@changed_hosts = false` の新品になる。⚠ `digest_auth` に至っては
+      # 上流にその抑止すら無い。
+      #
+      # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
+      # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
+      # 落としても防げるものが無く相互 TLS が壊れるだけ。
+      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth].freeze
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -58,6 +73,9 @@ module Ginseng
       def redirect_options(options, origin, uri)
         options = options.except(:query, :body)
         return options if origin == origin_of(uri)
+        # ⚠ ヘッダより先に落とす。`headers` が空でも資格情報オプションは
+        # 残りうるので、ここで抜けると `basic_auth` が持ち越される (#568)。
+        options = options.except(*CREDENTIAL_OPTIONS)
         headers = options[:headers]
         return options if headers.blank?
         return options.merge(

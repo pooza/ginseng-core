@@ -436,6 +436,111 @@ module Ginseng
       assert_equal({token: 'secret'}, options[:query])
     end
 
+    # ------------------------------------------------------------------
+    # #568: 資格情報がヘッダ経由とは限らない
+    # ------------------------------------------------------------------
+
+    # ⚠⚠ **本丸。** HTTParty の `basic_auth:` はヘッダではなく options で渡る。
+    # `headers` が空だと以前はここで早期 return しており、**リダイレクト先へ
+    # Basic 認証をそのまま撃ち直していた**。
+    #
+    # 🔴 HTTParty 自身の抑止（ホストが変わったら送らない）は、**1 つの Request が
+    # ホップを追うとき**にしか働かない。ここはホップごとに Request を作り直すので
+    # 効かない。
+    def test_drops_basic_auth_on_cross_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        basic_auth: {username: 'user', password: 'secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/exec') do |req|
+        req.headers['Authorization'] == "Basic #{['user:secret'].pack('m0')}"
+      end
+      assert_requested(:get, 'https://b.example/echo') {|req| req.headers['Authorization'].nil?}
+    end
+
+    # ⚠ ヘッダが空でないときも落ちること。`headers.blank?` の早期 return だけの
+    # 話ではなく、**資格情報オプションを落とす経路がそもそも無かった**。
+    def test_drops_basic_auth_even_when_headers_are_present
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        headers: {'X-Trace' => 'keep'},
+        basic_auth: {username: 'user', password: 'secret'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://b.example/echo') do |req|
+        req.headers['Authorization'].nil? && req.headers['X-Trace'] == 'keep'
+      end
+    end
+
+    # 同一オリジンでは落とさない。落とすと普通の Basic 認証付き取得が壊れる。
+    def test_keeps_basic_auth_on_same_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => '/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        basic_auth: {username: 'user', password: 'secret'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/echo') do |req|
+        req.headers['Authorization'] == "Basic #{['user:secret'].pack('m0')}"
+      end
+    end
+
+    # ⚠ `digest_auth` は 401 チャレンジを受けて初めて撃つので、リダイレクトだけの
+    # 経路では再現できない。落ちることは redirect_options で直接見る。
+    # ⚠⚠ **上流には digest 向けの抑止が無い**ので、こちらで落とさないと残る。
+    def test_drops_credential_options_on_cross_origin_redirect
+      options = @http.send(
+        :redirect_options,
+        {digest_auth: {username: 'user', password: 'secret'}, headers: {'X-Trace' => 'keep'}},
+        @http.send(:origin_of, URI.parse('https://a.example/exec')),
+        URI.parse('https://b.example/echo'),
+      )
+
+      assert_equal({headers: {'X-Trace' => 'keep'}}, options)
+    end
+
+    # ⚠ **クライアント証明書は落とさない。** 秘密鍵は出て行かず、提示先は
+    # `validate_host!` を通ったホストなので、落としても防げるものが無い。
+    def test_keeps_client_certificate_options_on_cross_origin_redirect
+      options = @http.send(
+        :redirect_options,
+        {pem: 'PEM', pem_password: 'secret', basic_auth: {username: 'u', password: 'p'}},
+        @http.send(:origin_of, URI.parse('https://a.example/exec')),
+        URI.parse('https://b.example/echo'),
+      )
+
+      assert_equal({pem: 'PEM', pem_password: 'secret'}, options)
+    end
+
+    # ⚠ 呼び出し側の hash を壊さない (#528 / #537 / #527 と同じ不変条件)。
+    def test_dropping_credential_options_does_not_pollute_caller_options
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+      basic_auth = {username: 'user', password: 'secret'}
+      options = {basic_auth:, host_validator: public_hosts('a.example', 'b.example')}
+
+      @http.get('https://a.example/exec', options)
+
+      assert_equal({username: 'user', password: 'secret'}, basic_auth)
+      assert_equal(basic_auth, options[:basic_auth])
+    end
+
     # プロキシがあっても pinning を要求していなければ従来どおり通す。
     def test_adapter_allows_proxy_without_pinning
       connection = PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
