@@ -46,6 +46,9 @@ module Ginseng
       # 安全かつ本文を持たない HEAD には当てはまらない（curl -I -L も HEAD のまま）。
       SAFE_METHODS = [:get, :head].freeze
 
+      # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
+      NOT_MODIFIED = 304
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -125,6 +128,12 @@ module Ginseng
       end
 
       def redirect_location(response)
+        # ⚠⚠ **304 はリダイレクトではない (#569)。** 3xx に入っているので
+        # `between?` だけだと拾ってしまい、Location 付きの 304 を**追ってしまう**。
+        # 🔴 HTTParty は `Net::HTTPNotModified` を明示的に除いているので、
+        # **validator を渡したときだけ結果が変わっていた**（実測: validator あり
+        # なら 200 と本文、validator 無しなら 304 と空）。
+        return nil if response.code == NOT_MODIFIED
         return nil unless response.code.between?(300, 399)
         location = response.headers['location']
         return nil unless location.present?

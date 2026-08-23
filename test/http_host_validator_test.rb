@@ -680,6 +680,20 @@ module Ginseng
       assert_requested(:post, 'https://b.example/up') {|req| req.body.include?('CONTENTS')}
     end
 
+    # ⚠⚠ **304 はリダイレクトではない。** 3xx に入っているので `between?` だけ
+    # だと拾ってしまう。🔴 HTTParty は `Net::HTTPNotModified` を除いているので、
+    # **validator を渡したときだけ Location 付きの 304 を追っていた**。
+    def test_does_not_follow_not_modified
+      WebMock.stub_request(:get, 'https://a.example/x')
+        .to_return(status: 304, headers: {'Location' => 'https://b.example/y'})
+      WebMock.stub_request(:get, 'https://b.example/y').to_return(status: 200, body: 'FOLLOWED')
+
+      response = @http.get('https://a.example/x', host_validator: public_hosts('a.example', 'b.example'))
+
+      assert_equal(304, response.code)
+      assert_not_requested(:get, 'https://b.example/y')
+    end
+
     # プロキシがあっても pinning を要求していなければ従来どおり通す。
     def test_adapter_allows_proxy_without_pinning
       connection = PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
