@@ -30,6 +30,25 @@ module Ginseng
       # 落としても防げるものが無く相互 TLS が壊れるだけ。
       CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth].freeze
 
+      # ⚠⚠ **メソッドと body を保つリダイレクト (#569)。** それ以外は GET に
+      # 化ける（303 は仕様、301 / 302 は歴史的経緯）。⚠ body 付きメソッドに
+      # ついては **HTTParty 自身の `handle_redirection` と同じ規則**にしてある
+      # — 自前で追う経路だけ挙動が違うと、validator を足したせいで結果が
+      # 変わることになる。
+      KEEP_METHOD_STATUSES = [307, 308].freeze
+
+      # ⚠⚠ **HEAD は GET に化けさせない。** HTTParty は化けさせるが、ここは
+      # 従来から HEAD のまま追っており、テストもそれを見ている。
+      # 🔴 **`#head` はサイズのプリフライトに使われる** (mulukhiya-toot-proxy#4523)
+      # ので、リダイレクトの先で GET に化けると**本文を丸ごと取ってしまい、
+      # プリフライトの意味が消える**（max_bytes も効かせられない）。
+      # ⚠ POST を GET へ化けさせる理由は「撃ち直して安全とは限らない」ことなので、
+      # 安全かつ本文を持たない HEAD には当てはまらない（curl -I -L も HEAD のまま）。
+      SAFE_METHODS = [:get, :head].freeze
+
+      # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
+      NOT_MODIFIED = 304
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -51,7 +70,14 @@ module Ginseng
           location = redirect_location(response)
           return response unless location
           uri = create_uri(::URI.join(uri.to_s, location).to_s)
-          options = redirect_options(options, origin, uri)
+          # ⚠ **メソッドはホップごとに変わりうる (#569)。** GET / HEAD しか
+          # 通っていなかった頃は `method` が不変だったが、body 付きメソッドを
+          # 通すようになったので追従させる。
+          # ⚠⚠ **「メソッドを保つ」と「body を保つ」は別の条件。** 一緒にすると、
+          # GET に body を渡した呼び出しで**初段の body が撃ち直される**。
+          keep_body = KEEP_METHOD_STATUSES.include?(response.code)
+          method = :get unless keep_body || SAFE_METHODS.include?(method)
+          options = redirect_options(options, origin, uri, keep_body:)
         end
         raise GatewayError, "Too many redirects (#{limit})"
       end
@@ -70,8 +96,11 @@ module Ginseng
       # ⚠ **一度落ちたら戻らない。** 比較の相手は初段のオリジンで固定だが、
       # 落とした options を持ち回るので `A → B → A` と戻ってきても復活しない
       # （fail-closed 側に倒している）。
-      def redirect_options(options, origin, uri)
-        options = options.except(:query, :body)
+      def redirect_options(options, origin, uri, keep_body: false)
+        # ⚠ **body は 307 / 308 のときだけ持ち越す (#569)。** あれはメソッド
+        # ごと保つリダイレクトなので、落とすと**空の POST を撃つ**ことになる。
+        options = keep_body ? options.except(:query) : options.except(:query, :body)
+        rewind_body!(options[:body]) if keep_body
         return options if origin == origin_of(uri)
         # ⚠ ヘッダより先に落とす。`headers` が空でも資格情報オプションは
         # 残りうるので、ここで抜けると `basic_auth` が持ち越される (#568)。
@@ -90,7 +119,21 @@ module Ginseng
         return [uri.normalized_scheme, uri.normalized_host, uri.inferred_port]
       end
 
+      # ⚠⚠ **multipart の IO は前のホップで読み切っている (#569)。** 巻き戻さ
+      # ないと、307 / 308 の撃ち直しで**空のファイルを送る**。⚠ 文字列の body
+      # には巻き戻すものが無いので何もしない。
+      def rewind_body!(body)
+        return unless body.is_a?(Hash)
+        body.each_value {|v| v.rewind if v.respond_to?(:rewind)}
+      end
+
       def redirect_location(response)
+        # ⚠⚠ **304 はリダイレクトではない (#569)。** 3xx に入っているので
+        # `between?` だけだと拾ってしまい、Location 付きの 304 を**追ってしまう**。
+        # 🔴 HTTParty は `Net::HTTPNotModified` を明示的に除いているので、
+        # **validator を渡したときだけ結果が変わっていた**（実測: validator あり
+        # なら 200 と本文、validator 無しなら 304 と空）。
+        return nil if response.code == NOT_MODIFIED
         return nil unless response.code.between?(300, 399)
         location = response.headers['location']
         return nil unless location.present?
