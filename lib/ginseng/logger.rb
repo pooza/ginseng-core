@@ -72,12 +72,18 @@ module Ginseng
 
       # error はバックトレース展開があるので個別に定義している。ブロック形式と
       # severity の判定は下のループと同じ扱いにする。
+      #
+      # ⚠⚠ **backtrace は nil になりうる。** raise していない例外を渡す呼び方
+      # (`logger.error(StandardError.new('x'))`) があり、`create_message` 側は
+      # #518 で塞いである（`test_create_message_accepts_unraised_error`）のに
+      # ここだけ素で `each` を呼んでいて NoMethodError で**呼び出し側が落ちて
+      # いた**。⚠ ログを出そうとした側が落ちる型は #518 で踏んだのと同じ。
       def error(message = nil)
         return true unless error?
         message = yield if message.nil? && block_given?
         super(create_entry(message))
         return unless message.is_a?(StandardError)
-        message.backtrace.each do |entry|
+        message.backtrace&.each do |entry|
           super("  #{scrub(entry)}")
         end
       end

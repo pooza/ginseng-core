@@ -191,6 +191,24 @@ module Ginseng
       assert_not_include(body.keys, 'password')
     end
 
+    # ⚠⚠ **raise していない例外を error に渡すと、バックトレース展開が nil を
+    # each して NoMethodError を上げ、呼び出し側が落ちていた**（このコミット
+    # までの main で arg 形式が再現する。Codex P2）。⚠ `create_message` 側は
+    # #518 で塞いである（`test_create_message_accepts_unraised_error`）のに、
+    # 展開のほうが素通しだった。**1 行目は出ているので症状が原因から遠い。**
+    data('arg', false)
+    data('block', true)
+    def test_error_accepts_unraised_error(block_form)
+      error = StandardError.new('unraised')
+      captured = capture_syslog do
+        block_form ? @logger.error {error} : @logger.error(error)
+      end
+      body = JSON.parse(captured.first)
+
+      assert_equal(1, captured.size, 'バックトレースの行が出ないこと')
+      assert_equal('unraised', body['message'])
+    end
+
     # ⚠ ブロック形式は Syslog::Logger の既存インタフェース。必須引数にすると
     # `logger.warn {expensive}` が ArgumentError で落ちる (#499 の Codex P2)。
     data('debug', :debug)
