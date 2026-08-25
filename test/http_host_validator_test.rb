@@ -484,6 +484,40 @@ module Ginseng
       end
     end
 
+    # ⚠⚠ **`cookies:` も options 経由の資格情報 (#576)。**`Cookie` ヘッダ自体は
+    # CREDENTIAL_HEADERS で落ちるが、HTTParty は**呼び出しごとに**
+    # `options[:cookies]` を headers へ移すので、こちらが持ち回る options には
+    # 残ったままになり、**ヘッダを見る判定に一度も掛からない**。
+    def test_drops_cookies_option_on_cross_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => 'https://b.example/echo'})
+      WebMock.stub_request(:get, 'https://b.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        cookies: {session: 'SECRET'},
+        host_validator: public_hosts('a.example', 'b.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/exec') {|req| req.headers['Cookie'] == 'session=SECRET'}
+      assert_requested(:get, 'https://b.example/echo') {|req| req.headers['Cookie'].nil?}
+    end
+
+    # 同一オリジンでは落とさない。セッション付きの取得が壊れる。
+    def test_keeps_cookies_option_on_same_origin_redirect
+      WebMock.stub_request(:get, 'https://a.example/exec')
+        .to_return(status: 302, headers: {'Location' => '/echo'})
+      WebMock.stub_request(:get, 'https://a.example/echo').to_return(status: 200, body: 'ok')
+
+      @http.get(
+        'https://a.example/exec',
+        cookies: {session: 'SECRET'},
+        host_validator: public_hosts('a.example'),
+      )
+
+      assert_requested(:get, 'https://a.example/echo') {|req| req.headers['Cookie'] == 'session=SECRET'}
+    end
+
     # 同一オリジンでは落とさない。落とすと普通の Basic 認証付き取得が壊れる。
     def test_keeps_basic_auth_on_same_origin_redirect
       WebMock.stub_request(:get, 'https://a.example/exec')

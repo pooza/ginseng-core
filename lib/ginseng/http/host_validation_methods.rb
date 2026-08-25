@@ -28,7 +28,13 @@ module Ginseng
       # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
       # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
       # 落としても防げるものが無く相互 TLS が壊れるだけ。
-      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth].freeze
+      #
+      # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
+      # `CREDENTIAL_HEADERS` で落ちるが、HTTParty の `process_cookies` は
+      # **呼び出しごとに options[:cookies] を headers['cookie'] へ移す**ので、
+      # こちらが持ち回る options には `cookies:` が残ったままになり、
+      # **ヘッダを見る判定に一度も掛からない**（実測でホップ 2 まで届いていた）。
+      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
 
       # ⚠⚠ **メソッドと body を保つリダイレクト (#569)。** それ以外は GET に
       # 化ける（303 は仕様、301 / 302 は歴史的経緯）。⚠ body 付きメソッドに
