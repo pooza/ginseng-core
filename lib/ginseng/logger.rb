@@ -10,19 +10,21 @@ require 'addressable/uri'
 module Ginseng
   if Environment.win?
     class Logger
-      def info(message)
+      # ⚠ 実装側と同じシグネチャにしておく。必須引数のままだと
+      # `logger.info {expensive}` が Windows でだけ ArgumentError になる。
+      def info(message = nil)
       end
 
-      def error(message)
+      def error(message = nil)
       end
 
-      def debug(message)
+      def debug(message = nil)
       end
 
-      def warn(message)
+      def warn(message = nil)
       end
 
-      def fatal(message)
+      def fatal(message = nil)
       end
     end
   else
@@ -68,19 +70,25 @@ module Ginseng
         super
       end
 
-      def info(message)
-        super(create_entry(message))
-      end
-
-      def error(message)
+      # error はバックトレース展開があるので個別に定義している。ブロック形式と
+      # severity の判定は下のループと同じ扱いにする。
+      #
+      # ⚠⚠ **backtrace は nil になりうる。** raise していない例外を渡す呼び方
+      # (`logger.error(StandardError.new('x'))`) があり、`create_message` 側は
+      # #518 で塞いである（`test_create_message_accepts_unraised_error`）のに
+      # ここだけ素で `each` を呼んでいて NoMethodError で**呼び出し側が落ちて
+      # いた**。⚠ ログを出そうとした側が落ちる型は #518 で踏んだのと同じ。
+      def error(message = nil)
+        return true unless error?
+        message = yield if message.nil? && block_given?
         super(create_entry(message))
         return unless message.is_a?(StandardError)
-        message.backtrace.each do |entry|
+        message.backtrace&.each do |entry|
           super("  #{scrub(entry)}")
         end
       end
 
-      # ⚠ **info / error 以外の severity も create_message を通すこと** (#499)。
+      # ⚠ **すべての severity を create_message に通すこと** (#499)。
       # ここを空けておくと、`warn` を使った瞬間に出力が Hash#to_s へ戻り、
       # mask / mask_url（#478、pooza/mulukhiya-toot-proxy#4511）が丸ごと効かなく
       # なる。severity は syslog の重要度として正当な使い分けなので、呼び出し側を
@@ -91,7 +99,11 @@ module Ginseng
       # の severity メソッドは message 省略 + ブロックを受けるので、必須引数にすると
       # 既存の呼び出しが ArgumentError になる。severity が無効なときはブロックを
       # 評価しない（遅延の意味が失われる）。
-      [:debug, :warn, :fatal].each do |severity|
+      #
+      # ⚠⚠ **info もここに入れる。**#499 で 3 つだけ直したときに info / error が
+      # 残っており、**いちばん使われる 2 つでブロック形式が ArgumentError のまま**
+      # だった（`pooza/makoto2#107` の実機確認で発覚）。
+      [:debug, :info, :warn, :fatal].each do |severity|
         define_method(severity) do |message = nil, &block|
           return true unless send(:"#{severity}?")
           message = block.call if message.nil? && block
