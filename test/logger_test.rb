@@ -137,11 +137,60 @@ module Ginseng
       end
     end
 
-    # ⚠ mask / mask_url は Sentry の before_send 等から呼べるよう public (#580)。
+    # 🔴 **文字列の途中に埋まった URL もマスクされること (#582)。**
+    #
+    # `URL_PATTERN` は `\A` に錨があるので、**文字列全体が URL** でないと
+    # `mask_url` に届かなかった。ところがアプリは例外メッセージへ URL を埋める。
+    #
+    #   raise GatewayError, "Invalid feed #{id} (#{uri}) #{e.message}"
+    #
+    # ⚠ webhook の失敗はこの形で出るので、#580 を入れても**呼ばれないので
+    # 効かない**状態だった。
+    def test_create_message_masks_url_embedded_in_message
+      digest = 'fa9c541e163ff35ac49e12dd5ad71dc4e27876a3a5514f46d074e9b6f190652d'
+      error = GatewayError.new("Invalid feed x (https://precure.ml/mulukhiya/webhook/#{digest}) Bad response 404")
+
+      message = @logger.create_message(source: 'x', error:)
+
+      assert_not_include(message.to_json, digest)
+      assert_include(message.to_json, '[FILTERED]')
+      assert_include(message.to_json, 'Bad response 404', '診断に要る情報は残す')
+    end
+
+    # ⚠ 1 つの文字列に URL が 2 つあれば両方落ちること。
+    def test_create_message_masks_every_embedded_url
+      text = 'a https://x.example/?token=AAA and https://y.example/?token=BBB end.'
+
+      masked = @logger.create_message(text)
+
+      assert_not_include(masked, 'AAA')
+      assert_not_include(masked, 'BBB')
+    end
+
+    # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
+    # 閉じ括弧を落とすと、正当な URL が壊れる。
+    def test_create_message_keeps_parenthesized_url_intact
+      text = 'see https://en.wikipedia.org/wiki/Foo_(bar) for detail'
+
+      assert_equal(text, @logger.create_message(text))
+    end
+
+    # ⚠ 括弧で囲まれた URL の `)` は URL に食われないこと。
+    def test_create_message_does_not_eat_closing_paren
+      masked = @logger.create_message('x (https://z.example/?token=SECRET) y')
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, ') y', '閉じ括弧の外は残る')
+    end
+
+    # ⚠ mask / mask_url / mask_urls_in は Sentry の before_send 等から呼べるよう
+    # public (#580 / #582)。内部の判定ヘルパは private のまま。
     # 利用側で同等品を書かせると、マスク対象の列が 2 か所に分かれて必ずズレる。
     def test_mask_is_public
       assert_true(@logger.respond_to?(:mask))
       assert_true(@logger.respond_to?(:mask_url))
+      assert_true(@logger.respond_to?(:mask_urls_in))
+      assert_false(@logger.respond_to?(:mask_field?), '内部ヘルパは private のまま')
       assert_equal({message: 'a'}, @logger.mask(message: 'a', password: 'SECRET'))
       assert_not_include(@logger.mask_url('https://x.example/a?token=SECRET'), 'SECRET')
     end
