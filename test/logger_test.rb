@@ -83,6 +83,69 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
+    # 🔴 URL の**パスに埋まった**資格情報が落ちること (#580)。
+    #
+    # モロヘイヤの webhook は `POST /mulukhiya/webhook/{digest}` で、**パスその
+    # ものが資格情報**（digest を知っていれば誰でも投稿できる）。クエリと違い
+    # キー名で判定できないため、接頭辞を申告する形で落とす。
+    #
+    # ⚠ 例外経路ではなく、成功した POST のたびに漏れていた。tomato-shrieker の
+    # 本番では `{"method":"POST","url":".../mulukhiya/webhook/<digest>",
+    # "status":200}` が平文で syslog に出ていた（2026-08-25 の当日ログで 22 行）。
+    def test_create_message_masks_url_path_credentials
+      digest = 'fa9c541e163ff35ac49e12dd5ad71dc4e27876a3a5514f46d074e9b6f190652d'
+      message = @logger.create_message(
+        method: 'POST',
+        url: "https://precure.ml/mulukhiya/webhook/#{digest}",
+        status: 200,
+      )
+
+      assert_not_include(message[:url], digest)
+      assert_include(message[:url], '[FILTERED]')
+      assert_include(message[:url], 'https://precure.ml/mulukhiya/webhook/', '接頭辞は残す')
+    end
+
+    # ⚠ パスとクエリの両方に当たっても壊れないこと。片方の実装が他方の書き込みを
+    # 潰していないかを見る。
+    def test_create_message_masks_url_path_and_query
+      message = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/PATHSECRET?access_token=QUERYSECRET&x=1',
+      )
+
+      assert_not_include(message[:url], 'PATHSECRET')
+      assert_not_include(message[:url], 'QUERYSECRET')
+      assert_include(message[:url], 'x=1', '無関係なパラメータは残す')
+    end
+
+    # ⚠ 伏せるのは接頭辞の次の 1 セグメントだけ。以降のパスは残す。
+    def test_create_message_masks_only_one_path_segment
+      message = @logger.create_message(url: 'https://precure.ml/mulukhiya/webhook/SECRET/extra')
+
+      assert_not_include(message[:url], 'SECRET')
+      assert_include(message[:url], '/extra', '以降のパスは残す')
+    end
+
+    # ⚠⚠ **どのルールにも当たらない URL は 1 バイトも変えないこと。** 当たらない
+    # ときに parse → to_s で往復すると、正規化で URL が化ける後退が入る。
+    def test_create_message_keeps_untouched_url_identical
+      [
+        'https://matrix.org/blog/feed',
+        'https://www.youtube.com/feeds/videos.xml?channel_id=UCabc',
+        'https://synapse.b-shock.org/webhook',
+      ].each do |url|
+        assert_equal(url, @logger.create_message(url:)[:url])
+      end
+    end
+
+    # ⚠ mask / mask_url は Sentry の before_send 等から呼べるよう public (#580)。
+    # 利用側で同等品を書かせると、マスク対象の列が 2 か所に分かれて必ずズレる。
+    def test_mask_is_public
+      assert_true(@logger.respond_to?(:mask))
+      assert_true(@logger.respond_to?(:mask_url))
+      assert_equal({message: 'a'}, @logger.mask(message: 'a', password: 'SECRET'))
+      assert_not_include(@logger.mask_url('https://x.example/a?token=SECRET'), 'SECRET')
+    end
+
     # Misskey のトークンパラメータ `i` も落ちること。汎用名なので URL のクエリに
     # 限って判定している。
     def test_create_message_masks_misskey_token_param
