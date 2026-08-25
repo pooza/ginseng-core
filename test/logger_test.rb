@@ -180,6 +180,7 @@ module Ginseng
     data('warn', :warn)
     data('fatal', :fatal)
     data('info', :info)
+    data('error', :error)
     def test_severity_goes_through_create_message(severity)
       captured = capture_syslog {@logger.send(severity, url: 'https://example.com/?token=SECRET', password: 'hoge')}
       # JSON であること（Hash#to_s へ倒れていない）。
@@ -193,8 +194,10 @@ module Ginseng
     # ⚠ ブロック形式は Syslog::Logger の既存インタフェース。必須引数にすると
     # `logger.warn {expensive}` が ArgumentError で落ちる (#499 の Codex P2)。
     data('debug', :debug)
+    data('info', :info)
     data('warn', :warn)
     data('fatal', :fatal)
+    data('error', :error)
     def test_severity_accepts_block_form(severity)
       captured = capture_syslog {@logger.send(severity) {{url: 'https://example.com/?token=SECRET'}}}
       body = JSON.parse(captured.first)
@@ -205,8 +208,10 @@ module Ginseng
 
     # severity が無効ならブロックを評価しない（遅延の意味が失われる）。
     data('debug', :debug)
+    data('info', :info)
     data('warn', :warn)
     data('fatal', :fatal)
+    data('error', :error)
     def test_severity_skips_block_when_disabled(severity)
       called = false
       @logger.level = ::Logger::Severity::UNKNOWN
