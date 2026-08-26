@@ -185,6 +185,25 @@ module Ginseng
       assert_not_include(masked, 'BBB')
     end
 
+    # 🔴 **不正なバイト列で ArgumentError を上げないこと (#587)。**
+    #
+    # ⚠⚠ `mask_url` は #518 で塞いであるのに、その手前に置いた `mask_urls_in`
+    # が素通しだった。⚠ **利用側は public な `mask_urls_in` を Sentry の
+    # `before_send` から直接呼ぶ**（pooza/tomato-shrieker）ので、ここが上げると
+    # アプリ側に rescue を書かせることになる。
+    #
+    # ⚠ **scrub してから落とすこと。** 元の文字列をそのまま返すと URL の
+    # 資格情報が平文で残る。
+    def test_mask_urls_in_scrubs_broken_bytes
+      text = "https://x.example/?token=SECRET #{BROKEN_BYTES}"
+
+      masked = @logger.mask_urls_in(text)
+
+      assert_not_include(masked, 'SECRET', '壊れたバイト列があってもマスクは効くこと')
+      assert_include(masked, '[FILTERED]')
+      assert_predicate(masked, :valid_encoding?)
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
