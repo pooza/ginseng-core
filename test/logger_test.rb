@@ -61,6 +61,24 @@ module Ginseng
       )
     end
 
+    # 🔴 キーの大文字小文字で判定を変えないこと。`Authorization` は HTTP ヘッダの
+    # 綴りそのもので、config には小文字でしか並べられない。完全一致で見ていた
+    # ため素通りしていた（`pooza/makoto2` の v0.4.0 リリース前レビューで実測）。
+    def test_create_message_masks_mixed_case_keys
+      assert_equal(
+        {probe: 'mask'},
+        @logger.create_message(probe: 'mask', Token: 'SECRET-VALUE'),
+      )
+      assert_equal(
+        {probe: 'mask'},
+        @logger.create_message(probe: 'mask', TOKEN: 'SECRET-VALUE'),
+      )
+      assert_equal(
+        {probe: 'mask'},
+        @logger.create_message('probe' => 'mask', 'Password' => 'SECRET-VALUE'),
+      )
+    end
+
     def test_create_message_masks_nested_values
       assert_equal(
         {a: {b: {keep: 'y'}}},

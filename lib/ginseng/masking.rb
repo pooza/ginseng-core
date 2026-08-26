@@ -21,6 +21,17 @@ module Ginseng
       Addressable::URI::CharacterClasses::UNRESERVED,
     ).freeze
 
+    # Hash のキーに現れたら値ごと落とす資格情報の既定値。
+    # config の `/logger/mask_fields` で上書きできる。
+    #
+    # ⚠ **既定を空にしないこと。** 設定を書き忘れたアプリが守られる状態を既定に
+    # する（mask_query_params と同じ判断）。
+    MASK_FIELDS = [
+      'password',
+      'secret',
+      'token',
+    ].freeze
+
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
     # config の `/logger/mask_query_params` で上書きできる。
     MASK_QUERY_PARAMS = [
@@ -110,8 +121,29 @@ module Ginseng
       return url[0...-trailing.length], trailing
     end
 
+    # ⚠⚠ **キーの大文字小文字で判定を変えない。** `Authorization` は HTTP
+    # ヘッダの綴りそのもので、`:Token` / `"Password"` も普通に書かれる。完全一致
+    # で見ていたため、**config に小文字で並べたキーの大文字違いが素通り**して
+    # いた（`pooza/makoto2` の v0.4.0 リリース前レビューで実測。`:Token` /
+    # `:TOKEN` / `:Authorization` / `"Password"` が平文で出た）。
+    #
+    # ⚠ **同じ file の中で非対称だった** — `mask_query_param?` は元から
+    # `downcase` している。**片方だけ完全一致**は直し漏れとして読める。
     def mask_field?(key)
-      return @config['/logger/mask_fields'].include?(key.to_s)
+      return mask_fields.include?(key.to_s.downcase)
+    end
+
+    # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
+    # （mask_query_params / mask_url_paths と同じ扱い）。
+    def mask_fields
+      @mask_fields ||= begin
+        configured = begin
+          @config['/logger/mask_fields']
+        rescue ConfigError
+          nil
+        end
+        (configured || MASK_FIELDS).to_set {|v| v.to_s.downcase}
+      end
     end
 
     # URL のクエリに埋まった資格情報を落とす
