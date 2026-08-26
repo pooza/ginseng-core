@@ -103,6 +103,15 @@ module Ginseng
     def mask_urls_in(text)
       # ⚠ HTTP#log は毎リクエスト通る。当たらない文字列で走査しない。
       return text unless text.include?('://')
+      # ⚠⚠ **不正なバイト列は gsub の時点で ArgumentError を上げる (#518 / #587)。**
+      # ここで落とすと利用側が rescue を書くことになり、**マスクの正本を 1 か所に
+      # 保つ**という #580 の前提が崩れる（pooza/tomato-shrieker に実際に rescue が
+      # 生えていた）。
+      #
+      # 🔴 **mask_url のように「rescue して元の文字列を返す」にしないこと。**
+      # それだと URL の資格情報が平文で残る（v1.20.0 が実際にそうだった）。
+      # **scrub してからマスクする** — ログ経路（create_entry）と同じ倒し方。
+      text = text.scrub('?') unless text.valid_encoding?
       return text.gsub(URL_IN_TEXT_PATTERN) do |url|
         core, trailing = split_trailing_punctuation(url)
         "#{mask_url(core)}#{trailing}"
