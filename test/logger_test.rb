@@ -556,4 +556,35 @@ module Ginseng
       return captured
     end
   end
+
+  # ⚠⚠ **プラットフォームで分岐する差分を、片方でしか走らないテストで守らない
+  # (#602)。** LoggerTest は `disable?` で `win?` を見てクラスごと omit するので、
+  # Windows のスタブは元から 1 行も検査されていなかった。⚠ **このクラスは
+  # `disable?` を持たない** — どちらの分岐が定義されていても走る形にする。
+  class LoggerPlatformParityTest < TestCase
+    # `mask` / `mask_url` / `mask_urls_in` は **public として配っている** API
+    # (masking.rb の冒頭。Sentry の before_send から呼ばれる)。
+    def test_masking_is_public_on_every_platform
+      assert_include(Logger.ancestors, Masking)
+      [:mask, :mask_url, :mask_urls_in].each do |name|
+        assert_true(Logger.public_method_defined?(name), "Logger##{name} が public でない")
+      end
+    end
+
+    # ⚠ スタブに initialize が無いと、`Logger.new(name)` が Windows でだけ
+    # ArgumentError になっていた。
+    def test_accepts_optional_name
+      assert_nothing_raised {Logger.new}
+      assert_nothing_raised {Logger.new('probe')}
+    end
+
+    # ⚠ severity はブロック形式を殺さない（実装側と同じ）。
+    def test_severities_accept_block_form
+      logger = Logger.new
+
+      [:debug, :info, :warn, :error, :fatal].each do |severity|
+        assert_nothing_raised {logger.public_send(severity) {'probe'}}
+      end
+    end
+  end
 end
