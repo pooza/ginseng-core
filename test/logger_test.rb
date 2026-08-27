@@ -6,6 +6,9 @@ module Ginseng
     # (#518)。`{s: BROKEN_BYTES}.to_json` は JSON::GeneratorError を上げる。
     BROKEN_BYTES = "\xE3\x81ho"
 
+    # ⚠ 「設定に無い」と「設定に nil が入っている」を区別するための番兵。
+    ABSENT = Object.new.freeze
+
     def disable?
       return true if environment_class.win?
       return false
@@ -256,8 +259,12 @@ module Ginseng
       config = config_class.instance
       # ⚠ `/logger/mask_url_paths` は lib.yaml に無い（既定へ倒れる側）ので、
       # 読むと ConfigError。**在っても無くても戻せる形にする。**
+      #
+      # ⚠⚠ **元から無かったキーは nil を書き戻すのではなく消すこと（Codex P2）。**
+      # `Config` は singleton で、`keys` は値が nil の項も列挙する。nil を代入すると
+      # **後続のテストから `/logger/mask_url_paths` が「在る」ように見える**。
       original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
-        .to_h {|key| [key, (config[key] rescue nil)]}
+        .to_h {|key| [key, (config[key] rescue ABSENT)]}
       fields = original['/logger/mask_fields']
       params = original['/logger/mask_query_params']
 
@@ -276,7 +283,13 @@ module Ginseng
       assert_not_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
       assert_not_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
     ensure
-      original&.each {|key, value| config[key] = value}
+      original&.each do |key, value|
+        if value.equal?(ABSENT)
+          config.delete(key)
+        else
+          config[key] = value
+        end
+      end
     end
 
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
