@@ -79,6 +79,36 @@ module Ginseng
       )
     end
 
+    # 🔴 **設定へ足したキーが、走っているロガーに効くこと (#592)。**
+    #
+    # ⚠⚠ **`Config#reload` はテスト専用ではない** — アプリの UI から呼ばれる
+    # (`pooza/mulukhiya-toot-proxy` の `UIController`)。単純にメモ化すると、
+    # **マスク対象を足して reload したのに古い一覧のまま資格情報を出し続ける**
+    # ＝ 直したつもりで直っていない、という一番たちの悪い形になる。
+    #
+    # ⚠ **3 つとも同じ形でメモ化している**ので、まとめて見る。
+    def test_masking_lists_follow_the_configuration
+      config = config_class.instance
+      # ⚠ `/logger/mask_url_paths` は lib.yaml に無い（既定へ倒れる側）ので、
+      # 読むと ConfigError。**在っても無くても戻せる形にする。**
+      original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
+        .to_h {|key| [key, (config[key] rescue nil)]}
+      fields = original['/logger/mask_fields']
+      params = original['/logger/mask_query_params']
+
+      assert_equal({probe: 'mask', session: 'SECRET'}, @logger.create_message(probe: 'mask', session: 'SECRET'))
+
+      config['/logger/mask_fields'] = fields + ['session']
+      config['/logger/mask_query_params'] = params + ['session']
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', session: 'SECRET'))
+      assert_not_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
+      assert_not_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
+    ensure
+      original&.each {|key, value| config[key] = value}
+    end
+
     def test_create_message_masks_nested_values
       assert_equal(
         {a: {b: {keep: 'y'}}},

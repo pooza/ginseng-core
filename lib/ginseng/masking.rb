@@ -145,13 +145,8 @@ module Ginseng
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
     # （mask_query_params / mask_url_paths と同じ扱い）。
     def mask_fields
-      @mask_fields ||= begin
-        configured = begin
-          @config['/logger/mask_fields']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_FIELDS).to_set {|v| v.to_s.downcase}
+      return masking_list('/logger/mask_fields', MASK_FIELDS) do |values|
+        values.to_set {|v| v.to_s.downcase}
       end
     end
 
@@ -233,26 +228,41 @@ module Ginseng
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
     # （config の不備で資格情報が平文に戻るほうが事故が大きい）。
     def mask_query_params
-      @mask_query_params ||= begin
-        configured = begin
-          @config['/logger/mask_query_params']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_QUERY_PARAMS).to_set {|v| v.to_s.downcase}
+      return masking_list('/logger/mask_query_params', MASK_QUERY_PARAMS) do |values|
+        values.to_set {|v| v.to_s.downcase}
       end
     end
 
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない** (#580)。
     def mask_url_paths
-      @mask_url_paths ||= begin
-        configured = begin
-          @config['/logger/mask_url_paths']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_URL_PATHS).map(&:to_s)
+      return masking_list('/logger/mask_url_paths', MASK_URL_PATHS) do |values|
+        values.map(&:to_s)
       end
+    end
+
+    # マスク対象の一覧を組み立てる。**設定が無ければ既定へ倒す。**
+    #
+    # 🔴 **`Config#reload` に追随すること (#592)。** 単純にメモ化すると、**設定へ
+    # キーを足して reload したのに、走っているロガー（`Daemon` / `HTTP` などが
+    # 持ち回るもの）が古い一覧のまま資格情報を出し続ける**。⚠⚠ `Config#reload` は
+    # テスト専用ではなく、アプリの UI から呼ばれる
+    # (`pooza/mulukhiya-toot-proxy` の `UIController`)。
+    #
+    # ⚠ **毎回組み直さないこと。** `mask_field?` は**ログ 1 行のキーの数だけ**
+    # 呼ばれる。`@config[key]` の読み出しは #585 以前と同じコストなので毎回行い、
+    # **元になった配列が変わったときだけ**組み直す。
+    def masking_list(key, default)
+      configured = begin
+        @config[key]
+      rescue ConfigError
+        nil
+      end
+      source = configured || default
+      cached = (@masking_lists ||= {})[key]
+      return cached[:value] if cached && cached[:source] == source
+      value = yield(source)
+      @masking_lists[key] = {source: source, value: value}
+      return value
     end
 
     # ⚠⚠ **利用側が「ログと同じマスク」を別経路にも掛けられるように公開する
