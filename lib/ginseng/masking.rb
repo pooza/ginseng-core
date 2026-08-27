@@ -139,6 +139,32 @@ module Ginseng
 
     private
 
+    # 設定のリストを引く。設定が無ければ既定へ倒す。**マスクしない方向へは倒さない。**
+    #
+    # ⚠⚠ **メモ化を config の変更に追随させること (#592)。** `Config#reload` は
+    # テスト専用ではなく**アプリの UI から呼ばれる**（pooza/mulukhiya-toot-proxy の
+    # `ui_controller`）。単純な `||=` だと「マスク対象を足して reload した」のに
+    # **走っているロガーが古い一覧のまま資格情報を出し続ける** — 直したつもりで
+    # 直っていない、という一番たちの悪い形になる（Codex P2）。
+    #
+    # ⚠ **毎回作り直さないこと。** `mask_field?` はログ 1 行のキーの数だけ呼ばれる。
+    # `@config` の読み出しはメモ化前と同じコストなので、**元の配列が変わったときだけ**
+    # 作り直す。
+    def masking_list(key, default)
+      configured = begin
+        @config[key]
+      rescue ConfigError
+        nil
+      end
+      source = configured || default
+      @masking_lists ||= {}
+      cached = @masking_lists[key]
+      return cached.last if cached && cached.first == source
+      value = yield(source)
+      @masking_lists[key] = [source, value]
+      return value
+    end
+
     # ⚠ **`(` を含む URL の `)` は URL の一部。** 一律に切ると
     # `https://en.wikipedia.org/wiki/Foo_(bar)` が壊れる。開き括弧が無いときだけ
     # 閉じ括弧を落とす。
@@ -164,14 +190,7 @@ module Ginseng
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
     # （mask_query_params / mask_url_paths と同じ扱い）。
     def mask_fields
-      @mask_fields ||= begin
-        configured = begin
-          @config['/logger/mask_fields']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_FIELDS).to_set {|v| v.to_s.downcase}
-      end
+      return masking_list('/logger/mask_fields', MASK_FIELDS) {|v| v.to_set {|e| e.to_s.downcase}}
     end
 
     # URL のクエリに埋まった資格情報を落とす
@@ -252,26 +271,14 @@ module Ginseng
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
     # （config の不備で資格情報が平文に戻るほうが事故が大きい）。
     def mask_query_params
-      @mask_query_params ||= begin
-        configured = begin
-          @config['/logger/mask_query_params']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_QUERY_PARAMS).to_set {|v| v.to_s.downcase}
+      return masking_list('/logger/mask_query_params', MASK_QUERY_PARAMS) do |v|
+        v.to_set {|e| e.to_s.downcase}
       end
     end
 
     # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない** (#580)。
     def mask_url_paths
-      @mask_url_paths ||= begin
-        configured = begin
-          @config['/logger/mask_url_paths']
-        rescue ConfigError
-          nil
-        end
-        (configured || MASK_URL_PATHS).map(&:to_s)
-      end
+      return masking_list('/logger/mask_url_paths', MASK_URL_PATHS) {|v| v.map(&:to_s)}
     end
 
     # ⚠⚠ **利用側が「ログと同じマスク」を別経路にも掛けられるように公開する
