@@ -101,6 +101,25 @@ module Ginseng
     # のような**例外メッセージ**は素通りしていた。ログにも Sentry にも同じ形で
     # 出る（pooza/tomato-shrieker#1467）。
     def mask_urls_in(text)
+      # ⚠⚠ **ASCII 非互換なエンコーディングは `include?` の時点で落ちる (#591)。**
+      # UTF-16 / UTF-32 は `Encoding::CompatibilityError` を上げるので、走査より
+      # 先に UTF-8 へ寄せる（`Logger#scrub` と同じ倒し方）。
+      #
+      # 🔴 **ASCII 互換なものは変換しないこと。** `ASCII-8BIT` には妥当な UTF-8 が
+      # 入っていることがあり（Sequel / SQLite がこの形で返す。
+      # pooza/ginseng-fediverse#265）、`encode` に通すと**中身を潰す**。実測でも
+      # 落ちるのは ASCII 非互換のときだけだった（Shift_JIS / ASCII-8BIT は通る）。
+      unless text.encoding.ascii_compatible?
+        text = begin
+          text.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '?')
+        rescue EncodingError
+          # ⚠⚠ **dummy encoding には変換器が無い。** `UTF-7` / `ISO-2022-JP-2` は
+          # `invalid:` / `undef:` では救えず `ConverterNotFoundError` を上げる
+          # （Codex P2。実測で確認）。`Logger#scrub` と同じく、**バイト列を UTF-8 と
+          # みなして scrub する** — 中身は読みにくくなるが、**マスクは効く**。
+          text.dup.force_encoding(Encoding::UTF_8).scrub('?')
+        end
+      end
       # ⚠ HTTP#log は毎リクエスト通る。当たらない文字列で走査しない。
       return text unless text.include?('://')
       # ⚠⚠ **不正なバイト列は gsub の時点で ArgumentError を上げる (#518 / #587)。**
