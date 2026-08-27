@@ -1,0 +1,35 @@
+name: release
+
+# ⚠⚠ 手順の正本は ginseng-style の composite action 側。ここは薄いままにする
+# （pooza/ginseng-style#65。test.yml が ruby-check を呼んでいるのと同じ形）。
+#
+# ⚠ このリポジトリは mode: manual。**着手時にバンプする**ので、push で打つと
+# マイルストーンの 1 本目の PR が載った時点で出荷されてしまう。
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# ⚠⚠ タグを作るので書き込みが要る。既定の workflow 権限は read。
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # ⚠⚠ 「配布物を変えたのに version を上げていない」の判定は**タグとの差分**で
+          # 見る。浅いチェックアウトではタグにも履歴にも届かない。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pooza/ginseng-style/.github/actions/release-tag@v1.1.6
+        with:
+          mode: manual
+          # ⚠⚠ 既定は無い。**このリポジトリが配る中身**を列挙する。
+          paths: bin cert config images lib views ginseng-core.gemspec
+          token: ${{ github.token }}
