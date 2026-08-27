@@ -4,7 +4,7 @@ gemspec
 group :development do
   gem 'pp'
   gem 'ricecream'
-          gem 'test-unit'
+  gem 'test-unit'
   gem 'timecop'
   gem 'webmock'
 end
