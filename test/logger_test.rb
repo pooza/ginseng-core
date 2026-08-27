@@ -6,6 +6,9 @@ module Ginseng
     # (#518)。`{s: BROKEN_BYTES}.to_json` は JSON::GeneratorError を上げる。
     BROKEN_BYTES = "\xE3\x81ho"
 
+    # ⚠ 「設定に無い」と「設定に nil が入っている」を区別するための番兵。
+    ABSENT = Object.new.freeze
+
     def disable?
       return true if environment_class.win?
       return false
@@ -244,24 +247,48 @@ module Ginseng
       assert_include(masked.dup.force_encoding(Encoding::UTF_8), 'あいう', '中身を潰さないこと')
     end
 
-    # 🔴 **設定の変更に追随すること (#592)。**
+    # 🔴 **設定へ足したキーが、走っているロガーに効くこと (#592)。**
     #
-    # ⚠⚠ `Config#reload` はテスト専用ではなく**アプリの UI から呼ばれる**
-    # （pooza/mulukhiya-toot-proxy の `ui_controller`）。単純な `||=` だと
-    # 「マスク対象を足して reload した」のに**走っているロガーが古い一覧のまま**
-    # 資格情報を出し続ける。
-    def test_mask_follows_config_change
-      config = Config.instance
-      original = config['/logger/mask_fields']
-      begin
-        assert_include(@logger.create_message(probe: 'x', spam: 'SECRET').to_json, 'SECRET')
+    # ⚠⚠ **`Config#reload` はテスト専用ではない** — アプリの UI から呼ばれる
+    # (`pooza/mulukhiya-toot-proxy` の `UIController`)。単純にメモ化すると、
+    # **マスク対象を足して reload したのに古い一覧のまま資格情報を出し続ける**
+    # ＝ 直したつもりで直っていない、という一番たちの悪い形になる。
+    #
+    # ⚠ **3 つとも同じ形でメモ化している**ので、まとめて見る。
+    def test_masking_lists_follow_the_configuration
+      config = config_class.instance
+      # ⚠ `/logger/mask_url_paths` は lib.yaml に無い（既定へ倒れる側）ので、
+      # 読むと ConfigError。**在っても無くても戻せる形にする。**
+      #
+      # ⚠⚠ **元から無かったキーは nil を書き戻すのではなく消すこと（Codex P2）。**
+      # `Config` は singleton で、`keys` は値が nil の項も列挙する。nil を代入すると
+      # **後続のテストから `/logger/mask_url_paths` が「在る」ように見える**。
+      original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
+        .to_h {|key| [key, (config[key] rescue ABSENT)]}
+      fields = original['/logger/mask_fields']
+      params = original['/logger/mask_query_params']
 
-        config['/logger/mask_fields'] = original + ['spam']
+      assert_equal({probe: 'mask', session: 'SECRET'}, @logger.create_message(probe: 'mask', session: 'SECRET'))
+      # ⚠⚠ **メモを先に温めること。** URL を通さないまま config を変えると、
+      # `mask_query_params` / `mask_url_paths` は**変更後が初回**になり、
+      # メモ化したままでも通ってしまう ＝ 回帰を捕まえられない。
+      assert_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
+      assert_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
 
-        assert_not_include(@logger.create_message(probe: 'x', spam: 'SECRET').to_json, 'SECRET',
-          '足したキーが同じロガーで即座に効くこと')
-      ensure
-        config['/logger/mask_fields'] = original
+      config['/logger/mask_fields'] = fields + ['session']
+      config['/logger/mask_query_params'] = params + ['session']
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', session: 'SECRET'))
+      assert_not_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
+      assert_not_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
+    ensure
+      original&.each do |key, value|
+        if value.equal?(ABSENT)
+          config.delete(key)
+        else
+          config[key] = value
+        end
       end
     end
 
