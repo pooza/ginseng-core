@@ -110,7 +110,15 @@ module Ginseng
       # pooza/ginseng-fediverse#265）、`encode` に通すと**中身を潰す**。実測でも
       # 落ちるのは ASCII 非互換のときだけだった（Shift_JIS / ASCII-8BIT は通る）。
       unless text.encoding.ascii_compatible?
-        text = text.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '?')
+        text = begin
+          text.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '?')
+        rescue EncodingError
+          # ⚠⚠ **dummy encoding には変換器が無い。** `UTF-7` / `ISO-2022-JP-2` は
+          # `invalid:` / `undef:` では救えず `ConverterNotFoundError` を上げる
+          # （Codex P2。実測で確認）。`Logger#scrub` と同じく、**バイト列を UTF-8 と
+          # みなして scrub する** — 中身は読みにくくなるが、**マスクは効く**。
+          text.dup.force_encoding(Encoding::UTF_8).scrub('?')
+        end
       end
       # ⚠ HTTP#log は毎リクエスト通る。当たらない文字列で走査しない。
       return text unless text.include?('://')

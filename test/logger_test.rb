@@ -217,6 +217,21 @@ module Ginseng
       assert_include(masked, '[FILTERED]')
     end
 
+    # 🔴 **変換器が無いエンコーディングでも上げないこと (#591)。**
+    #
+    # ⚠⚠ `UTF-7` / `ISO-2022-JP-2` は dummy encoding で、`encode` が
+    # `ConverterNotFoundError` を上げる。⚠ `invalid:` / `undef:` では救えない。
+    def test_mask_urls_in_handles_encoding_without_converter
+      ['UTF-7', 'ISO-2022-JP-2'].each do |name|
+        text = 'https://x.example/?token=SECRET'.dup.force_encoding(Encoding.find(name))
+
+        masked = @logger.mask_urls_in(text)
+
+        assert_not_include(masked, 'SECRET', name)
+        assert_include(masked, '[FILTERED]', name)
+      end
+    end
+
     # 🔴 **ASCII 互換なものは変換しないこと。** `ASCII-8BIT` に妥当な UTF-8 が
     # 入っている形は実在する（pooza/ginseng-fediverse#265）。`encode` に通すと
     # ⚠⚠ **マスクは効くのに中身が `?` に潰れる**ので、後退として捕まえる。
