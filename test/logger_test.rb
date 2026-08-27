@@ -244,6 +244,27 @@ module Ginseng
       assert_include(masked.dup.force_encoding(Encoding::UTF_8), 'あいう', '中身を潰さないこと')
     end
 
+    # 🔴 **設定の変更に追随すること (#592)。**
+    #
+    # ⚠⚠ `Config#reload` はテスト専用ではなく**アプリの UI から呼ばれる**
+    # （pooza/mulukhiya-toot-proxy の `ui_controller`）。単純な `||=` だと
+    # 「マスク対象を足して reload した」のに**走っているロガーが古い一覧のまま**
+    # 資格情報を出し続ける。
+    def test_mask_follows_config_change
+      config = Config.instance
+      original = config['/logger/mask_fields']
+      begin
+        assert_include(@logger.create_message(probe: 'x', spam: 'SECRET').to_json, 'SECRET')
+
+        config['/logger/mask_fields'] = original + ['spam']
+
+        assert_not_include(@logger.create_message(probe: 'x', spam: 'SECRET').to_json, 'SECRET',
+          '足したキーが同じロガーで即座に効くこと')
+      ensure
+        config['/logger/mask_fields'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
