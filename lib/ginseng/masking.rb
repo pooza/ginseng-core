@@ -297,7 +297,7 @@ module Ginseng
     # 長さでも決められなかったのは、当たったうちの 1 つだけを選ぼうとしていたから）。
     def mask_url_secret_ranges(path)
       ranges = mask_url_prefix_ranges(path)
-      return ranges.filter_map do |range|
+      secrets = ranges.filter_map do |range|
         head = range.end
         tail = path.index('/', head) || path.length
         # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
@@ -306,6 +306,11 @@ module Ginseng
         next if ranges.any? {|v| v != range && v.begin < tail && head < v.end}
         head...tail
       end
+      # 🔴 **重複を落とす（Codex P2）。** 終わりが同じ接頭辞（設定 `/webhook/` と
+      # 既定 `/mulukhiya/webhook/`）は**同じセグメントを指す**。⚠⚠ 2 回置き換えると
+      # 元のパスの位置で長さの変わった文字列を切るので、`[FILTERED]LTERED]` のような
+      # 壊れた URL になり、秘密が長ければ後ろのパスまで消える。
+      return secrets.uniq
     end
 
     # パスに埋まった資格情報を落としたパスを返す。落とすものが無ければ nil (#580)。

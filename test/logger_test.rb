@@ -477,6 +477,31 @@ module Ginseng
       end
     end
 
+    # 🔴 **同じセグメントを 2 回置き換えない（Codex P2）。**
+    #
+    # ⚠⚠ **終わりが同じ接頭辞は、伏せる範囲も同じになる。** 設定 `/webhook/` と
+    # 既定 `/mulukhiya/webhook/` は `/mulukhiya/webhook/ABC/tail` のどちらも
+    # `ABC` を指すので、そのまま 2 回置き換えると**元のパスの位置で置き換わって**
+    # `[FILTERED]LTERED]` のような壊れた URL になり、秘密が長ければ後ろのパスが
+    # 消える。
+    def test_masks_a_secret_shared_by_two_prefixes
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/SECRET/tail',
+      )[:url]
+
+      assert_equal('https://precure.ml/mulukhiya/webhook/[FILTERED]/tail', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
