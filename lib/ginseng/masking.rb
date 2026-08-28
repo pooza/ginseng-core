@@ -303,16 +303,35 @@ module Ginseng
     # ⚠ 同じ接頭辞の出現は同じ具体度なので、優先も抑制もしない。
     def mask_url_secret_ranges(path)
       ranges = mask_url_prefix_ranges(path)
+      # ⚠ 接頭辞ごとの出現位置（昇順）。重なりの検査で毎回なめないため。
+      starts = ranges.group_by(&:first).transform_values {|v| v.map {|_, r| r.begin}}
       secrets = ranges.filter_map do |prefix, range|
         head = range.end
         tail = path.index('/', head) || path.length
         # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
         # など）なら、その接頭辞だけを飛ばす。
         next if tail <= head
-        next if ranges.any? {|v, r| v != prefix && r.begin < tail && head < r.end}
+        next if overlapping_prefix?(starts, prefix, head, tail)
         head...tail
       end
       return merge_ranges(secrets)
+    end
+
+    # `[head, tail)` に重なる**別の**接頭辞の出現があるか。
+    #
+    # 🔴 **総なめにしない（Codex P2）。** 同じ接頭辞が k 回出る URL では
+    # `v != prefix` が全部外れるので毎回最後まで走り、**ログ 1 行が O(k²) になる**
+    # （実測: `/hook/x` を 3,200 回並べた 22KB の URL で **0.48 秒**）。⚠ URL は
+    # 例外メッセージ経由で外から長さを選べる。
+    #
+    # ⚠ 出現位置は昇順なので二分探索で足りる。重なる条件は
+    # `出現位置 ∈ (head - 接頭辞の長さ, tail)`。
+    def overlapping_prefix?(starts, prefix, head, tail)
+      return starts.any? do |other, indexes|
+        next false if other == prefix
+        index = indexes.bsearch {|v| v > head - other.length}
+        index && index < tail
+      end
     end
 
     # 重なる範囲を畳む。
