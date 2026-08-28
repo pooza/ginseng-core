@@ -528,6 +528,30 @@ module Ginseng
       end
     end
 
+    # 🔴 **落とせない接頭辞に、他の接頭辞を止めさせない（Codex P1・5 巡目）。**
+    #
+    # 設定 `/webhook/special/` は `/mulukhiya/webhook/special/` に当たるが、
+    # **次のセグメントが無い**ので何も伏せない。⚠⚠ それが既定
+    # `/mulukhiya/webhook/` の「次の 1 セグメント」を止めていたので、**どちらも
+    # 伏せない**形になっていた。抑制してよいのは、**自分が実際に伏せる**接頭辞だけ。
+    def test_an_empty_match_does_not_suppress_another_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/',
+      )[:url]
+
+      assert_equal('https://precure.ml/mulukhiya/webhook/[FILTERED]/', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact

@@ -302,17 +302,24 @@ module Ginseng
     # 両方の出現が互いを打ち消し、**1 つも伏せない**（ランダムな URL を通して実測）。
     # ⚠ 同じ接頭辞の出現は同じ具体度なので、優先も抑制もしない。
     def mask_url_secret_ranges(path)
-      ranges = mask_url_prefix_ranges(path)
-      # ⚠ 接頭辞ごとの出現位置（昇順）。重なりの検査で毎回なめないため。
-      starts = ranges.group_by(&:first).transform_values {|v| v.map {|_, r| r.begin}}
-      secrets = ranges.filter_map do |prefix, range|
+      # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
+      # など）なら、その接頭辞だけを飛ばす。
+      #
+      # 🔴 **抑制してよいのは、自分が実際に伏せる接頭辞だけ（Codex P1）。** 次が
+      # 空の当たりに他の接頭辞を止めさせると、**どちらも伏せない**形ができる
+      # （設定 `/webhook/special/` ＋ `/mulukhiya/webhook/special/` で実測）。
+      # ⚠ だから、重なりを見る前に「伏せるものがある当たり」だけに絞る。
+      candidates = mask_url_prefix_ranges(path).filter_map do |prefix, range|
         head = range.end
         tail = path.index('/', head) || path.length
-        # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
-        # など）なら、その接頭辞だけを飛ばす。
         next if tail <= head
-        next if overlapping_prefix?(starts, prefix, head, tail)
-        head...tail
+        [prefix, range.begin, head...tail]
+      end
+      # ⚠ 接頭辞ごとの出現位置（昇順）。重なりの検査で毎回なめないため。
+      starts = candidates.group_by(&:first).transform_values {|v| v.map {|_, i, _| i}}
+      secrets = candidates.filter_map do |prefix, _index, secret|
+        next if overlapping_prefix?(starts, prefix, secret.begin, secret.end)
+        secret
       end
       return merge_ranges(secrets)
     end
