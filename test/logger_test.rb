@@ -188,6 +188,45 @@ module Ginseng
       assert_not_include(masked, 'BBB')
     end
 
+    # 🔴 **IPv6 リテラルをホストに持つ URL もマスクされること (#601)。**
+    #
+    # `URL_IN_TEXT_PATTERN` の除外文字クラスに `[` と `]` が入っていたため、
+    # `https://` の先へ進めず**一致そのものが起きなかった**。⚠⚠ `mask` は全ての
+    # 文字列を `mask_urls_in` に通すので、`token` / `session` が平文で残っていた。
+    def test_create_message_masks_url_with_ipv6_literal
+      [
+        'https://[::1]/?token=SECRET',
+        'https://[2001:db8::1]:8080/a?token=SECRET&x=1',
+      ].each do |url|
+        masked = @logger.create_message(url:)[:url]
+
+        assert_not_include(masked, 'SECRET', url)
+        assert_include(masked, '[FILTERED]', url)
+      end
+    end
+
+    # ⚠ 文字列の**途中**に埋まった形でも拾うこと（例外メッセージ経路）。
+    def test_create_message_masks_embedded_ipv6_url
+      masked = @logger.create_message('connect failed https://[::1]/?token=SECRET retry')
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, 'https://[::1]/', 'ホストは残す')
+      assert_include(masked, 'retry', '後続の文字列は残す')
+    end
+
+    # ⚠⚠ **範囲を広げる修正は、広げすぎの回帰を呼ぶ。** 角括弧を許すのは**ホストの
+    # 直後だけ**で、Markdown のリンクや `[...]` で括った形はこれまでどおり切れること。
+    def test_create_message_keeps_bracketed_url_boundaries
+      {
+        '[text](https://example.com/?token=SECRET)' =>
+          '[text](https://example.com/?token=[FILTERED])',
+        'see [https://example.com/?token=SECRET] here' =>
+          'see [https://example.com/?token=[FILTERED]] here',
+      }.each do |input, expected|
+        assert_equal(expected, @logger.create_message(input))
+      end
+    end
+
     # 🔴 **不正なバイト列で ArgumentError を上げないこと (#587)。**
     #
     # ⚠⚠ `mask_url` は #518 で塞いであるのに、その手前に置いた `mask_urls_in`
