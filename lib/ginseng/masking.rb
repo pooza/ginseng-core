@@ -261,22 +261,51 @@ module Ginseng
       return mask_url_prefixes(value).any?
     end
 
-    # 当たった接頭辞を**秘密に近い順**に並べる（Codex P1 ×2）。
-    #
-    # ⚠⚠ **既定と設定を合成するようになったので、複数の接頭辞が同時に当たる。**
-    # 🔴 **並び順でも長さでも決められない:**
-    #
-    # | 選び方 | 壊れる例（設定 ＋ 既定 `/mulukhiya/webhook/`） |
-    # | --- | --- |
-    # | `find`（並び順） | `/mulukhiya/webhook/special/` — 既定が前に立って `special` を伏せる |
-    # | 長さ | `/webhook/special/`（17 文字） — 既定（19 文字）が勝って `special` を伏せる |
-    #
-    # ⚠⚠ **重なる接頭辞は、同じ位置から始まるとは限らない。** 伏せたいのは
-    # **接頭辞の次の 1 セグメント**なので、**終わりが後ろにあるもの**＝秘密の直前で
-    # 終わるものを採る。⚠ 同じ位置で終わるなら長いほうを採る。
+    # 当たった接頭辞。⚠ 既定と設定を合成するので、1 本の URL に複数当たる。
     def mask_url_prefixes(value)
       return mask_url_paths.select {|v| value.include?(v)}
-          .sort_by {|v| [-(value.index(v) + v.length), -v.length]}
+    end
+
+    # 当たった接頭辞が占める範囲。⚠ **同じ接頭辞が 2 回出ることもある。**
+    def mask_url_prefix_ranges(value)
+      return mask_url_prefixes(value).flat_map do |prefix|
+        ranges = []
+        offset = 0
+        while (index = value.index(prefix, offset))
+          ranges.push(index...(index + prefix.length))
+          offset = index + 1
+        end
+        ranges
+      end
+    end
+
+    # 伏せる 1 セグメントの範囲を、当たった接頭辞ごとに集める（Codex P1 ×3）。
+    #
+    # ⚠⚠ **当たった接頭辞は全部落とす。** 1 つ目で切り上げると、
+    # `/hook/SECRET1/mulukhiya/webhook/SECRET2` で既定の側だけが伏さり、
+    # **合成前は設定 `/hook/` が伏せていた `SECRET1` が平文で残る** ＝
+    # 「マスクしない方向へは倒さない」が破れる。
+    #
+    # 🔴 **ただし、他の接頭辞と重なるセグメントは伏せない。** 重なる接頭辞は
+    # 同じ位置から始まるとは限らず、伏せる位置がずれると**秘密のほうが残る**:
+    #
+    # | 例（設定 `/webhook/special/` ＋ 既定 `/mulukhiya/webhook/`） | 重なり |
+    # | --- | --- |
+    # | `/mulukhiya/webhook/special/SECRET` | 既定の次の 1 セグメントは `special` ＝ 設定の接頭辞の一部 |
+    #
+    # ⚠ この規則は対称なので、**どちらを先に見ても結果が変わらない**（並び順でも
+    # 長さでも決められなかったのは、当たったうちの 1 つだけを選ぼうとしていたから）。
+    def mask_url_secret_ranges(path)
+      ranges = mask_url_prefix_ranges(path)
+      return ranges.filter_map do |range|
+        head = range.end
+        tail = path.index('/', head) || path.length
+        # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
+        # など）なら、その接頭辞だけを飛ばす。
+        next if tail <= head
+        next if ranges.any? {|v| v != range && v.begin < tail && head < v.end}
+        head...tail
+      end
     end
 
     # パスに埋まった資格情報を落としたパスを返す。落とすものが無ければ nil (#580)。
@@ -289,17 +318,12 @@ module Ginseng
     # ⚠ **伏せるのは接頭辞の次の 1 セグメントだけ。** 以降のパスは残す。
     def masked_url_path(uri)
       path = uri.path
-      # ⚠ **落とせない接頭辞で諦めないこと。** 当たっても次が空（`/webhook/` で
-      # 終わる URL など）なら、次の候補を見る。1 つ目で `nil` を返すと、**当たる
-      # 接頭辞が他にあるのに素通りする**。
-      mask_url_prefixes(path).each do |prefix|
-        head, _, rest = path.partition(prefix)
-        next if rest.empty?
-        secret, slash, tail = rest.partition('/')
-        next if secret.empty?
-        return "#{head}#{prefix}#{FILTERED}#{slash}#{tail}"
-      end
-      return nil
+      ranges = mask_url_secret_ranges(path)
+      return nil if ranges.empty?
+      masked = path.dup
+      # ⚠ **後ろから置き換える。** 前から置き換えると、残りの範囲の位置がずれる。
+      ranges.sort_by {|v| -v.begin}.each {|v| masked[v] = FILTERED}
+      return masked
     end
 
     # クエリに埋まった資格情報を落とした query 配列を返す。無ければ nil。

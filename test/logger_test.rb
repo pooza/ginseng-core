@@ -433,6 +433,50 @@ module Ginseng
       end
     end
 
+    # 🔴 **当たった接頭辞は、全部落とすこと（Codex P1・3 巡目）。**
+    #
+    # ⚠⚠ **合成にしたことで、1 本の URL に既定と設定の接頭辞が同時に当たる。**
+    # 1 つ目で `return` すると、**合成前は伏せられていた側が平文で残る** —
+    # 「マスクしない方向へは倒さない」という #586 の約束がそこで破れる。
+    def test_masks_every_matching_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/SECRET1/mulukhiya/webhook/SECRET2',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET1', '設定の接頭辞で伏せていた側を残さない')
+      assert_not_include(masked, 'SECRET2')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # ⚠ **同じ接頭辞が 2 回出ることもある。** 1 つ目だけ伏せると残りが平文で出る。
+    def test_masks_every_occurrence_of_a_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/SECRET1/x/hook/SECRET2',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET1')
+      assert_not_include(masked, 'SECRET2')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
