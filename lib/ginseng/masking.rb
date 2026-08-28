@@ -266,13 +266,14 @@ module Ginseng
       return mask_url_paths.select {|v| value.include?(v)}
     end
 
-    # 当たった接頭辞が占める範囲。⚠ **同じ接頭辞が 2 回出ることもある。**
+    # 当たった接頭辞が占める範囲を `[接頭辞, 範囲]` で返す。
+    # ⚠ **同じ接頭辞が 2 回出ることもある**（重なって出ることもある）。
     def mask_url_prefix_ranges(value)
       return mask_url_prefixes(value).flat_map do |prefix|
         ranges = []
         offset = 0
         while (index = value.index(prefix, offset))
-          ranges.push(index...(index + prefix.length))
+          ranges.push([prefix, index...(index + prefix.length)])
           offset = index + 1
         end
         ranges
@@ -295,22 +296,41 @@ module Ginseng
     #
     # ⚠ この規則は対称なので、**どちらを先に見ても結果が変わらない**（並び順でも
     # 長さでも決められなかったのは、当たったうちの 1 つだけを選ぼうとしていたから）。
+    #
+    # 🔴 **重なりを見るのは「別の接頭辞」だけ。** 同じ接頭辞どうしで重なりを見ると、
+    # `/hook/hook/SECRET/` のように**セグメントが接頭辞と同じ綴りの URL** で
+    # 両方の出現が互いを打ち消し、**1 つも伏せない**（ランダムな URL を通して実測）。
+    # ⚠ 同じ接頭辞の出現は同じ具体度なので、優先も抑制もしない。
     def mask_url_secret_ranges(path)
       ranges = mask_url_prefix_ranges(path)
-      secrets = ranges.filter_map do |range|
+      secrets = ranges.filter_map do |prefix, range|
         head = range.end
         tail = path.index('/', head) || path.length
         # ⚠ **落とせない接頭辞で諦めないこと。** 次が空（`/webhook/` で終わる URL
         # など）なら、その接頭辞だけを飛ばす。
         next if tail <= head
-        next if ranges.any? {|v| v != range && v.begin < tail && head < v.end}
+        next if ranges.any? {|v, r| v != prefix && r.begin < tail && head < r.end}
         head...tail
       end
-      # 🔴 **重複を落とす（Codex P2）。** 終わりが同じ接頭辞（設定 `/webhook/` と
-      # 既定 `/mulukhiya/webhook/`）は**同じセグメントを指す**。⚠⚠ 2 回置き換えると
-      # 元のパスの位置で長さの変わった文字列を切るので、`[FILTERED]LTERED]` のような
-      # 壊れた URL になり、秘密が長ければ後ろのパスまで消える。
-      return secrets.uniq
+      return merge_ranges(secrets)
+    end
+
+    # 重なる範囲を畳む。
+    #
+    # 🔴 **同じ範囲を 2 回置き換えると URL が壊れる（Codex P2）。** 終わりが同じ
+    # 接頭辞（設定 `/webhook/` と既定 `/mulukhiya/webhook/`）は**同じセグメントを
+    # 指す**ので、そのまま 2 回置き換えると元のパスの位置で長さの変わった文字列を
+    # 切ることになり、`[FILTERED]LTERED]` のような形になる（⚠ 秘密が長ければ
+    # 後ろのパスが消える）。
+    def merge_ranges(ranges)
+      return ranges.sort_by(&:begin).each_with_object([]) do |range, merged|
+        last = merged.last
+        if last && range.begin < last.end
+          merged[-1] = last.begin...[last.end, range.end].max
+        else
+          merged.push(range)
+        end
+      end
     end
 
     # パスに埋まった資格情報を落としたパスを返す。落とすものが無ければ nil (#580)。

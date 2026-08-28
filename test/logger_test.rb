@@ -502,6 +502,32 @@ module Ginseng
       end
     end
 
+    # 🔴 **同じ接頭辞どうしで打ち消し合わないこと。**
+    #
+    # ⚠⚠ 「他の接頭辞と重なるセグメントは伏せない」を**同じ接頭辞にも当てると、
+    # 1 つも伏せない URL ができる。** `/hook/hook/SECRET/tail` は `/hook/` が
+    # 0 と 5 の 2 か所に当たり、互いの「次の 1 セグメント」を打ち消す。⚠ **秘密が
+    # 接頭辞と同じ綴りだったときに素通りする**形（ランダムな URL を通して実測）。
+    #
+    # ⚠ 同じ接頭辞の出現は同じ具体度なので、優先も抑制もしない ＝ 両方伏せる。
+    def test_masks_a_secret_spelled_like_the_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/hook/SECRET/tail',
+      )[:url]
+
+      assert_equal('https://precure.ml/hook/[FILTERED]/[FILTERED]/tail', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
