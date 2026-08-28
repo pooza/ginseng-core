@@ -380,7 +380,51 @@ module Ginseng
       )[:url]
 
       assert_not_include(masked, 'SECRET')
-      assert_include(masked, '/mulukhiya/webhook/special/', '長いほうの接頭辞は残す')
+      assert_include(masked, '/mulukhiya/webhook/special/', '秘密の直前で終わる接頭辞を残す')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **重なる接頭辞は、同じ位置から始まるとは限らない（Codex P1・2 巡目）。**
+    #
+    # ⚠⚠ **長さでは決められない。** 設定の `/webhook/special/`（17 文字）より
+    # 既定の `/mulukhiya/webhook/`（19 文字）のほうが長いので、長さで選ぶと
+    # **`special` を伏せて秘密を残す**。**終わりが後ろにあるもの**を採る。
+    def test_masks_the_prefix_nearest_to_the_secret
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/SECRET',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, '/mulukhiya/webhook/special/')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # ⚠ **落とせない接頭辞で諦めないこと。** 秘密に一番近い接頭辞の次が空でも、
+    # **当たる接頭辞が他にあれば落とす**。1 つ目で nil を返すと素通りする。
+    def test_falls_through_to_the_next_matching_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/x/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/SECRET/x/',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
     ensure
       if original.equal?(ABSENT)
         config.delete('/logger/mask_url_paths')

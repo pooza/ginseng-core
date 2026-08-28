@@ -258,16 +258,25 @@ module Ginseng
     def mask_url_candidate?(value)
       return false unless value.match?(URL_PATTERN)
       return true if value.include?('?')
-      return !mask_url_prefix(value).nil?
+      return mask_url_prefixes(value).any?
     end
 
-    # ⚠⚠ **当たった中で最も長いものを採る（Codex P1）。** 既定と設定を合成する
-    # ようになったので、**入れ子の接頭辞が同時に並びうる**。`find` だと並び順で
-    # 決まり、既定の `/mulukhiya/webhook/` が設定の
-    # `/mulukhiya/webhook/special/` を隠して、**伏せる 1 セグメントがずれる**
-    # ＝ 資格情報がそのまま残る（実測）。⚠ 長いほうが「より具体的な申告」。
-    def mask_url_prefix(value)
-      return mask_url_paths.select {|v| value.include?(v)}.max_by(&:length)
+    # 当たった接頭辞を**秘密に近い順**に並べる（Codex P1 ×2）。
+    #
+    # ⚠⚠ **既定と設定を合成するようになったので、複数の接頭辞が同時に当たる。**
+    # 🔴 **並び順でも長さでも決められない:**
+    #
+    # | 選び方 | 壊れる例（設定 ＋ 既定 `/mulukhiya/webhook/`） |
+    # | --- | --- |
+    # | `find`（並び順） | `/mulukhiya/webhook/special/` — 既定が前に立って `special` を伏せる |
+    # | 長さ | `/webhook/special/`（17 文字） — 既定（19 文字）が勝って `special` を伏せる |
+    #
+    # ⚠⚠ **重なる接頭辞は、同じ位置から始まるとは限らない。** 伏せたいのは
+    # **接頭辞の次の 1 セグメント**なので、**終わりが後ろにあるもの**＝秘密の直前で
+    # 終わるものを採る。⚠ 同じ位置で終わるなら長いほうを採る。
+    def mask_url_prefixes(value)
+      return mask_url_paths.select {|v| value.include?(v)}
+          .sort_by {|v| [-(value.index(v) + v.length), -v.length]}
     end
 
     # パスに埋まった資格情報を落としたパスを返す。落とすものが無ければ nil (#580)。
@@ -280,12 +289,17 @@ module Ginseng
     # ⚠ **伏せるのは接頭辞の次の 1 セグメントだけ。** 以降のパスは残す。
     def masked_url_path(uri)
       path = uri.path
-      return nil unless (prefix = mask_url_prefix(path))
-      head, _, rest = path.partition(prefix)
-      return nil if rest.empty?
-      secret, slash, tail = rest.partition('/')
-      return nil if secret.empty?
-      return "#{head}#{prefix}#{FILTERED}#{slash}#{tail}"
+      # ⚠ **落とせない接頭辞で諦めないこと。** 当たっても次が空（`/webhook/` で
+      # 終わる URL など）なら、次の候補を見る。1 つ目で `nil` を返すと、**当たる
+      # 接頭辞が他にあるのに素通りする**。
+      mask_url_prefixes(path).each do |prefix|
+        head, _, rest = path.partition(prefix)
+        next if rest.empty?
+        secret, slash, tail = rest.partition('/')
+        next if secret.empty?
+        return "#{head}#{prefix}#{FILTERED}#{slash}#{tail}"
+      end
+      return nil
     end
 
     # クエリに埋まった資格情報を落とした query 配列を返す。無ければ nil。
