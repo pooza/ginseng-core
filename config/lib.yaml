@@ -1,5 +1,5 @@
 package:
-  version: 1.23.0
+  version: 1.23.1
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -31,10 +31,21 @@ line:
     api: https://api.line.me
   to: U00
 logger:
+  # ログに出す Hash の「キー名」で落とすもの。⚠ 利用側の
+  # `/logger/mask_fields` は**この既定に足す**（減らせない。#586）。
+  #
+  # ⚠⚠ `code` / `i` / `key` は入れない — クエリのパラメータ名としては資格情報だが、
+  # **Hash のキーとしては無関係な値が普通に入る**（mask_query_params との差はここ）。
   mask_fields:
+    - access_token
+    - api_key
+    - apikey
+    - authorization
+    - client_secret
     - password
-    - token
+    - refresh_token
     - secret
+    - token
   # URL のクエリに現れたら [FILTERED] へ落とすパラメータ
   # (pooza/mulukhiya-toot-proxy#4511)。mask_fields はキー名でしか判定できないので、
   # 値の文字列に埋まった資格情報はこちらで落とす。

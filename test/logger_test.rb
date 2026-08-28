@@ -292,6 +292,78 @@ module Ginseng
       end
     end
 
+    # 🔴 **mask_fields が mask_query_params より狭かった (#586)。**
+    #
+    # URL のクエリに `access_token=` が出れば落ちるのに、Hash のキーが
+    # `access_token:` だと素通りしていた。⚠ **同じ資格情報が、通り道によって
+    # 守られたり守られなかったりする**状態だった。
+    def test_create_message_masks_credential_fields
+      [
+        :access_token, :api_key, :apikey, :authorization, :client_secret,
+        :password, :refresh_token, :secret, :token,
+        # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
+        :Authorization, :Access_Token, :TOKEN
+      ].each do |key|
+        message = @logger.create_message(probe: 'mask', key => 'S3CRET')
+
+        assert_equal({probe: 'mask'}, message, key.to_s)
+      end
+    end
+
+    # ⚠⚠ **クエリと同じ広さにはしない (#586)。** `code` / `i` / `key` はクエリの
+    # パラメータ名としては資格情報だが、**Hash のキーとしては無関係な値が普通に
+    # 入る**。広げすぎると診断に要る値まで消える。
+    def test_create_message_keeps_generic_fields
+      message = @logger.create_message(code: 404, key: 'name', i: 3)
+
+      assert_equal({code: 404, key: 'name', i: 3}, message)
+    end
+
+    # 🔴 **設定は既定を置き換えない。既定と合成する (#586)。**
+    #
+    # ⚠⚠ **上書きだったころ、広げた既定はどこにも届かなかった** — 利用側 3 本とも
+    # 自前で列挙しており、`tomato-shrieker` は列挙しなおしたときに既定の `token` を
+    # 落としていた（2026-08-28 の実測）。ここでその形を再現して押さえる。
+    def test_masking_lists_merge_with_defaults
+      config = config_class.instance
+      original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
+        .to_h {|key| [key, (config[key] rescue ABSENT)]}
+
+      # ⚠ `tomato-shrieker` の実際の設定の形（`token` が無い）。
+      config['/logger/mask_fields'] = ['password', 'secret', 'auth']
+      config['/logger/mask_query_params'] = ['session']
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', token: 'SECRET'),
+        '既定の token が設定で消えないこと')
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', auth: 'SECRET'),
+        '設定で足したキーは効くこと')
+      # ⚠ 設定にも config/lib.yaml にも無いので、**MASK_FIELDS の既定だけ**が根拠。
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', authorization: 'SECRET'),
+        'MASK_FIELDS へ足した既定が効くこと')
+      masked = @logger.create_message(url: 'https://example.com/?token=SECRET&session=SECRET')[:url]
+
+      assert_not_include(masked, 'SECRET', '既定と設定の両方が効くこと')
+      assert_not_include(
+        @logger.create_message(url: 'https://precure.ml/mulukhiya/webhook/SECRET/x')[:url],
+        'SECRET',
+        '既定の接頭辞が設定で消えないこと',
+      )
+      assert_not_include(
+        @logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url],
+        'SECRET',
+        '設定で足した接頭辞は効くこと',
+      )
+    ensure
+      original&.each do |key, value|
+        if value.equal?(ABSENT)
+          config.delete(key)
+        else
+          config[key] = value
+        end
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact

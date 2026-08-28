@@ -22,18 +22,35 @@ module Ginseng
     ).freeze
 
     # Hash のキーに現れたら値ごと落とす資格情報の既定値。
-    # config の `/logger/mask_fields` で上書きできる。
+    # config の `/logger/mask_fields` で**足せる**（⚠ 減らせない。masking_list 参照）。
     #
     # ⚠ **既定を空にしないこと。** 設定を書き忘れたアプリが守られる状態を既定に
     # する（mask_query_params と同じ判断）。
+    #
+    # 🔴 **mask_query_params より狭かった (#586)。** URL のクエリに
+    # `access_token=` が出れば落ちるのに、Hash のキーが `access_token:` だと
+    # 素通りしていた。**同じ資格情報が、通り道によって守られたり守られなかったり
+    # する**状態だった。
+    #
+    # ⚠⚠ **`code` / `i` / `key` は入れない。** クエリのパラメータ名としては
+    # 資格情報だが、**Hash のキーとしては無関係な値が普通に入る**（`key` は
+    # 汎用名、`code` はステータスコードやエラーコード）。クエリと同じ広さが
+    # 正しいとは限らない。
     MASK_FIELDS = [
+      'access_token',
+      'api_key',
+      'apikey',
+      # ⚠ HTTP ヘッダの綴りそのもので、資格情報以外の用途が無い。
+      'authorization',
+      'client_secret',
       'password',
+      'refresh_token',
       'secret',
       'token',
     ].freeze
 
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
-    # config の `/logger/mask_query_params` で上書きできる。
+    # config の `/logger/mask_query_params` で**足せる**（⚠ 減らせない）。
     MASK_QUERY_PARAMS = [
       'access_token',
       'api_key',
@@ -49,7 +66,7 @@ module Ginseng
     ].freeze
 
     # URL の**パス**に現れたら次の 1 セグメントを落とす接頭辞の既定値。
-    # config の `/logger/mask_url_paths` で上書きできる (#580)。
+    # config の `/logger/mask_url_paths` で**足せる**（⚠ 減らせない）(#580)。
     #
     # ⚠⚠ **クエリと違い、パスは「キー名」で判定できない。** モロヘイヤの
     # webhook は `POST /mulukhiya/webhook/{digest}` で **パスそのものが
@@ -139,7 +156,15 @@ module Ginseng
 
     private
 
-    # 設定のリストを引く。設定が無ければ既定へ倒す。**マスクしない方向へは倒さない。**
+    # 設定のリストを引く。⚠⚠ **設定は既定を置き換えない。既定と合成する (#586)。**
+    #
+    # 🔴 **上書きだったころ、広げた既定はどこにも届かなかった。** 2026-08-28 の
+    # 実測では利用側 3 本とも `/logger/mask_fields` を自前で列挙しており、
+    # **`tomato-shrieker` は既定にある `token` を落としていた**（列挙しなおした
+    # ときに漏れた）。⚠ 設定は「足すもの」であって、**マスクを外す手段ではない**。
+    #
+    # ⚠ 既定から外したいものが出たら、**この gem の既定を直す**（利用側の 1 本の
+    # 都合で全体のマスクを緩めない）。
     #
     # ⚠⚠ **メモ化を config の変更に追随させること (#592)。** `Config#reload` は
     # テスト専用ではなく**アプリの UI から呼ばれる**（pooza/mulukhiya-toot-proxy の
@@ -156,12 +181,14 @@ module Ginseng
       rescue ConfigError
         nil
       end
-      source = configured || default
       @masking_lists ||= {}
       cached = @masking_lists[key]
-      return cached.last if cached && cached.first == source
-      value = yield(source)
-      @masking_lists[key] = [source, value]
+      # ⚠ **memo の鍵は合成後ではなく設定そのもの。** 合成を毎回作ると
+      # `mask_field?` の呼び出し（ログ 1 行のキーの数だけ走る）ごとに配列を
+      # 割り当てることになる。
+      return cached.last if cached && cached.first == configured
+      value = yield(configured ? default | Array(configured).map(&:to_s) : default)
+      @masking_lists[key] = [configured, value]
       return value
     end
 
@@ -187,7 +214,7 @@ module Ginseng
       return mask_fields.include?(key.to_s.downcase)
     end
 
-    # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
+    # ⚠ 設定は既定と**合成**する。**マスクしない方向へは倒さない**
     # （mask_query_params / mask_url_paths と同じ扱い）。
     def mask_fields
       return masking_list('/logger/mask_fields', MASK_FIELDS) {|v| v.to_set {|e| e.to_s.downcase}}
@@ -268,7 +295,7 @@ module Ginseng
       return mask_query_params.include?(key.to_s.downcase)
     end
 
-    # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない**
+    # ⚠ 設定は既定と**合成**する。**マスクしない方向へは倒さない**
     # （config の不備で資格情報が平文に戻るほうが事故が大きい）。
     def mask_query_params
       return masking_list('/logger/mask_query_params', MASK_QUERY_PARAMS) do |v|
@@ -276,7 +303,7 @@ module Ginseng
       end
     end
 
-    # 設定が無い場合は既定のリストへ倒す。**マスクしない方向へは倒さない** (#580)。
+    # ⚠ 設定は既定と**合成**する。**マスクしない方向へは倒さない** (#580)。
     def mask_url_paths
       return masking_list('/logger/mask_url_paths', MASK_URL_PATHS) {|v| v.map(&:to_s)}
     end
