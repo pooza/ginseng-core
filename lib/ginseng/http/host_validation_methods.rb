@@ -125,9 +125,19 @@ module Ginseng
         return [uri.normalized_scheme, uri.normalized_host, uri.inferred_port]
       end
 
-      # ⚠⚠ **multipart の IO は前のホップで読み切っている (#569)。** 巻き戻さ
-      # ないと、307 / 308 の撃ち直しで**空のファイルを送る**。⚠ 文字列の body
-      # には巻き戻すものが無いので何もしない。
+      # 撃ち直す前に body の IO を先頭へ戻す (#569)。⚠ 文字列の body には巻き
+      # 戻すものが無いので何もしない。
+      #
+      # 🔴 **「巻き戻さないと空のファイルを送る」は、いまは成り立たない (#603)。**
+      # ⚠⚠ **実測で HTTParty 自身が巻き戻していた** — `request/body.rb` の
+      # `content_body` が `file.read` のあと `file.rewind` を呼び、
+      # `request/streaming_multipart_body.rb` の `#rewind` も各 part を戻す
+      # （`>= 0.24.0` の全域で確認）。**この行を消しても撃ち直しの本文は揃う。**
+      #
+      # ⚠ **それでも残すのは、上流の実装詳細に寄りかからないため。** 巻き戻しを
+      # HTTParty に任せると、**向こうが止めた日に静かに空の本文を送る**ことに
+      # なる。⚠⚠ **この行の効きは出力では測れない**ので、テストは
+      # `redirect_options` の契約（撃ち直す前に巻き戻す）を直接押さえている。
       def rewind_body!(body)
         return unless body.is_a?(Hash)
         body.each_value {|v| v.rewind if v.respond_to?(:rewind)}
