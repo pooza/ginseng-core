@@ -104,6 +104,39 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
+    # 🔴 **URL の userinfo に埋まったパスワードが落ちること (#589)。**
+    #
+    # ⚠⚠ **同じ URL のクエリは落ちるのに、隣にあるパスワードは平文で残っていた。**
+    # DSN（`postgres://` / `amqp://` / `redis://`）は接続失敗の例外メッセージに
+    # 載るので、`@logger.error(error: e)` の経路でそのままログへ出る。
+    def test_create_message_masks_url_userinfo
+      {
+        'postgres://app:S3CRET@db.internal/mydb' => 'app',
+        'amqp://guest:S3CRET@mq:5672/' => 'guest',
+        # ⚠ **ユーザ名が空の形**（redis の既定）も拾うこと。
+        'redis://:S3CRET@redis:6379/0' => nil,
+      }.each do |url, user|
+        masked = @logger.create_message(url:)[:url]
+
+        assert_not_include(masked, 'S3CRET', url)
+        assert_include(masked, '[FILTERED]', url)
+        assert_include(masked, user, 'ユーザ名は診断に要るので残す') if user
+      end
+    end
+
+    # ⚠ userinfo とクエリの両方に当たっても壊れないこと。片方の書き込みが他方を
+    # 潰していないかを見る（パスとクエリの組み合わせと同じ形）。
+    def test_create_message_masks_url_userinfo_and_query
+      message = @logger.create_message(
+        url: 'https://user:USERSECRET@example.com/x?token=QUERYSECRET&x=1',
+      )
+
+      assert_not_include(message[:url], 'USERSECRET')
+      assert_not_include(message[:url], 'QUERYSECRET')
+      assert_include(message[:url], 'user:', 'ユーザ名は残す')
+      assert_include(message[:url], 'x=1', '無関係なパラメータは残す')
+    end
+
     # 🔴 URL の**パスに埋まった**資格情報が落ちること (#580)。
     #
     # モロヘイヤの webhook は `POST /mulukhiya/webhook/{digest}` で、**パスその
@@ -153,6 +186,10 @@ module Ginseng
         'https://matrix.org/blog/feed',
         'https://www.youtube.com/feeds/videos.xml?channel_id=UCabc',
         'https://synapse.b-shock.org/webhook',
+        # ⚠ userinfo の判定で巻き込まないこと (#589)。パスワードの無いユーザ名と、
+        # `@` を持たないポート指定。
+        'https://user@example.com/x',
+        'http://example.com:8080/path',
       ].each do |url|
         assert_equal(url, @logger.create_message(url:)[:url])
       end
