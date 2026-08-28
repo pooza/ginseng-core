@@ -696,8 +696,13 @@ module Ginseng
       assert_not_requested(:get, 'http://169.254.169.254/meta')
     end
 
-    # ⚠⚠ **multipart の IO は前のホップで読み切っている。** 巻き戻さないと
-    # 307 の撃ち直しで**空のファイルを送る**。
+    # 307 の撃ち直しでも本文が揃っていること。
+    #
+    # ⚠⚠ **このテストは `rewind_body!` を押さえていない (#603)。** 外しても緑の
+    # まま通る（実測: 53 tests / 0 failures）— **実際に巻き戻しているのは
+    # HTTParty** だから。⚠ ここで見ているのは「撃ち直しの本文が空でない」という
+    # 外から見える性質だけで、**誰が巻き戻したかは問わない**。
+    # `rewind_body!` そのものは `test_redirect_options_rewinds_body` が押さえる。
     def test_upload_rewinds_file_on_temporary_redirect
       WebMock.stub_request(:post, 'https://a.example/up')
         .to_return(status: 307, headers: {'Location' => 'https://b.example/up'})
@@ -712,6 +717,48 @@ module Ginseng
       end
 
       assert_requested(:post, 'https://b.example/up') {|req| req.body.include?('CONTENTS')}
+    end
+
+    # 🔴 **撃ち直す前に body の IO を巻き戻すこと (#603)。**
+    #
+    # ⚠⚠ **出力では測れない。** HTTParty も自分で巻き戻すので、「撃ち直した本文が
+    # 空でない」を見るテストは `rewind_body!` を外しても緑のまま通る。⚠ ここで
+    # 押さえるのは `redirect_options` の契約そのもの — **上流が巻き戻しを止めた
+    # 日に、こちらが黙って空の本文を送らない**ための行。
+    def test_redirect_options_rewinds_body
+      probe = StringIO.new('CONTENTS')
+      probe.read
+      uri = @http.send(:create_uri, 'https://a.example/up')
+
+      options = @http.send(
+        :redirect_options,
+        {body: {file: probe}},
+        @http.send(:origin_of, uri),
+        uri,
+        keep_body: true,
+      )
+
+      assert_equal(0, probe.pos, '撃ち直す前に先頭へ戻すこと')
+      assert_same(probe, options.dig(:body, :file), 'body そのものは差し替えないこと')
+    end
+
+    # ⚠ メソッドごと変わるリダイレクト（303 など）では body を落とす。巻き戻す
+    # 相手も無い。
+    def test_redirect_options_drops_body_unless_method_is_kept
+      probe = StringIO.new('CONTENTS')
+      probe.read
+      uri = @http.send(:create_uri, 'https://a.example/up')
+
+      options = @http.send(
+        :redirect_options,
+        {body: {file: probe}},
+        @http.send(:origin_of, uri),
+        uri,
+        keep_body: false,
+      )
+
+      assert_not_include(options, :body)
+      assert_equal(8, probe.pos, '落とす body は巻き戻さないこと')
     end
 
     # ⚠⚠ **304 はリダイレクトではない。** 3xx に入っているので `between?` だけ

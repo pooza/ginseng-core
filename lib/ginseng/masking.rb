@@ -81,10 +81,30 @@ module Ginseng
 
     URL_PATTERN = %r{\A[a-z][a-z0-9+.-]*://}i
 
+    # userinfo にパスワードを持つ URL (#589)。⚠ `://` から最初の `/` までの間に
+    # `:` と `@` が並ぶ形だけを見る。`https://user@example.com`（パスワード無し）と
+    # `http://example.com:8080/`（ポート）を巻き込まないため。
+    URL_USERINFO_PATTERN = %r{\A[a-z][a-z0-9+.-]*://[^/?\#@]*:[^/?\#@]*@}i
+
     # 文字列の**途中**に埋まった URL を拾う (#582)。⚠ URL_PATTERN と違って錨が
     # 無い。アプリは `"Invalid feed #{id} (#{uri}) ..."` のように例外メッセージへ
     # URL を埋めるので、そこを拾えないと資格情報が素通りする。
-    URL_IN_TEXT_PATTERN = %r{[a-z][a-z0-9+.-]*://[^\s<>"'`\\^{}|\[\]]+}i
+    #
+    # 🔴 **角括弧はホストの位置でだけ許す (#601)。** 一律に除外していたため
+    # `https://[::1]/?token=SECRET` は**一致そのものが起きず**、IPv6 リテラルの
+    # URL だけマスクを素通りしていた。⚠⚠ **一律に許すと行き過ぎて食う** —
+    # Markdown の `[text](url)` や `[url]` で括った形が壊れる。
+    #
+    # ⚠⚠ **userinfo を飛ばしてからホストを見ること（Codex P1）。** `://` の直後に
+    # 角括弧を要求すると、`https://user:pass@[::1]/?token=SECRET` は
+    # **`https://user:pass@` だけ**に一致して `[` で切れ、**クエリが mask_url に
+    # 届かない**（実測でトークンが残った）。
+    URL_IN_TEXT_PATTERN = %r{
+      [a-z][a-z0-9+.-]*://
+      (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
+      (?:\[[0-9a-f:.]+\] | [^\s<>"'`\\^{}|\[\]])
+      [^\s<>"'`\\^{}|\[\]]*
+    }ix
 
     # URL の末尾に付きがちで、URL 本体ではないことが多い文字。
     TRAILING_PUNCTUATION = /[).,;:!?]+\z/
@@ -235,13 +255,15 @@ module Ginseng
     def mask_url(value)
       return value unless mask_url_candidate?(value)
       uri = Addressable::URI.parse(value)
-      # ⚠ **どちらか一方でも当たれば書き出す。** 当たらなければ元の文字列を
+      # ⚠ **どれか一つでも当たれば書き出す。** 当たらなければ元の文字列を
       # そのまま返す。正規化で URL が化ける後退を入れないため。
       path = masked_url_path(uri)
       query = masked_url_query(uri)
-      return value unless path || query
+      password = masked_url_password(uri)
+      return value unless path || query || password
       uri.path = path if path
       uri.query_values = query if query
+      uri.password = password if password
       # path= / query_values= は値を percent-encode するので、目印の角括弧が
       # `%5BFILTERED%5D` になってログが読みにくい。自分で入れた目印だけ戻す。
       return uri.to_s.gsub(FILTERED_ENCODED, FILTERED)
@@ -258,6 +280,8 @@ module Ginseng
     def mask_url_candidate?(value)
       return false unless value.match?(URL_PATTERN)
       return true if value.include?('?')
+      # ⚠ `@` を含む URL は珍しいので、`include?` で足切りしてから正規表現へ (#589)。
+      return true if value.include?('@') && value.match?(URL_USERINFO_PATTERN)
       return mask_url_prefixes(value).any?
     end
 
@@ -375,6 +399,19 @@ module Ginseng
       # ⚠ **後ろから置き換える。** 前から置き換えると、残りの範囲の位置がずれる。
       ranges.sort_by {|v| -v.begin}.each {|v| masked[v] = FILTERED}
       return masked
+    end
+
+    # userinfo に埋まったパスワードを落とす。無ければ nil (#589)。
+    #
+    # 🔴 **同じ URL のクエリは落ちるのに、隣にあるパスワードが平文で残っていた。**
+    # `postgres://app:S3CRET@db/mydb` のような DSN は例外メッセージに載る
+    # （`Sequel.connect` の失敗を `@logger.error(error: e)` で出す経路）。
+    #
+    # ⚠⚠ **ユーザ名は落とさない。** ユーザ名は診断に要るうえ、資格情報はパスワードの
+    # ほう。⚠ `redis://:S3CRET@redis:6379/0` のように**ユーザ名が空**の形も拾う。
+    def masked_url_password(uri)
+      return nil if uri.password.blank?
+      return FILTERED
     end
 
     # クエリに埋まった資格情報を落とした query 配列を返す。無ければ nil。

@@ -104,6 +104,39 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
+    # 🔴 **URL の userinfo に埋まったパスワードが落ちること (#589)。**
+    #
+    # ⚠⚠ **同じ URL のクエリは落ちるのに、隣にあるパスワードは平文で残っていた。**
+    # DSN（`postgres://` / `amqp://` / `redis://`）は接続失敗の例外メッセージに
+    # 載るので、`@logger.error(error: e)` の経路でそのままログへ出る。
+    def test_create_message_masks_url_userinfo
+      {
+        'postgres://app:S3CRET@db.internal/mydb' => 'app',
+        'amqp://guest:S3CRET@mq:5672/' => 'guest',
+        # ⚠ **ユーザ名が空の形**（redis の既定）も拾うこと。
+        'redis://:S3CRET@redis:6379/0' => nil,
+      }.each do |url, user|
+        masked = @logger.create_message(url:)[:url]
+
+        assert_not_include(masked, 'S3CRET', url)
+        assert_include(masked, '[FILTERED]', url)
+        assert_include(masked, user, 'ユーザ名は診断に要るので残す') if user
+      end
+    end
+
+    # ⚠ userinfo とクエリの両方に当たっても壊れないこと。片方の書き込みが他方を
+    # 潰していないかを見る（パスとクエリの組み合わせと同じ形）。
+    def test_create_message_masks_url_userinfo_and_query
+      message = @logger.create_message(
+        url: 'https://user:USERSECRET@example.com/x?token=QUERYSECRET&x=1',
+      )
+
+      assert_not_include(message[:url], 'USERSECRET')
+      assert_not_include(message[:url], 'QUERYSECRET')
+      assert_include(message[:url], 'user:', 'ユーザ名は残す')
+      assert_include(message[:url], 'x=1', '無関係なパラメータは残す')
+    end
+
     # 🔴 URL の**パスに埋まった**資格情報が落ちること (#580)。
     #
     # モロヘイヤの webhook は `POST /mulukhiya/webhook/{digest}` で、**パスその
@@ -153,6 +186,10 @@ module Ginseng
         'https://matrix.org/blog/feed',
         'https://www.youtube.com/feeds/videos.xml?channel_id=UCabc',
         'https://synapse.b-shock.org/webhook',
+        # ⚠ userinfo の判定で巻き込まないこと (#589)。パスワードの無いユーザ名と、
+        # `@` を持たないポート指定。
+        'https://user@example.com/x',
+        'http://example.com:8080/path',
       ].each do |url|
         assert_equal(url, @logger.create_message(url:)[:url])
       end
@@ -186,6 +223,50 @@ module Ginseng
 
       assert_not_include(masked, 'AAA')
       assert_not_include(masked, 'BBB')
+    end
+
+    # 🔴 **IPv6 リテラルをホストに持つ URL もマスクされること (#601)。**
+    #
+    # `URL_IN_TEXT_PATTERN` の除外文字クラスに `[` と `]` が入っていたため、
+    # `https://` の先へ進めず**一致そのものが起きなかった**。⚠⚠ `mask` は全ての
+    # 文字列を `mask_urls_in` に通すので、`token` / `session` が平文で残っていた。
+    def test_create_message_masks_url_with_ipv6_literal
+      [
+        'https://[::1]/?token=SECRET',
+        'https://[2001:db8::1]:8080/a?token=SECRET&x=1',
+        # ⚠⚠ **userinfo を飛ばしてからホストを見ること（Codex P1）。** `://` の
+        # 直後に角括弧を要求すると `https://user:pw@` だけに一致して `[` で切れ、
+        # **クエリが mask_url に届かない**。
+        'https://user:pw@[::1]/?token=SECRET',
+        'https://user@[2001:db8::1]:8080/?token=SECRET',
+      ].each do |url|
+        masked = @logger.create_message(url:)[:url]
+
+        assert_not_include(masked, 'SECRET', url)
+        assert_include(masked, '[FILTERED]', url)
+      end
+    end
+
+    # ⚠ 文字列の**途中**に埋まった形でも拾うこと（例外メッセージ経路）。
+    def test_create_message_masks_embedded_ipv6_url
+      masked = @logger.create_message('connect failed https://[::1]/?token=SECRET retry')
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, 'https://[::1]/', 'ホストは残す')
+      assert_include(masked, 'retry', '後続の文字列は残す')
+    end
+
+    # ⚠⚠ **範囲を広げる修正は、広げすぎの回帰を呼ぶ。** 角括弧を許すのは**ホストの
+    # 直後だけ**で、Markdown のリンクや `[...]` で括った形はこれまでどおり切れること。
+    def test_create_message_keeps_bracketed_url_boundaries
+      {
+        '[text](https://example.com/?token=SECRET)' =>
+          '[text](https://example.com/?token=[FILTERED])',
+        'see [https://example.com/?token=SECRET] here' =>
+          'see [https://example.com/?token=[FILTERED]] here',
+      }.each do |input, expected|
+        assert_equal(expected, @logger.create_message(input))
+      end
     end
 
     # 🔴 **不正なバイト列で ArgumentError を上げないこと (#587)。**
@@ -814,6 +895,72 @@ module Ginseng
       end
       yield
       return captured
+    end
+  end
+
+  # ⚠⚠ **プラットフォームで分岐する差分を、片方でしか走らないテストで守らない
+  # (#602 / #604)。** LoggerTest は `disable?` で `win?` を見てクラスごと omit し、
+  # **CI は `ubuntu-latest` しか回さない**ので、Windows のスタブは元から 1 行も
+  # 検査されていなかった。⚠⚠ **`disable?` を足すだけでは足りない** — Linux では
+  # そもそも Windows のクラスが定義されず、テストは緑のまま通り抜ける。
+  #
+  # ⚠ `WindowsLogger` は `win?` の外で定義してあるので、**ここではどの環境でも
+  # 実物を直に叩ける**（分岐に依存しない）。
+  class LoggerPlatformParityTest < TestCase
+    # `mask` / `mask_url` / `mask_urls_in` は **public として配っている** API
+    # (masking.rb の冒頭。Sentry の before_send から呼ばれる)。
+    MASKING_METHODS = [:mask, :mask_url, :mask_urls_in].freeze
+    SEVERITIES = [:debug, :info, :warn, :error, :fatal].freeze
+
+    def test_masking_is_public_on_windows
+      assert_include(WindowsLogger.ancestors, Masking)
+
+      MASKING_METHODS.each do |name|
+        assert_true(WindowsLogger.public_method_defined?(name), "WindowsLogger##{name} が public でない")
+      end
+    end
+
+    def test_masking_is_public_on_the_current_platform
+      assert_include(Logger.ancestors, Masking)
+
+      MASKING_METHODS.each do |name|
+        assert_true(Logger.public_method_defined?(name), "Logger##{name} が public でない")
+      end
+    end
+
+    # ⚠ **include しただけでは足りない。** Masking は include する側が `@config`
+    # を持つことを要求しているので、実際にマスクが効くところまで見る。
+    def test_windows_logger_masks
+      logger = WindowsLogger.new('probe')
+
+      assert_equal({probe: 'mask'}, logger.mask(probe: 'mask', password: 'SECRET-VALUE'))
+      assert_not_include(logger.mask_url('https://example.com/?access_token=SECRET-VALUE'), 'SECRET-VALUE')
+    end
+
+    # ⚠ スタブに initialize が無いと、`Logger.new(name)` が Windows でだけ
+    # ArgumentError になっていた。
+    def test_accepts_optional_name
+      assert_nothing_raised {WindowsLogger.new}
+      assert_nothing_raised {WindowsLogger.new('probe')}
+      assert_nothing_raised {Logger.new}
+      assert_nothing_raised {Logger.new('probe')}
+    end
+
+    # ⚠ severity はブロック形式を殺さない（実装側と同じ）。
+    def test_severities_accept_block_form
+      [WindowsLogger.new, Logger.new].each do |logger|
+        SEVERITIES.each do |severity|
+          assert_nothing_raised {logger.public_send(severity) {'probe'}}
+        end
+      end
+    end
+
+    # ⚠⚠ **差し替えが配線されていること。** 上の 2 本は「両方のクラスが正しい」
+    # ことしか見ないので、`Logger` がどちらを指すかはここで押さえる。
+    def test_windows_branch_is_wired
+      return assert_same(WindowsLogger, Logger) if Environment.win?
+
+      assert_operator(Logger, :<, Syslog::Logger)
     end
   end
 end
