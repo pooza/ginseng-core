@@ -373,6 +373,266 @@ module Ginseng
       end
     end
 
+    # 🔴 **mask_fields が mask_query_params より狭かった (#586)。**
+    #
+    # URL のクエリに `access_token=` が出れば落ちるのに、Hash のキーが
+    # `access_token:` だと素通りしていた。⚠ **同じ資格情報が、通り道によって
+    # 守られたり守られなかったりする**状態だった。
+    def test_create_message_masks_credential_fields
+      [
+        :access_token, :api_key, :apikey, :authorization, :client_secret,
+        :password, :refresh_token, :secret, :token,
+        # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
+        :Authorization, :Access_Token, :TOKEN
+      ].each do |key|
+        message = @logger.create_message(probe: 'mask', key => 'S3CRET')
+
+        assert_equal({probe: 'mask'}, message, key.to_s)
+      end
+    end
+
+    # ⚠⚠ **クエリと同じ広さにはしない (#586)。** `code` / `i` / `key` はクエリの
+    # パラメータ名としては資格情報だが、**Hash のキーとしては無関係な値が普通に
+    # 入る**。広げすぎると診断に要る値まで消える。
+    def test_create_message_keeps_generic_fields
+      message = @logger.create_message(code: 404, key: 'name', i: 3)
+
+      assert_equal({code: 404, key: 'name', i: 3}, message)
+    end
+
+    # 🔴 **設定は既定を置き換えない。既定と合成する (#586)。**
+    #
+    # ⚠⚠ **上書きだったころ、広げた既定はどこにも届かなかった** — 利用側 3 本とも
+    # 自前で列挙しており、`tomato-shrieker` は列挙しなおしたときに既定の `token` を
+    # 落としていた（2026-08-28 の実測）。ここでその形を再現して押さえる。
+    def test_masking_lists_merge_with_defaults
+      config = config_class.instance
+      original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
+        .to_h {|key| [key, (config[key] rescue ABSENT)]}
+
+      # ⚠ `tomato-shrieker` の実際の設定の形（`token` が無い）。
+      config['/logger/mask_fields'] = ['password', 'secret', 'auth']
+      config['/logger/mask_query_params'] = ['session']
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', token: 'SECRET'),
+        '既定の token が設定で消えないこと')
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', auth: 'SECRET'),
+        '設定で足したキーは効くこと')
+      # ⚠ 設定にも config/lib.yaml にも無いので、**MASK_FIELDS の既定だけ**が根拠。
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', authorization: 'SECRET'),
+        'MASK_FIELDS へ足した既定が効くこと')
+      masked = @logger.create_message(url: 'https://example.com/?token=SECRET&session=SECRET')[:url]
+
+      assert_not_include(masked, 'SECRET', '既定と設定の両方が効くこと')
+      assert_not_include(
+        @logger.create_message(url: 'https://precure.ml/mulukhiya/webhook/SECRET/x')[:url],
+        'SECRET',
+        '既定の接頭辞が設定で消えないこと',
+      )
+      assert_not_include(
+        @logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url],
+        'SECRET',
+        '設定で足した接頭辞は効くこと',
+      )
+    ensure
+      original&.each do |key, value|
+        if value.equal?(ABSENT)
+          config.delete(key)
+        else
+          config[key] = value
+        end
+      end
+    end
+
+    # 🔴 **入れ子の接頭辞は、より長いほうを採ること（Codex P1・#586）。**
+    #
+    # ⚠⚠ **合成にしたことで、既定と設定の接頭辞が同時に並ぶようになった。**
+    # 並び順で決めると既定の `/mulukhiya/webhook/` が設定の
+    # `/mulukhiya/webhook/special/` を隠し、**伏せる 1 セグメントがずれて**
+    # 資格情報がそのまま残る。
+    def test_masks_the_most_specific_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/mulukhiya/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/SECRET',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, '/mulukhiya/webhook/special/', '秘密の直前で終わる接頭辞を残す')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **重なる接頭辞は、同じ位置から始まるとは限らない（Codex P1・2 巡目）。**
+    #
+    # ⚠⚠ **長さでは決められない。** 設定の `/webhook/special/`（17 文字）より
+    # 既定の `/mulukhiya/webhook/`（19 文字）のほうが長いので、長さで選ぶと
+    # **`special` を伏せて秘密を残す**。**終わりが後ろにあるもの**を採る。
+    def test_masks_the_prefix_nearest_to_the_secret
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/SECRET',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, '/mulukhiya/webhook/special/')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # ⚠ **落とせない接頭辞で諦めないこと。** 秘密に一番近い接頭辞の次が空でも、
+    # **当たる接頭辞が他にあれば落とす**。1 つ目で nil を返すと素通りする。
+    def test_falls_through_to_the_next_matching_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/x/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/SECRET/x/',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **当たった接頭辞は、全部落とすこと（Codex P1・3 巡目）。**
+    #
+    # ⚠⚠ **合成にしたことで、1 本の URL に既定と設定の接頭辞が同時に当たる。**
+    # 1 つ目で `return` すると、**合成前は伏せられていた側が平文で残る** —
+    # 「マスクしない方向へは倒さない」という #586 の約束がそこで破れる。
+    def test_masks_every_matching_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/SECRET1/mulukhiya/webhook/SECRET2',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET1', '設定の接頭辞で伏せていた側を残さない')
+      assert_not_include(masked, 'SECRET2')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # ⚠ **同じ接頭辞が 2 回出ることもある。** 1 つ目だけ伏せると残りが平文で出る。
+    def test_masks_every_occurrence_of_a_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/SECRET1/x/hook/SECRET2',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET1')
+      assert_not_include(masked, 'SECRET2')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **同じセグメントを 2 回置き換えない（Codex P2）。**
+    #
+    # ⚠⚠ **終わりが同じ接頭辞は、伏せる範囲も同じになる。** 設定 `/webhook/` と
+    # 既定 `/mulukhiya/webhook/` は `/mulukhiya/webhook/ABC/tail` のどちらも
+    # `ABC` を指すので、そのまま 2 回置き換えると**元のパスの位置で置き換わって**
+    # `[FILTERED]LTERED]` のような壊れた URL になり、秘密が長ければ後ろのパスが
+    # 消える。
+    def test_masks_a_secret_shared_by_two_prefixes
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/SECRET/tail',
+      )[:url]
+
+      assert_equal('https://precure.ml/mulukhiya/webhook/[FILTERED]/tail', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **同じ接頭辞どうしで打ち消し合わないこと。**
+    #
+    # ⚠⚠ 「他の接頭辞と重なるセグメントは伏せない」を**同じ接頭辞にも当てると、
+    # 1 つも伏せない URL ができる。** `/hook/hook/SECRET/tail` は `/hook/` が
+    # 0 と 5 の 2 か所に当たり、互いの「次の 1 セグメント」を打ち消す。⚠ **秘密が
+    # 接頭辞と同じ綴りだったときに素通りする**形（ランダムな URL を通して実測）。
+    #
+    # ⚠ 同じ接頭辞の出現は同じ具体度なので、優先も抑制もしない ＝ 両方伏せる。
+    def test_masks_a_secret_spelled_like_the_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/hook/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/hook/hook/SECRET/tail',
+      )[:url]
+
+      assert_equal('https://precure.ml/hook/[FILTERED]/[FILTERED]/tail', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
+    # 🔴 **落とせない接頭辞に、他の接頭辞を止めさせない（Codex P1・5 巡目）。**
+    #
+    # 設定 `/webhook/special/` は `/mulukhiya/webhook/special/` に当たるが、
+    # **次のセグメントが無い**ので何も伏せない。⚠⚠ それが既定
+    # `/mulukhiya/webhook/` の「次の 1 セグメント」を止めていたので、**どちらも
+    # 伏せない**形になっていた。抑制してよいのは、**自分が実際に伏せる**接頭辞だけ。
+    def test_an_empty_match_does_not_suppress_another_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/',
+      )[:url]
+
+      assert_equal('https://precure.ml/mulukhiya/webhook/[FILTERED]/', masked)
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
