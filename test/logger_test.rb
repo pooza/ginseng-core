@@ -197,6 +197,11 @@ module Ginseng
       [
         'https://[::1]/?token=SECRET',
         'https://[2001:db8::1]:8080/a?token=SECRET&x=1',
+        # ⚠⚠ **userinfo を飛ばしてからホストを見ること（Codex P1）。** `://` の
+        # 直後に角括弧を要求すると `https://user:pw@` だけに一致して `[` で切れ、
+        # **クエリが mask_url に届かない**。
+        'https://user:pw@[::1]/?token=SECRET',
+        'https://user@[2001:db8::1]:8080/?token=SECRET',
       ].each do |url|
         masked = @logger.create_message(url:)[:url]
 
