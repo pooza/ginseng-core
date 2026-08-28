@@ -556,4 +556,70 @@ module Ginseng
       return captured
     end
   end
+
+  # ⚠⚠ **プラットフォームで分岐する差分を、片方でしか走らないテストで守らない
+  # (#602 / #604)。** LoggerTest は `disable?` で `win?` を見てクラスごと omit し、
+  # **CI は `ubuntu-latest` しか回さない**ので、Windows のスタブは元から 1 行も
+  # 検査されていなかった。⚠⚠ **`disable?` を足すだけでは足りない** — Linux では
+  # そもそも Windows のクラスが定義されず、テストは緑のまま通り抜ける。
+  #
+  # ⚠ `WindowsLogger` は `win?` の外で定義してあるので、**ここではどの環境でも
+  # 実物を直に叩ける**（分岐に依存しない）。
+  class LoggerPlatformParityTest < TestCase
+    # `mask` / `mask_url` / `mask_urls_in` は **public として配っている** API
+    # (masking.rb の冒頭。Sentry の before_send から呼ばれる)。
+    MASKING_METHODS = [:mask, :mask_url, :mask_urls_in].freeze
+    SEVERITIES = [:debug, :info, :warn, :error, :fatal].freeze
+
+    def test_masking_is_public_on_windows
+      assert_include(WindowsLogger.ancestors, Masking)
+
+      MASKING_METHODS.each do |name|
+        assert_true(WindowsLogger.public_method_defined?(name), "WindowsLogger##{name} が public でない")
+      end
+    end
+
+    def test_masking_is_public_on_the_current_platform
+      assert_include(Logger.ancestors, Masking)
+
+      MASKING_METHODS.each do |name|
+        assert_true(Logger.public_method_defined?(name), "Logger##{name} が public でない")
+      end
+    end
+
+    # ⚠ **include しただけでは足りない。** Masking は include する側が `@config`
+    # を持つことを要求しているので、実際にマスクが効くところまで見る。
+    def test_windows_logger_masks
+      logger = WindowsLogger.new('probe')
+
+      assert_equal({probe: 'mask'}, logger.mask(probe: 'mask', password: 'SECRET-VALUE'))
+      assert_not_include(logger.mask_url('https://example.com/?access_token=SECRET-VALUE'), 'SECRET-VALUE')
+    end
+
+    # ⚠ スタブに initialize が無いと、`Logger.new(name)` が Windows でだけ
+    # ArgumentError になっていた。
+    def test_accepts_optional_name
+      assert_nothing_raised {WindowsLogger.new}
+      assert_nothing_raised {WindowsLogger.new('probe')}
+      assert_nothing_raised {Logger.new}
+      assert_nothing_raised {Logger.new('probe')}
+    end
+
+    # ⚠ severity はブロック形式を殺さない（実装側と同じ）。
+    def test_severities_accept_block_form
+      [WindowsLogger.new, Logger.new].each do |logger|
+        SEVERITIES.each do |severity|
+          assert_nothing_raised {logger.public_send(severity) {'probe'}}
+        end
+      end
+    end
+
+    # ⚠⚠ **差し替えが配線されていること。** 上の 2 本は「両方のクラスが正しい」
+    # ことしか見ないので、`Logger` がどちらを指すかはここで押さえる。
+    def test_windows_branch_is_wired
+      return assert_same(WindowsLogger, Logger) if Environment.win?
+
+      assert_operator(Logger, :<, Syslog::Logger)
+    end
+  end
 end

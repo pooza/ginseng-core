@@ -8,25 +8,13 @@
 require 'addressable/uri'
 
 module Ginseng
+  # ⚠⚠ **Windows 版は [WindowsLogger](windows_logger.rb)（別ファイル）。**
+  # ここに直接書くと Zeitwerk が拾えず（`logger.rb` が定義してよいのは
+  # `Ginseng::Logger` だけ）、**`Ginseng::Logger` を先に触ったときしか
+  # `Ginseng::WindowsLogger` が定義されない**（#604 で実測。NameError を踏んだ）。
+  # ⚠ 分けたことで、Linux の CI でも Windows 版を直に検査できる。
   if Environment.win?
-    class Logger
-      # ⚠ 実装側と同じシグネチャにしておく。必須引数のままだと
-      # `logger.info {expensive}` が Windows でだけ ArgumentError になる。
-      def info(message = nil)
-      end
-
-      def error(message = nil)
-      end
-
-      def debug(message = nil)
-      end
-
-      def warn(message = nil)
-      end
-
-      def fatal(message = nil)
-      end
-    end
+    Logger = WindowsLogger
   else
     require 'syslog/logger'
     class Logger < Syslog::Logger
