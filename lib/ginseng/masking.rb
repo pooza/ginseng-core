@@ -261,8 +261,13 @@ module Ginseng
       return !mask_url_prefix(value).nil?
     end
 
+    # ⚠⚠ **当たった中で最も長いものを採る（Codex P1）。** 既定と設定を合成する
+    # ようになったので、**入れ子の接頭辞が同時に並びうる**。`find` だと並び順で
+    # 決まり、既定の `/mulukhiya/webhook/` が設定の
+    # `/mulukhiya/webhook/special/` を隠して、**伏せる 1 セグメントがずれる**
+    # ＝ 資格情報がそのまま残る（実測）。⚠ 長いほうが「より具体的な申告」。
     def mask_url_prefix(value)
-      return mask_url_paths.find {|v| value.include?(v)}
+      return mask_url_paths.select {|v| value.include?(v)}.max_by(&:length)
     end
 
     # パスに埋まった資格情報を落としたパスを返す。落とすものが無ければ nil (#580)。

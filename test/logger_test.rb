@@ -364,6 +364,31 @@ module Ginseng
       end
     end
 
+    # 🔴 **入れ子の接頭辞は、より長いほうを採ること（Codex P1・#586）。**
+    #
+    # ⚠⚠ **合成にしたことで、既定と設定の接頭辞が同時に並ぶようになった。**
+    # 並び順で決めると既定の `/mulukhiya/webhook/` が設定の
+    # `/mulukhiya/webhook/special/` を隠し、**伏せる 1 セグメントがずれて**
+    # 資格情報がそのまま残る。
+    def test_masks_the_most_specific_url_path_prefix
+      config = config_class.instance
+      original = config['/logger/mask_url_paths'] rescue ABSENT
+      config['/logger/mask_url_paths'] = ['/mulukhiya/webhook/special/']
+
+      masked = @logger.create_message(
+        url: 'https://precure.ml/mulukhiya/webhook/special/SECRET',
+      )[:url]
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, '/mulukhiya/webhook/special/', '長いほうの接頭辞は残す')
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_url_paths')
+      else
+        config['/logger/mask_url_paths'] = original
+      end
+    end
+
     # ⚠⚠ **`(` を含む URL の `)` を URL から切り離さないこと。** 一律に末尾の
     # 閉じ括弧を落とすと、正当な URL が壊れる。
     def test_create_message_keeps_parenthesized_url_intact
