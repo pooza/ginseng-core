@@ -90,6 +90,18 @@ module Ginseng
     # `http://example.com:8080/`（ポート）を巻き込まないため。
     URL_USERINFO_PATTERN = %r{\A[a-z][a-z0-9+.-]*://[^/?\#@]*:[^/?\#@]*@}i
 
+    # IPv6 リテラルの zone id (#609)。⚠ RFC 6874 の綴りは `%25eth0` だが、
+    # **生の `%eth0` もログには出る**（アプリが文字列として組み立てるため）。
+    # ⚠⚠ **zone id の文字は unreserved（英数 ＋ `-._~`）** — RFC 6874 の ZoneID。
+    URL_ZONE_ID_PATTERN = /%(?:25)?[0-9a-z._~-]+/i
+
+    # ホストが zone id 付きの IPv6 リテラルである URL (#609)。
+    # ⚠ `mask_url` は URL 全体を受けるので `\A` に錨を置く。
+    URL_ZONE_ID_HOST_PATTERN = %r{
+      \A [a-z][a-z0-9+.-]*:// (?:[^/?\#]*@)?
+      (?<host>\[[0-9a-f:.]+) (?<zone>#{URL_ZONE_ID_PATTERN}) \]
+    }ix
+
     # 文字列の**途中**に埋まった URL を拾う (#582)。⚠ URL_PATTERN と違って錨が
     # 無い。アプリは `"Invalid feed #{id} (#{uri}) ..."` のように例外メッセージへ
     # URL を埋めるので、そこを拾えないと資格情報が素通りする。
@@ -106,7 +118,7 @@ module Ginseng
     URL_IN_TEXT_PATTERN = %r{
       [a-z][a-z0-9+.-]*://
       (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
-      (?:\[[0-9a-f:.]+\] | [^\s<>"'`\\^{}|\[\]])
+      (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\] | [^\s<>"'`\\^{}|\[\]])
       [^\s<>"'`\\^{}|\[\]]*
     }ix
 
@@ -256,7 +268,58 @@ module Ginseng
     # ⚠ 判定は URL のクエリに限ること。`i` は Misskey のトークンパラメータだが
     # 汎用名すぎるので、Hash のキーや素の文字列にまで広げると無関係な値まで
     # 落としてしまう。
+    #
+    # 🔴 **zone id 付きの IPv6 リテラルは Addressable がパースできない (#609)。**
+    # `Addressable::URI.parse('https://[fe80::1%25eth0]/?token=SECRET')` は
+    # `InvalidURIError` を上げ、下の rescue が**元の文字列をそのまま返す** ＝
+    # クエリのトークンが平文で残っていた。⚠⚠ **走査（URL_IN_TEXT_PATTERN）に
+    # zone id を通すだけでは出力が 1 文字も変わらない**（実測）。
+    #
+    # ⚠ **zone id を外してからマスクし、戻す。** 「パースできない文字列を
+    # 正規表現で書き換える」経路は新設しない（行き過ぎて食う回帰が怖い）。
     def mask_url(value)
+      zoned = zoned_url_host(value)
+      return mask_parsed_url(value) unless zoned
+      return mask_zoned_url(value, zoned)
+    end
+
+    # ホストの zone id を捕まえる。無ければ false (#609)。
+    #
+    # ⚠⚠ **ここでも #518 を塞ぐこと。** 不正なバイト列と ASCII 非互換な
+    # エンコーディングは**正規表現の時点で**上がるので、mask_parsed_url の
+    # rescue までは届かない。⚠ 上げると `create_message` の rescue まで飛び、
+    # **mask ごと素通りして mask_fields のキーまで平文で出る**。
+    #
+    # ⚠ HTTP#log は毎リクエスト url: を出す。`%` を含まない URL では
+    # 正規表現を走らせない。
+    def zoned_url_host(value)
+      return false unless value.include?('%')
+      return URL_ZONE_ID_HOST_PATTERN.match(value)
+    rescue ArgumentError, Encoding::CompatibilityError
+      return false
+    end
+
+    # zone id を外した URL をマスクし、外した zone id を戻す (#609)。
+    #
+    # ⚠⚠ **落とすものが無ければ 1 バイトも変わらないこと。** 戻す位置がずれると
+    # ここで壊れる（`test_create_message_keeps_untouched_zone_id_url_identical`）。
+    def mask_zoned_url(value, zoned)
+      stripped = value.dup
+      stripped[zoned.begin(:zone)...zoned.end(:zone)] = ''
+      masked = mask_parsed_url(stripped).dup
+      # ⚠ ホストより**手前**は長さが変わる（userinfo のパスワードを伏せる）ので、
+      # 元の位置では戻せない。**ホストの綴りで探す。** ⚠⚠ `://` より後ろから。
+      host = "#{zoned[:host]}]"
+      index = masked.index(host, masked.index('://'))
+      # ⚠ 見つからないなら zone id は戻せない。**それでも元の文字列は返さない**
+      # （伏せたものが平文に戻る）。⚠⚠ **落とすのは zone id のほう。**
+      return masked unless index
+      masked[(index + zoned[:host].length), 0] = zoned[:zone]
+      return masked
+    end
+
+    # Addressable がパースできる形の URL をマスクする。
+    def mask_parsed_url(value)
       return value unless mask_url_candidate?(value)
       uri = Addressable::URI.parse(value)
       # ⚠ **どれか一つでも当たれば書き出す。** 当たらなければ元の文字列を
