@@ -69,7 +69,12 @@ module Ginseng
           hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
           response = repeat(method, uri, start = Time.now) do
             r = execute(method, uri, hop_options, max_bytes)
-            log(method:, url: uri, status: r.code, start:)
+            # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
+            # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
+            # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
+            # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
+            # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
+            log(method:, **hop_options.slice(:multipart), url: uri, status: r.code, start:)
             bad_response!(r) unless r.code < 400
             r
           end
@@ -105,7 +110,10 @@ module Ginseng
       def redirect_options(options, origin, uri, keep_body: false)
         # ⚠ **body は 307 / 308 のときだけ持ち越す (#569)。** あれはメソッド
         # ごと保つリダイレクトなので、落とすと**空の POST を撃つ**ことになる。
-        options = keep_body ? options.except(:query) : options.except(:query, :body)
+        # ⚠ **`multipart` は body と一緒に落とす (#578)。** 307 / 308 以外は body を
+        # 捨てて GET になるので、印だけ残すと**ログが嘘をつく**うえ、body の無い
+        # 要求に `multipart: true` を渡すことになる。
+        options = keep_body ? options.except(:query) : options.except(:query, :body, :multipart)
         rewind_body!(options[:body]) if keep_body
         return options if origin == origin_of(uri)
         # ⚠ ヘッダより先に落とす。`headers` が空でも資格情報オプションは

@@ -133,6 +133,10 @@ module Ginseng
       # 効かない**ので、そう読むほかなかった。
       # ⚠ 307 / 308 で body を撃ち直すとき、multipart の IO は
       # `rewind_body!` が巻き戻す。
+      # ⚠⚠ **ここは `delete` にしない（#578 の「ついでの所見」）。** `request_with_body`
+      # が `delete` なのは**先に `options.dup` しているから**で、こちらは dup して
+      # いない（`upload_options` が別の hash を組む）。⚠ 揃えようとして `delete` に
+      # すると**呼び出し側の hash から validator が消える** — #528 で踏んだ形。
       if validator = options[:host_validator]
         return request_validating_hops(method, uri, hop_options, validator)
       end
