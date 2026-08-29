@@ -92,8 +92,12 @@ module Ginseng
 
     # IPv6 リテラルの zone id (#609)。⚠ RFC 6874 の綴りは `%25eth0` だが、
     # **生の `%eth0` もログには出る**（アプリが文字列として組み立てるため）。
-    # ⚠⚠ **zone id の文字は unreserved（英数 ＋ `-._~`）** — RFC 6874 の ZoneID。
-    URL_ZONE_ID_PATTERN = /%(?:25)?[0-9a-z._~-]+/i
+    #
+    # ⚠⚠ **ZoneID は unreserved だけではない。** RFC 6874 は
+    # `ZoneID = 1*( unreserved / pct-encoded )` なので、`%25eth%30` のように
+    # **区切りの後にもパーセントが来る**（Codex P1）。unreserved だけを許すと
+    # 2 つ目の `%` で切れ、**走査が当たらず素通りする**（実測でトークンが残った）。
+    URL_ZONE_ID_PATTERN = /%(?:25)?(?:[0-9a-z._~-]|%[0-9a-f]{2})+/i
 
     # ホストが zone id 付きの IPv6 リテラルである URL (#609)。
     # ⚠ `mask_url` は URL 全体を受けるので `\A` に錨を置く。
