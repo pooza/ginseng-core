@@ -282,6 +282,11 @@ module Ginseng
         # （アプリが文字列として組み立てるため）。
         'https://[fe80::1%eth0]/?token=SECRET',
         'https://[fe80::1%25eth0]:8443/a?token=SECRET&x=1',
+        # 🔴 **ZoneID は unreserved だけではない（Codex P1）。**
+        # `ZoneID = 1*( unreserved / pct-encoded )` なので、区切りの後にも
+        # パーセントが来る。⚠ 2 つ目の `%` で切ると走査が当たらず素通りする。
+        'https://[fe80::1%25eth%30]/?token=SECRET',
+        'https://[fe80::1%25%65%74%68%30]/?token=SECRET',
         'https://user:pw@[fe80::1%25eth0]/?token=SECRET',
         # ⚠ パスの接頭辞で落とす経路も通ること。
         'https://[fe80::1%25eth0]/mulukhiya/webhook/SECRET',
