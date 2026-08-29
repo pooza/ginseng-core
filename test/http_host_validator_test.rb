@@ -238,15 +238,20 @@ module Ginseng
     # なり、**このテストだけが常に赤くなる**。⚠⚠ CI のコンテナは実アドレスへ
     # 解決するので**緑のまま**で、手元だけが落ちる ＝ 一番たちが悪い形。
     #
-    # ⚠ `.invalid` は RFC 6761 で**解決されないことが保証された TLD**。
-    # `getaddress` が SocketError を上げ、`find_proxy` はそれを rescue して
-    # proxy を返すので、**どの環境でも同じ結果になる**（実測）。
+    # ⚠⚠ **名前ではなく IP リテラルを使う（Codex P2）。** `.invalid` は RFC 6761 で
+    # 解決されない TLD だが、**Ruby はそれを知らないので resolver を引く** —
+    # 引けない環境では待たされ、特殊名をループバックへ書き換える resolver では
+    # **同じように落ちる**。⚠ リテラルなら `getaddress` は問い合わせずにそのまま
+    # 返すので、**resolver が一切関与しない**（実測: `.invalid` 0.0055 秒 →
+    # リテラル 0.0000 秒）。
+    #
+    # ⚠ `203.0.113.0/24` は RFC 5737 の TEST-NET-3（文書・試験用で経路が無い）。
     def test_adapter_refuses_to_pin_through_env_proxy
       saved = ENV.fetch('http_proxy', nil)
       ENV['http_proxy'] = 'http://proxy.example:8080'
       begin
         assert_raise(PinningError) do
-          PinnedAddressAdapter.call(::URI.parse('http://pinning.invalid/exec'), {
+          PinnedAddressAdapter.call(::URI.parse('http://203.0.113.9/exec'), {
             connection_adapter_options: {pinned_address: '203.0.113.1'},
           })
         end
@@ -263,19 +268,19 @@ module Ginseng
       assert_true(@http.send(:retryable?, GatewayError.new('Bad response 503')))
     end
 
-    # ⚠ 宛先が `.invalid` なのは上と同じ理由 (#616)。
+    # ⚠ 宛先が IP リテラルなのは上と同じ理由 (#616)。
     def test_get_does_not_retry_proxy_rejection
       saved = ENV.fetch('http_proxy', nil)
       ENV['http_proxy'] = 'http://proxy.example:8080'
       begin
         assert_raise(PinningError) do
-          @http.get('http://pinning.invalid/exec', host_validator: ->(_host) {'203.0.113.1'})
+          @http.get('http://203.0.113.9/exec', host_validator: ->(_host) {'203.0.113.1'})
         end
       ensure
         saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
       end
 
-      assert_not_requested(:get, 'http://pinning.invalid/exec')
+      assert_not_requested(:get, 'http://203.0.113.9/exec')
     end
 
     # ------------------------------------------------------------------
