@@ -231,12 +231,22 @@ module Ginseng
 
     # ⚠ Net::HTTP.new の proxy 引数は既定が :ENV。明示していなくても
     # http_proxy を置いた環境では proxy? が true になる。
+    #
+    # 🔴 **宛先に実在する名前を使わないこと (#616)。** `URI#find_proxy` は
+    # **宛先がループバックへ解決されると proxy を返さない**ので、`example.com` を
+    # `127.0.0.1` へ潰す環境（サンドボックス・社内 DNS）では `proxy?` が false に
+    # なり、**このテストだけが常に赤くなる**。⚠⚠ CI のコンテナは実アドレスへ
+    # 解決するので**緑のまま**で、手元だけが落ちる ＝ 一番たちが悪い形。
+    #
+    # ⚠ `.invalid` は RFC 6761 で**解決されないことが保証された TLD**。
+    # `getaddress` が SocketError を上げ、`find_proxy` はそれを rescue して
+    # proxy を返すので、**どの環境でも同じ結果になる**（実測）。
     def test_adapter_refuses_to_pin_through_env_proxy
       saved = ENV.fetch('http_proxy', nil)
       ENV['http_proxy'] = 'http://proxy.example:8080'
       begin
         assert_raise(PinningError) do
-          PinnedAddressAdapter.call(::URI.parse('http://example.com/exec'), {
+          PinnedAddressAdapter.call(::URI.parse('http://pinning.invalid/exec'), {
             connection_adapter_options: {pinned_address: '203.0.113.1'},
           })
         end
@@ -253,18 +263,19 @@ module Ginseng
       assert_true(@http.send(:retryable?, GatewayError.new('Bad response 503')))
     end
 
+    # ⚠ 宛先が `.invalid` なのは上と同じ理由 (#616)。
     def test_get_does_not_retry_proxy_rejection
       saved = ENV.fetch('http_proxy', nil)
       ENV['http_proxy'] = 'http://proxy.example:8080'
       begin
         assert_raise(PinningError) do
-          @http.get('http://example.com/exec', host_validator: ->(_host) {'203.0.113.1'})
+          @http.get('http://pinning.invalid/exec', host_validator: ->(_host) {'203.0.113.1'})
         end
       ensure
         saved.nil? ? ENV.delete('http_proxy') : ENV['http_proxy'] = saved
       end
 
-      assert_not_requested(:get, 'http://example.com/exec')
+      assert_not_requested(:get, 'http://pinning.invalid/exec')
     end
 
     # ------------------------------------------------------------------
