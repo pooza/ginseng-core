@@ -269,6 +269,90 @@ module Ginseng
       end
     end
 
+    # 🔴 **zone id 付きの IPv6 リテラルもマスクされること (#609)。**
+    #
+    # `Addressable::URI.parse('https://[fe80::1%25eth0]/...')` は
+    # `InvalidURIError` を上げ、`mask_url` の rescue が**元の文字列をそのまま
+    # 返して**いた。⚠⚠ **走査（`URL_IN_TEXT_PATTERN`）に `%` を通すだけでは
+    # 出力が 1 文字も変わらない** — 走査は当たるが `mask_url` が rescue する。
+    def test_create_message_masks_url_with_zone_id
+      [
+        'https://[fe80::1%25eth0]/?token=SECRET',
+        # ⚠ RFC 6874 の綴りは `%25` だが、**生の `%` もログには出る**
+        # （アプリが文字列として組み立てるため）。
+        'https://[fe80::1%eth0]/?token=SECRET',
+        'https://[fe80::1%25eth0]:8443/a?token=SECRET&x=1',
+        # 🔴 **ZoneID は unreserved だけではない（Codex P1）。**
+        # `ZoneID = 1*( unreserved / pct-encoded )` なので、区切りの後にも
+        # パーセントが来る。⚠ 2 つ目の `%` で切ると走査が当たらず素通りする。
+        'https://[fe80::1%25eth%30]/?token=SECRET',
+        'https://[fe80::1%25%65%74%68%30]/?token=SECRET',
+        'https://user:pw@[fe80::1%25eth0]/?token=SECRET',
+        # ⚠ パスの接頭辞で落とす経路も通ること。
+        'https://[fe80::1%25eth0]/mulukhiya/webhook/SECRET',
+      ].each do |url|
+        masked = @logger.create_message(url:)[:url]
+
+        assert_not_include(masked, 'SECRET', url)
+        assert_include(masked, '[FILTERED]', url)
+      end
+    end
+
+    # ⚠⚠ **外した zone id は戻すこと。** ホストは診断に要る（どの経路で出たか）。
+    def test_create_message_keeps_zone_id_in_masked_url
+      masked = @logger.create_message(url: 'https://[fe80::1%25eth0]:8443/a?token=SECRET')[:url]
+
+      assert_equal('https://[fe80::1%25eth0]:8443/a?token=[FILTERED]', masked)
+    end
+
+    # 🔴 **ホストより手前は長さが変わる。** userinfo のパスワードを伏せると
+    # `LONGPASSWORD` が `[FILTERED]` になるので、**元の位置へ戻すと zone id が
+    # ずれる**。⚠ 位置ではなくホストの綴りで戻していること。
+    def test_create_message_keeps_zone_id_after_password_masking
+      url = 'https://user:LONGPASSWORD@[fe80::1%25eth0]/x?token=SECRET'
+
+      masked = @logger.create_message(url:)[:url]
+
+      assert_equal('https://user:[FILTERED]@[fe80::1%25eth0]/x?token=[FILTERED]', masked)
+    end
+
+    # ⚠ 文字列の**途中**に埋まった形でも拾うこと（例外メッセージ経路）。
+    def test_create_message_masks_embedded_zone_id_url
+      masked = @logger.create_message('connect failed https://[fe80::1%25eth0]/?token=SECRET retry')
+
+      assert_not_include(masked, 'SECRET')
+      assert_include(masked, 'https://[fe80::1%25eth0]/', 'ホストは残す')
+      assert_include(masked, 'retry', '後続の文字列は残す')
+    end
+
+    # ⚠⚠ **落とすものが無ければ 1 バイトも変えないこと。** zone id を外して
+    # 組み立て直した文字列を返すと、ここが崩れる。
+    def test_create_message_keeps_untouched_zone_id_url_identical
+      [
+        'https://[fe80::1%25eth0]/feed',
+        'https://[fe80::1%eth0]:8443/',
+      ].each do |url|
+        assert_equal(url, @logger.create_message(url:)[:url])
+      end
+    end
+
+    # 🔴 **zone id の検出でも #518 を塞ぐこと (#609)。**
+    #
+    # ⚠⚠ **検出は `mask_parsed_url` の rescue より手前**なので、そこで上げると
+    # `create_message` の rescue まで飛び、**mask ごと素通りして mask_fields の
+    # キーまで平文で出る**。⚠ `mask_url` は public で、利用側が直接呼ぶ
+    # （Sentry の `before_send`）。
+    def test_mask_url_survives_broken_bytes
+      [
+        "https://x.example/?token=SECRET#{BROKEN_BYTES}",
+        'https://x.example/?token=SECRET'.encode('UTF-16LE'),
+      ].each do |url|
+        assert_nothing_raised(url.encoding.name) do
+          @logger.mask_url(url)
+        end
+      end
+    end
+
     # 🔴 **不正なバイト列で ArgumentError を上げないこと (#587)。**
     #
     # ⚠⚠ `mask_url` は #518 で塞いであるのに、その手前に置いた `mask_urls_in`
