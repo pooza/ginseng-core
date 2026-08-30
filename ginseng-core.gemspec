@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'yaml'
 package = YAML.load_file(File.join(__dir__, 'config/lib.yaml'))['package']
 
@@ -23,7 +25,8 @@ Gem::Specification.new do |spec|
   # 8.1.0〜8.1.2 が入る。⚠ **単一の下限で全系列を閉じるには最も高い修正版に
   # するほかなく、これは事実上「8.1 系列に固定する」判断**（利用側 5 本とも
   # 既に 8.1.3.1 で、実害は無いことを実測した）。
-  spec.add_dependency 'activesupport', '>=8.1.2.1' # CVE-2023-38037, CVE-2026-33176, CVE-2026-33170, CVE-2026-33169
+  # CVE-2023-38037, CVE-2026-33176, CVE-2026-33170, CVE-2026-33169
+  spec.add_dependency 'activesupport', '>=8.1.2.1'
   spec.add_dependency 'addressable', '>=2.9.0' # CVE-2026-35611
   spec.add_dependency 'cgi', '>=0.4.2' # CVE-2025-27219, CVE-2025-27220
   spec.add_dependency 'csv'
@@ -48,7 +51,8 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'net-smtp'
   # ⚠ 1.19.4 の required_ruby_version は `>= 3.2` で、この gem の `>=3.3` より
   # 緩いので利用側を Ruby の版で押し出さない（実測）。
-  spec.add_dependency 'nokogiri', '>=1.19.4' # GHSA-c4rq-3m3g-8wgx ほか 10 件（1.19.1 / 1.19.3 / 1.19.4 で修正）
+  # GHSA-c4rq-3m3g-8wgx ほか 10 件（1.19.1 / 1.19.3 / 1.19.4 で修正）
+  spec.add_dependency 'nokogiri', '>=1.19.4'
   spec.add_dependency 'optparse'
   # ⚠ 下限は CVE-2020-8130、除外は 13.4.0 のみ lib/rake/options.rb 欠落の
   # アップストリームバグ（13.4.2 で修正済み）。**理由が別なので併記する。**
