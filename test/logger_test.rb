@@ -488,6 +488,19 @@ module Ginseng
       assert_empty(@logger.mask_fields.reject {|field| field == field.downcase})
     end
 
+    # 🔴🔴 **公開した口を「マスクを外す口」にしない (#625 の Codex P2)。**
+    # `masking_list` はメモ化した現物を返すので、凍らせないと利用側の
+    # `delete` でロガーのマスクがその場で外れる。⚠ 実測では
+    # `mask_fields.delete('password')` の直後から `password:` が平文で出た。
+    #
+    # ⚠⚠ **`frozen?` だけでは足りない。** Set の凍結は中の Hash まで効いて
+    # いる必要があるので、**実際にマスクが生きていること**まで測る。
+    def test_mask_fields_cannot_be_weakened_by_callers
+      assert_true(@logger.mask_fields.frozen?, '利用側へ渡す一覧は凍っていること')
+      assert_raise(FrozenError) {@logger.mask_fields.delete('password')}
+      assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', password: 'S3CRET'))
+    end
+
     # ⚠⚠ **クエリと同じ広さにはしない (#586)。** `code` / `i` / `key` はクエリの
     # パラメータ名としては資格情報だが、**Hash のキーとしては無関係な値が普通に
     # 入る**。広げすぎると診断に要る値まで消える。

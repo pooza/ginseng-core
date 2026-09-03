@@ -227,7 +227,16 @@ module Ginseng
       # `mask_field?` の呼び出し（ログ 1 行のキーの数だけ走る）ごとに配列を
       # 割り当てることになる。
       return cached.last if cached && cached.first == configured
-      value = yield(configured ? default | Array(configured).map(&:to_s) : default)
+      # 🔴🔴 **凍らせること。メモ化した現物をそのまま返している** ので、
+      # 受け取った側が `delete` するとロガーのマスクがその場で外れる
+      # （`mask_fields` を公開した #625 の Codex P2。実測で
+      # `logger.mask_fields.delete('password')` の直後から
+      # `{password: "S3CRET"}` が平文で出た）。
+      #
+      # ⚠⚠ **設定が「足すだけ」なのと同じ原則**（上記）— **外す手段を
+      # 公開の口から作らない**。⚠ 複製を返す形にはしない: `mask_field?` は
+      # ログ 1 行のキーの数だけ呼ばれるので、毎回 Set を割り当てることになる。
+      value = yield(configured ? default | Array(configured).map(&:to_s) : default).freeze
       @masking_lists[key] = [configured, value]
       return value
     end
