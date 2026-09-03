@@ -227,7 +227,16 @@ module Ginseng
       # `mask_field?` の呼び出し（ログ 1 行のキーの数だけ走る）ごとに配列を
       # 割り当てることになる。
       return cached.last if cached && cached.first == configured
-      value = yield(configured ? default | Array(configured).map(&:to_s) : default)
+      # 🔴🔴 **凍らせること。メモ化した現物をそのまま返している** ので、
+      # 受け取った側が `delete` するとロガーのマスクがその場で外れる
+      # （`mask_fields` を公開した #625 の Codex P2。実測で
+      # `logger.mask_fields.delete('password')` の直後から
+      # `{password: "S3CRET"}` が平文で出た）。
+      #
+      # ⚠⚠ **設定が「足すだけ」なのと同じ原則**（上記）— **外す手段を
+      # 公開の口から作らない**。⚠ 複製を返す形にはしない: `mask_field?` は
+      # ログ 1 行のキーの数だけ呼ばれるので、毎回 Set を割り当てることになる。
+      value = yield(configured ? default | Array(configured).map(&:to_s) : default).freeze
       @masking_lists[key] = [configured, value]
       return value
     end
@@ -406,5 +415,21 @@ module Ginseng
     # ⚠ 利用側が「ログと同じマスク」を別経路へ掛けられるように公開する。
     # 内部の判定ヘルパは private のまま。
     public :mask_url
+
+    # ⚠⚠ **合成後の一覧そのものを要る利用側がある。**`mask` は当たったキーを
+    # **落とす**ので、**「伏せたことを見せる」出力には使えない**。実例:
+    # `pooza/makoto2` の `makoto config`（`Makoto::Config#secure_dump`）は
+    # 資格情報を `(masked)` と表示する — 設定を点検する人に**キーが在ること
+    # 自体は見せる**ための口で、消してしまうと点検にならない。
+    #
+    # 🔴 **公開しないと利用側が同等品を書く。** 実際に `makoto2` は
+    # `/logger/mask_fields` だけを見ており、**#586 で広げた既定が届いていなかった**
+    # （2026-08-31 の実測で **ログ 13 件に対し `makoto config` は 7 件**。
+    # `apikey` / `client_secret` / `refresh_token` が抜けていた）。⚠ **設定に
+    # その名前のキーを足した日に、ログでは伏せるのに CLI では平文**という形になる。
+    #
+    # ⚠ **`mask_url` を公開したのと同じ理由**（#580）。**マスク対象の列を 2 か所に
+    # 分けない。**
+    public :mask_fields
   end
 end
