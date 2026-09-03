@@ -475,6 +475,19 @@ module Ginseng
       end
     end
 
+    # ⚠⚠ **合成後の一覧そのものを要る利用側がある。**`mask` は当たったキーを落とす
+    # ので、**「伏せたことを見せる」出力には使えない**（`pooza/makoto2` の
+    # `makoto config` は `(masked)` と表示する）。🔴 **公開しないと利用側が同等品を
+    # 書き、#586 で広げた既定が届かない。**
+    def test_mask_fields_is_public
+      assert_true(@logger.respond_to?(:mask_fields), '利用側から呼べること')
+      # ⚠ 既定が入っていること（設定だけを見ていたら通らない）。
+      assert_include(@logger.mask_fields, 'client_secret')
+      assert_include(@logger.mask_fields, 'refresh_token')
+      # ⚠ 小文字に揃っていること（`mask_field?` が downcase して照合するため）。
+      assert_empty(@logger.mask_fields.reject {|field| field == field.downcase})
+    end
+
     # ⚠⚠ **クエリと同じ広さにはしない (#586)。** `code` / `i` / `key` はクエリの
     # パラメータ名としては資格情報だが、**Hash のキーとしては無関係な値が普通に
     # 入る**。広げすぎると診断に要る値まで消える。
