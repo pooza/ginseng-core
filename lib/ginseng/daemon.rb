@@ -173,8 +173,11 @@ module Ginseng
         f.truncate(f.pos)
         return true
       end
-    rescue Errno::ENOENT
-      # ⚠ 開く直前に消えた (#561)。作り直しから試す。
+    rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM
+      # ⚠ 開く直前に消えた (#561)か、別ユーザーが残していて書けないか。
+      # ⚠⚠ **どちらも例外のまま抜けない** — 🔴 backtrace だけが出て、運用者には
+      # 理由が伝わらない。消えていたなら次の周回で作り直し、書けないなら取り直しの
+      # 回数を使い切って下の warn に落ちる。
       return false
     end
 

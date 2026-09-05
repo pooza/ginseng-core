@@ -231,6 +231,24 @@ module Ginseng
       assert_equal(Process.ppid, daemon.pid, '中身を書き替えないこと')
     end
 
+    # ⚠⚠ **触れない pid ファイルで落ちないこと。** 別ユーザーが残したファイルは
+    # 書けない。🔴 例外のまま抜けると backtrace だけが出て、運用者には理由が伝わらない。
+    # ⚠ 権限そのものではなく `Errno::EACCES` の扱いを測る（CI は root で回るので、
+    # chmod では再現できない）。
+    def test_write_pid_gives_up_cleanly_when_pid_file_is_unwritable
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:open)
+      File.define_singleton_method(:open) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target && args.first == File::RDWR
+        next original.call(path, *args, &block)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **start の経路で pid ファイルを消さないこと (#622 Codex P1)。**
     #
     # 「消して作り直す」だと、⚠⚠ **同じ stale を見た 2 本が両方 `remove_pid` の
