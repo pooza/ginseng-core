@@ -315,12 +315,38 @@ module Ginseng
     def test_pid_rejects_a_broken_pid_file
       daemon = create
 
-      ['', "\n", '0', "0\n", 'not a pid', '-1'].each do |content|
+      # 🔴 **`'123abc'.to_i` は `123`。** 先頭が数字なら壊れたファイルでも通ってしまい、
+      # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
+      ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10'].each do |content|
         File.write(daemon.pid_file, content)
 
         assert_nil(daemon.pid, "#{content.inspect} は pid として読めない")
         assert_equal(:dead, daemon.alive_state, "#{content.inspect} で :alive と答えない")
       end
+    end
+
+    # 🔴🔴 **読めない pid ファイルを「無い」と答えないこと (#627 Codex P2)。**
+    #
+    # ⚠⚠ **:dead に倒すと `run_status` が「動いていない」と嘘をつき、`run_restart` が
+    # 停止を飛ばす。** 別ユーザーの pid ファイルは**触れないだけで生きている可能性が
+    # ある**ので :unknown（#510 と同じ理由）。
+    # ⚠ 権限そのものは測れない（CI は root で回る）ので、読めない状態を注入する。
+    def test_alive_state_is_unknown_for_an_unreadable_pid_file
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      readable = File.method(:readable?)
+      read = File.method(:read)
+      File.define_singleton_method(:readable?) {|path| path == target ? false : readable.call(path)}
+      File.define_singleton_method(:read) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target
+        next read.call(path, *args, &block)
+      end
+
+      assert_equal(:unknown, daemon.alive_state)
+      assert_false(daemon.alive?)
+    ensure
+      File.define_singleton_method(:readable?, readable) if readable
+      File.define_singleton_method(:read, read) if read
     end
 
     # 🔴🔴 **`run_start` の門は `abort_if_running!` (リリース前レビュー)。**
