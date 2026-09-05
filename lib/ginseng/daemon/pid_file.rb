@@ -23,32 +23,54 @@ module Ginseng
       # いる間に 2 本目が立つ形を作らない）。
       PID_ACQUIRE_ATTEMPTS = 3
 
-      # pid ファイルに書かれてよい形。⚠ **10 進の数字だけ**（`\d` は ASCII なので
-      # 全角は入らない）。🔴 `Integer()` に任せると `'12_34'` や `'+123'` が通る。
-      PID_PATTERN = /\A\d+\z/
+      # ⚠ 以下の 3 つは `parse_pid` が**この順で**当てる（量 → 形 → 番号）。
 
-      # 番号としての上限 (#629 Codex P2)。`pid_t` は 32bit 符号付きなので、これを
-      # 超えると 🔴 **`Process.kill` が `RangeError` を上げ、`Process.alive_state` は
-      # それを `:unknown` に丸める**。⚠⚠ そうなると `abort_if_running!` が毎回
-      # 起動を拒み、**`write_pid` が奪って復帰する機会が来ない** — この上限が
-      # 防ごうとしている「永久に起動できない」そのものになる。
-      # ⚠ **桁数では切れない**（`9999999999` は 10 桁だが範囲外）。
-      PID_MAX = (2**31) - 1
-
-      # 読む上限 (#629)。⚠ pid ファイルに入ってよいのは数桁と改行だけなので、
-      # **壊れたファイルや細工されたファイルを丸ごとメモリへ載せない**。
+      # 読む上限 (#629)。pid ファイルに入ってよいのは数桁と改行だけなので、壊れた
+      # ファイルや細工されたファイルを丸ごとメモリへ載せない。
       # ⚠⚠ **奪うときの読み直しにも同じ上限を使う** — 違う長さで読むと、同じ中身が
       # 「変わった」に見えて永久に奪えなくなる。
-      # ⚠ **読むのは上限より 1 バイト多く。** 超えていることを知るため（下記 `parse_pid`）。
+      # ⚠ **読むのは上限より 1 バイト多い**（超えていることを知るため）。
       PID_FILE_MAX_BYTES = 64
 
-      # symlink を辿らないための旗 (#629)。🔴 辿ると、pid ファイルを置き換えられる
-      # 立場の相手に**デーモンのユーザーが書ける任意のファイルを壊させる**
-      # （中身が pid の数字で上書き＋ truncate される。#622 のリリース前レビューで実測）。
-      # ⚠ 定数の無いプラットフォームがあるので、無ければ 0（＝ 何も足さない）に倒す。
-      # ⚠⚠ **`create_pid_file` には要らない** — `O_CREAT | O_EXCL` は symlink を
+      # pid ファイルに書かれてよい形。10 進の数字だけ（`\d` は ASCII なので全角は
+      # 入らない）。⚠⚠ **`Integer()` に任せない** — `'12_34'`（桁区切り）や `'+123'`
+      # が通る。
+      PID_PATTERN = /\A\d+\z/
+
+      # 番号としての上限 (#629)。`pid_t` は 32bit 符号付きなので、これを超えると
+      # `Process.kill` が `RangeError` を上げ、`Process.alive_state` はそれを
+      # `:unknown` に丸める。⚠⚠ **そうなると `abort_if_running!` が毎回起動を拒み、
+      # `write_pid` が奪って復帰する機会が来ない** — この上限が防ごうとしている
+      # 「永久に起動できない」そのものになる。⚠ **桁数では切れない**（`9999999999`
+      # は 10 桁だが範囲外）。
+      PID_MAX = (2**31) - 1
+
+      # 奪いに行くときの open の旗 (#629)。
+      #
+      # ⚠⚠ **`O_NOFOLLOW` が要る。** 🔴 辿ると、pid ファイルを置き換えられる立場の
+      # 相手に**デーモンのユーザーが書ける任意のファイルを壊させる**（中身が pid の
+      # 数字で上書き＋ truncate される。#622 のリリース前レビューで実測）。
+      # ⚠⚠ **定数の無いプラットフォームでは 0 に倒れ、この防御は消える。**
+      # 🔴 `File.const_defined?` は継承を見るので使わない — 利用側がトップレベルに
+      # `NOFOLLOW` を定義していると true になり、`File::NOFOLLOW` で NameError になる。
+      #
+      # ⚠ **効くのはパスの最終要素だけ。** ハードリンクも、`tmp/pids` 自体が symlink
+      # の場合も辿る（#632）。**読む側（`read_pid_file` / `alive_state`）も辿る**が、
+      # そちらは読むだけで、結論は「取れなかった」に落ちる。
+      # ⚠ **`create_pid_file` には要らない** — `O_CREAT | O_EXCL` は symlink を
       # `EEXIST` で拒む（dangling なリンクでも作らないことを実測）。
-      NOFOLLOW = File.const_defined?(:NOFOLLOW) ? File::NOFOLLOW : 0
+      #
+      # 🔴🔴 **symlink が在る限り起動しない（手で消すまで直らない）。** このファイルは
+      # 他所で「恒久的な起動不能」を繰り返し潰しているが、ここだけは**意図してそう
+      # している** — この位置の symlink が正当でありうる形が無いため。⚠⚠ **理由ごと
+      # 消さないこと。**
+      PID_FILE_OPEN_FLAGS = File::RDWR | (defined?(File::NOFOLLOW) ? File::NOFOLLOW : 0)
+
+      # 読むときの open の旗。⚠⚠ **`O_NONBLOCK` が要る** — pid ファイルの位置に FIFO が
+      # 置かれていると、🔴 **開くところで止まる**（`status` / `start` / `restart` が
+      # 返らない）。⚠ 通常ファイルには影響しない。⚠ 型の確認は開いたあとに `fstat` で
+      # 行う（開く前に `File.file?` を見る形はレースになる）。
+      PID_FILE_READ_FLAGS = File::RDONLY | (defined?(File::NONBLOCK) ? File::NONBLOCK : 0)
 
       # pid ファイルが指す pid。⚠ **pid として読めたときだけ返す** (#627)。
       #
@@ -145,32 +167,56 @@ module Ginseng
       # 取ってから読み直す** — 🔴 **自分が中身を読んでから `flock` を取るまでの間**に
       # 別の start が奪っていることがある（⚠ ロックは `LOCK_NB` なので待たない）。
       def reclaim_pid_file(observed)
-        File.open(pid_file, File::RDWR | NOFOLLOW) do |f|
-          return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
+        written = false
+        File.open(pid_file, PID_FILE_OPEN_FLAGS) do |f|
+          # ⚠⚠ **通常ファイルであることを開いてから確かめる。** 🔴 `File.file?` を
+          # 見てからここへ来るまでに FIFO へ差し替えられると、**`read` が返らない**
+          # （このファイルが `LOCK_NB` で避けているハングが、別の入口から入る）。
+          return false unless f.stat.file?
+          return false unless lock_pid_file(f)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
-          # 別の start が奪っていれば、それはもう自分が見たファイルではない。
+          # 別の start が奪っていれば、**先頭 `PID_FILE_MAX_BYTES + 1` バイト**が
+          # 変わっている（奪う側は必ず先頭から書き替えるので、そこだけで足りる）。
+          # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る（空のファイルを
+          # 奪えなくなる）。
           return false unless f.read(PID_FILE_MAX_BYTES + 1).to_s == observed
           f.rewind
+          written = true
           f.write(Process.pid.to_s)
           f.flush
           f.truncate(f.pos)
           return true
         end
-      rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM, Errno::ELOOP => e
-        # ⚠ 開く直前に消えた (#561)か、別ユーザーが残していて書けないか、
-        # 🔴 **symlink だったか (#629)**。
-        # ⚠⚠ **どれも例外のまま抜けない** — backtrace だけが出て、運用者には理由が
-        # 伝わらない。消えていたなら次の周回で作り直し、そうでなければ取り直しの
-        # 回数を使い切って「取れなかった」に落ちる。
-        # ⚠ **理由はここでしか分からないので、握り潰す前に残す**（リリース前レビュー）。
-        @logger.warn(daemon: app_name, message: 'pid file is not usable',
-          error: e.class.to_s, pid_file:)
+      rescue SystemCallError => e
+        # ⚠⚠ **errno を列挙しない (#633)。** 🔴 `O_NOFOLLOW` が symlink に当たったときの
+        # errno は**プラットフォームで違う** — Linux / macOS は `ELOOP`、**FreeBSD は
+        # `EMLINK`**（NetBSD は `EFTYPE`。⚠ Linux の Ruby では `Errno::EFTYPE` が
+        # `Errno::NOERROR` の別名なので、書くと別物を握り潰す）。列挙すると
+        # **FreeBSD で例外が突き抜け、`run_restart` の子では backtrace すら消える**。
+        # ⚠ 開く直前に消えた (#561)・読めない・書けない・ro・満杯も同じ扱いでよい —
+        # **どれも「このファイルは奪えない」**で、次の周回か「取れなかった」に落ちる。
+        report_unusable_pid_file(e)
+        # 🔴🔴 **書き始めたあとの失敗は取り直しに混ぜない (#633 Codex P2)。**
+        # `create_pid_file` と同じ理由 — ⚠⚠ **次の周回が「自分が既に取っている」と
+        # 読んで、書けたか分からないまま起動する**。
+        abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed') if written
         return false
+      end
+
+      # 🔴 **握り潰す前に理由を残す（リリース前レビューの赤）。** stderr は
+      # `run_restart` の子で捨てられるので、**syslog に出ないと消える**。
+      # ⚠ `ENOENT` は #561 の正常な競合（次の周回で作り直せる）なので黙る —
+      # ⚠⚠ **起動が成功する経路で warn を出すと、警報が誤報になる。**
+      def report_unusable_pid_file(error)
+        return if error.is_a?(Errno::ENOENT)
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'pid file is not usable', error: error.class.to_s, pid_file:)
       end
 
       # ⚠⚠ **`File.write` にしないこと (#622)。** あれは在っても上書きするので、
       # 「無ければ作る」の原子性が無い。
       def create_pid_file
+        written = false
         File.open(pid_file, File::RDWR | File::CREAT | File::EXCL) do |f|
           # ⚠ **書く側は必ずロックを取る。** 取らないと、奪いに来た側が
           # **書きかけの中身**を読む（reclaim_pid_file はロックの中で読み直す）。
@@ -182,14 +228,31 @@ module Ginseng
           return false unless f.read.empty?
           f.rewind
           f.write(Process.pid.to_s)
+          written = true
         end
         return true
       rescue Errno::EEXIST
+        # ⚠ 取り合いに負けただけ。**正常な経路なので黙る。**
+        return false
+      rescue SystemCallError => e
+        # 🔴🔴 **ここが `EEXIST` だけだと、`restart` が無音で失敗する（リリース前
+        # レビューの赤）。** `tmp/pids` が書けない・ro・満杯・fd 枯渇はどれも
+        # 例外のまま抜け、⚠⚠ **`run_restart` の子は stderr を `File::NULL` へ
+        # 付け替えているので backtrace すら残らず、親は exit 0 で返る**。
+        # ⚠ 奪う側 (`reclaim_pid_file`) と対称にする。
+        report_unusable_pid_file(e)
+        # 🔴🔴 **書いたあとの失敗は取り直しに混ぜない (#633 Codex P2)。**
+        # close / writeback が落ちた場合、pid は書けているので、⚠⚠ **次の周回は
+        # 「自分が既に取っている」と読んで、書けたか分からないまま起動する**。
+        # ここは取り合いに負けたのではないので、**そのまま終わる**。
+        abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed') if written
         return false
       end
 
       # ⚠ **テストのための継ぎ目**。「作成には勝ったが flock はまだ」という瞬間に
       # 別の start が奪う状況は、実プロセスを並べても順序を握れないので作れない。
+      # ⚠⚠ **作る側と奪う側で共有する** — 片方だけが通る形にすると、注入したテストが
+      # 「もう通らない道」を測ることになる（リリース前レビューで踏んだ形）。
       #
       # ⚠⚠ **`LOCK_NB` で待たない。** 🔴 待つ形にすると、隙間に外部プロセスが同じ
       # inode の `LOCK_EX` を握ったときに**無限に待つ**（そのあいだ pid ファイルは
@@ -199,10 +262,6 @@ module Ginseng
         return file.flock(File::LOCK_EX | File::LOCK_NB)
       end
 
-      # pid ファイルの中身を**解釈せずに**返す。無ければ nil。
-      #
-      # ⚠ `pid` は `to_i` した結果しか返さないので、🔴 **空と `'0'` と壊れた中身が
-      # 区別できない**。奪うときの「同じものか」の判定にはこちらを使う。
       # ⚠⚠ **文字列全体が pid として読めるときだけ返す (#627 Codex P1)。**
       #
       # 🔴 **`to_i` では足りない** — `'123abc'.to_i` は `123` を返すので、**先頭が数字
@@ -225,18 +284,38 @@ module Ginseng
         return value
       end
 
+      # pid ファイルの中身を**解釈せずに**返す。無ければ nil。
+      #
+      # ⚠⚠ **長さを渡して読むこと。** 2 つ効いている —
+      # ①丸ごとメモリへ載せない ②🔴 **長さを渡すと `ASCII-8BIT` で返る**ので、
+      # 不正な UTF-8 バイトが混じった pid ファイルでも後段の `strip` / `match?` が
+      # `Encoding::CompatibilityError` を上げない（⚠ 引数なしの `File.read` は UTF-8
+      # で返るため、そこへ戻すと `pid` から例外が漏れる）。
+      # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
+      # 直前の `read_pid_file` が**在るのに読めなかった**か (#633 Codex P2)。
+      #
+      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
+      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
+      # `alive_state` は `pid`（＝ `read_pid_file`）を通ってからここへ来る。
+      def pid_file_unreadable?
+        return !@pid_file_error.nil?
+      end
+
       def read_pid_file
-        return File.read(pid_file, PID_FILE_MAX_BYTES + 1).to_s if File.file?(pid_file)
+        @pid_file_error = nil
+        File.open(pid_file, PID_FILE_READ_FLAGS) do |f|
+          # ⚠⚠ **通常ファイル以外は読まない。** 🔴 FIFO を読むと**返ってこない**
+          # （`O_NONBLOCK` で開いているので、開くところまでは止まらない）。
+          return nil unless f.stat.file?
+          return f.read(PID_FILE_MAX_BYTES + 1).to_s
+        end
+      rescue Errno::ENOENT
         return nil
-      rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM
-        # ⚠⚠ **読む直前に消えることがある (#561)。** 相手の trap が消した直後で、
-        # 「無い」と同じ意味なので nil に倒す。🔴 ここで例外を上げると
-        # `run_restart` が `run_stop` の途中で抜け、**止めただけで後継を fork しない**。
-        #
-        # ⚠ **別ユーザーが残していて読めない場合も nil。** 🔴 例外のまま抜けると
-        # backtrace だけが出て、運用者には理由が伝わらない。⚠⚠ **読めない ＝ 触れない
-        # ので、後続の `create_pid_file` / `reclaim_pid_file` がどちらも失敗し、
-        # 「取れなかった」と言って終わる**（起動はしない）。
+      rescue SystemCallError => e
+        # ⚠⚠ **「無い」と「読めない」を混ぜない (#633 Codex P2)。** 読めなかった事実を
+        # 覚えておき、`alive_state` が :dead ではなく :unknown を返せるようにする
+        # （🔴 :dead だと `run_status` が嘘をつき、`run_restart` が停止を飛ばす）。
+        @pid_file_error = e
         return nil
       end
 

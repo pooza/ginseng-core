@@ -69,7 +69,7 @@ module Ginseng
       # 🔴 :dead と答えると `run_status` が「動いていない」と嘘をつき、
       # `run_restart` が停止を飛ばす。**触れないだけで生きている可能性がある**
       # ので :unknown に倒す（#510 と同じ理由）。
-      return :unknown if File.exist?(pid_file) && !File.readable?(pid_file)
+      return :unknown if pid_file_unreadable?
       return :dead
     end
 
