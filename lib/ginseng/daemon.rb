@@ -135,25 +135,56 @@ module Ginseng
     def write_pid
       PID_ACQUIRE_ATTEMPTS.times do
         return if create_pid_file
-        # ⚠ **判断より先に読む。** 読んだあとで中身が変わっても、剥がすのは
-        # **まだ stale のままのとき**だけになる（remove_pid の契約。#532）。
+        # ⚠ **判断より先に読む。** 読んだあとで中身が変わっていたら奪わない
+        # （reclaim_pid_file がロックの中で読み直す）。
         stale = pid
+        # ⚠⚠ **自分が既に取っているなら取得済み。** ここを通さないと、同じプロセスから
+        # 2 度呼ばれたときに**自分の pid を見て「already running」で終了する**。
+        return if stale == Process.pid
         # ⚠ **:alive / :unknown はここで終わる。** サブクラスが上書きした
         # alive_state を通すために、pid を渡さずこちらを呼ぶ。
         abort_if_running!
-        # ⚠ 読む直前に消えることがある (#561)。⚠⚠ **`remove_pid(nil)` は無条件削除**
-        # なので渡さない — 別の start がいま作った pid ファイルを消しうる。
+        # ⚠ 読む直前に消えることがある (#561)。作り直しから試す。
         next unless stale
-        remove_pid(stale)
+        return if reclaim_pid_file(stale)
       end
       warn "Could not acquire PID file '#{pid_file}'. Not starting #{app_name}."
       exit 1
+    end
+
+    # 死んだ pid ファイルを**消さずに**奪う。奪えたら true。
+    #
+    # 🔴🔴 **「消して作り直す」にしないこと (#622 Codex P1)。** `remove_pid` は
+    # 「中身を読む → `rm_f`」の 2 段なので、⚠⚠ **2 本が同じ stale を見ると両方が
+    # 検査を通る**。片方が消して `O_EXCL` で作った直後に、もう片方の `rm_f` が
+    # **その新しい pid ファイルを消す** — 先に勝った 1 本が pid ファイルを失い、
+    # 次の start が 2 本目を立てる。**この PR が閉じたい形そのものに戻る。**
+    #
+    # ⚠ **ファイルの同一性を変えない**（unlink しない）ので、消される相手が居ない。
+    # `flock` を取れた 1 本だけが**中身を差し替えて**持ち主になる。⚠⚠ **ロックを
+    # 取ってから読み直す** — 待っている間に別の start が奪っていることがある。
+    def reclaim_pid_file(stale)
+      File.open(pid_file, File::RDWR) do |f|
+        return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
+        return false unless f.read.to_i == stale
+        f.rewind
+        f.write(Process.pid.to_s)
+        f.flush
+        f.truncate(f.pos)
+        return true
+      end
+    rescue Errno::ENOENT
+      # ⚠ 開く直前に消えた (#561)。作り直しから試す。
+      return false
     end
 
     # ⚠⚠ **`File.write` にしないこと (#622)。** あれは在っても上書きするので、
     # 「無ければ作る」の原子性が無い。
     def create_pid_file
       File.open(pid_file, File::WRONLY | File::CREAT | File::EXCL) do |f|
+        # ⚠ **書く側は必ずロックを取る。** 取らないと、奪いに来た側が
+        # **書きかけの中身**を読む（reclaim_pid_file はロックの中で読み直す）。
+        f.flock(File::LOCK_EX)
         f.write(Process.pid.to_s)
       end
       return true
