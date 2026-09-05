@@ -491,6 +491,26 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **検査のあいだに pid ファイルが変わったら、番号入りで報告しないこと
+    # (#635 Codex P2・6 巡目)。**
+    #
+    # ⚠⚠ 別の start が死んだ pid を奪って自分のものを書くと、`alive_state` は新しい方を
+    # 見て `:alive`、番号は古い方になる — 🔴 **死んだ番号を「動いている」と報告する**。
+    def test_run_status_detects_a_pid_change_while_checking
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      # 検査のあいだに別の start が奪った状態を作る。
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s)
+        next :alive
+      end
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_not_match(/is running/, output, '死んだ番号を running と言わないこと')
+      assert_match(/changed while checking/, output)
+    end
+
     # 🔴🔴 **2 回目の読み取りで失敗したら、`status` もそう言うこと (#635 Codex P2・4 巡目)。**
     # ⚠⚠ 番号を持ったまま `:unknown` を報告すると、**「その pid は他人のもの」という
     # 別の話に化ける** — 実際には読めなかっただけ。

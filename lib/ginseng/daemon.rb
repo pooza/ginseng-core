@@ -231,6 +231,12 @@ module Ginseng
       state = alive_state
       error ||= pid_file_error
       return puts "#{app_name}: PID file '#{pid_file}' could not be read" if error
+      # 🔴🔴 **検査のあいだに中身が変わったら、番号と状態は別のプロセスを指す
+      # (#635 Codex P2・6 巡目)。** ⚠⚠ 別の start が死んだ pid を奪って自分のものを
+      # 書いた場合、**`alive_state` は新しい方を見て `:alive`、番号は古い方**になり、
+      # **死んだ番号を「動いている」と報告する**。⚠ `alive_state` は利用側の上書き点で
+      # 引数を取れないので、**変わっていないことを確かめる**側で閉じる。
+      return puts "#{app_name}: PID file changed while checking (unknown)" if pid != found
       # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
       state = :unknown if state == :alive && found.nil?
       case state
