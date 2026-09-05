@@ -150,18 +150,19 @@ module Ginseng
     end
 
     # ⚠ **:unknown でも取らない** (#510)。触れないだけで生きている可能性がある。
-    # ⚠⚠ **剥がさないこと**まで測る — 剥がすと次の start が 2 本目を立てる。
+    # ⚠⚠ **中身を書き替えないこと**まで測る — 奪うと次の start が 2 本目を立てる。
     def test_write_pid_refuses_when_owner_is_unknown
       stale = unused_pid
       daemon = create(pid: stale)
       daemon.define_singleton_method(:alive_state) {:unknown}
 
       assert_raise(SystemExit) {daemon.send(:write_pid)}
-      assert_equal(stale, daemon.pid, 'pid ファイルを剥がさないこと')
+      assert_equal(stale, daemon.pid, 'pid ファイルを奪わないこと')
     end
 
-    # ⚠⚠ **異常終了で残った pid ファイルは剥がして取り直す (#622)。**
-    # `O_EXCL` だけで済ませると、**そのファイルが起動を永久に阻む**。
+    # ⚠⚠ **異常終了で残った pid ファイルは奪って起動する (#622)。**
+    # `O_EXCL` だけで済ませると、**そのファイルが起動を永久に阻む**。⚠ 奪うのは
+    # **中身の差し替え**で、消しはしない（→ `test_write_pid_never_unlinks`）。
     def test_write_pid_reclaims_dead_pid_file
       daemon = create(pid: unused_pid)
 
@@ -192,9 +193,9 @@ module Ginseng
       assert_equal(Process.pid, daemon.pid)
     end
 
-    # 🔴 **剥がしてよいのは「自分が死んでいると判断した pid のまま」のときだけ (#532)。**
-    # 判断してから剥がすまでの間に別の start が取り直していたら、それは他人の pid
-    # ファイルで、⚠⚠ **消せばその 1 本を孤児にする**。
+    # 🔴 **奪ってよいのは「自分が死んでいると判断した pid のまま」のときだけ (#532)。**
+    # 判断してから奪うまでの間に別の start が取り直していたら、それは他人の pid
+    # ファイルで、⚠⚠ **書き替えればその 1 本を孤児にする**。
     def test_write_pid_keeps_pid_file_taken_by_another_start
       daemon = create(pid: unused_pid)
       successor = Process.ppid
@@ -211,7 +212,7 @@ module Ginseng
 
     # ⚠⚠ **奪えるのはロックを取れた 1 本だけ (#622 Codex P1)。**
     # 別の start が握っている間は奪わずに諦める（次の周回で読み直す）。
-    def test_reclaim_pid_file_yields_while_locked
+    def test_reclaim_pid_file_gives_up_while_locked
       stale = unused_pid
       daemon = create(pid: stale)
       File.open(daemon.pid_file, File::RDWR) do |holder|
@@ -222,8 +223,10 @@ module Ginseng
       end
     end
 
-    # 🔴 **ロックを取ってから読み直すこと。** 待っている間に別の start が奪って
-    # いれば、それはもう自分が「死んでいる」と判断した pid ファイルではない。
+    # ⚠ 中身が自分の見たものと違えば奪わない。⚠⚠ **「ロックの中で読み直している」
+    # ことまでは測れていない**（競合相手が居ないので、ロックの前に読む実装でも緑に
+    # なる）。そちらは `test_create_pid_file_backs_off_when_taken_before_the_lock`
+    # と `test_reclaim_pid_file_gives_up_while_locked` の 2 本で押さえている。
     def test_reclaim_pid_file_gives_up_when_content_changed
       daemon = create(pid: Process.ppid)
 
@@ -265,8 +268,10 @@ module Ginseng
     # ⚠⚠ **触れない pid ファイルで落ちないこと。** 別ユーザーが残したファイルは
     # 書けない。🔴 例外のまま抜けると backtrace だけが出て、運用者には理由が伝わらない。
     # ⚠ 権限そのものではなく `Errno::EACCES` の扱いを測る（CI は root で回るので、
-    # chmod では再現できない）。
-    def test_write_pid_gives_up_cleanly_when_pid_file_is_unwritable
+    # chmod では再現できない）。🔴🔴 **ここで塞げるのは「開けない」側だけ** —
+    # `File.read` は `File.open` を通らないので、**読めない側は
+    # `test_pid_tolerates_an_unreadable_pid_file` で別に測る**（リリース前レビュー）。
+    def test_write_pid_gives_up_cleanly_when_the_pid_file_cannot_be_opened
       daemon = create(pid: unused_pid)
       target = daemon.pid_file
       original = File.method(:open)
@@ -302,11 +307,111 @@ module Ginseng
       FileUtils.define_singleton_method(:rm_f, original) if original
     end
 
+    # 🔴🔴 **pid として読めない中身は「起動していない」と答えること (#627)。**
+    #
+    # ⚠⚠ **`to_i` の結果をそのまま返すと空も壊れた中身も `0` になる。** `0` は truthy な
+    # うえ `Process.kill(0, 0)` は自分のプロセスグループ宛てなので成功するため、
+    # 🔴 `alive_state` が `:alive` と答えていた。
+    def test_pid_rejects_a_broken_pid_file
+      daemon = create
+
+      # 🔴 **`'123abc'.to_i` は `123`。** 先頭が数字なら壊れたファイルでも通ってしまい、
+      # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
+      # 🔴🔴 **`Integer(value, 10)` でもまだ足りない（Codex P1・2 巡目）。**
+      # Ruby は**アンダースコアを桁区切りとして受け付ける**ので `'12_34'` が `1234` になる。
+      broken = ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10',
+        '12_34', '+123', '１２３']
+      broken.each do |content|
+        File.write(daemon.pid_file, content)
+
+        assert_nil(daemon.pid, "#{content.inspect} は pid として読めない")
+        assert_equal(:dead, daemon.alive_state, "#{content.inspect} で :alive と答えない")
+      end
+    end
+
+    # 🔴🔴 **読めない pid ファイルを「無い」と答えないこと (#627 Codex P2)。**
+    #
+    # ⚠⚠ **:dead に倒すと `run_status` が「動いていない」と嘘をつき、`run_restart` が
+    # 停止を飛ばす。** 別ユーザーの pid ファイルは**触れないだけで生きている可能性が
+    # ある**ので :unknown（#510 と同じ理由）。
+    # ⚠ 権限そのものは測れない（CI は root で回る）ので、読めない状態を注入する。
+    def test_alive_state_is_unknown_for_an_unreadable_pid_file
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      readable = File.method(:readable?)
+      read = File.method(:read)
+      File.define_singleton_method(:readable?) {|path| path == target ? false : readable.call(path)}
+      File.define_singleton_method(:read) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target
+        next read.call(path, *args, &block)
+      end
+
+      assert_equal(:unknown, daemon.alive_state)
+      assert_false(daemon.alive?)
+    ensure
+      File.define_singleton_method(:readable?, readable) if readable
+      File.define_singleton_method(:read, read) if read
+    end
+
+    # 🔴🔴 **`run_start` の門は `abort_if_running!` (リリース前レビュー)。**
+    # ⚠⚠ **ここで止まると `write_pid` の丁寧な扱いは届かない** — 見捨てられた
+    # pid ファイルからの復帰は、この門が通って初めて実運用に効く。
+    def test_abort_if_running_passes_for_a_broken_pid_file
+      daemon = create
+
+      ['', 'not a pid'].each do |content|
+        File.write(daemon.pid_file, content)
+
+        assert_nothing_raised(SystemExit) {daemon.send(:abort_if_running!)}
+      end
+    end
+
+    # 🔴🔴 **プロセスグループ全体へ TERM を送らないこと (#627)。**
+    # `Process.kill('TERM', 0)` は**呼び出し元のプロセスグループ全体**に届く。
+    def test_run_stop_does_not_signal_the_process_group_for_a_broken_pid_file
+      daemon = create
+      File.write(daemon.pid_file, '')
+
+      assert_raise(SystemExit) {daemon.send(:run_stop)}
+      assert_equal([], daemon.signals, 'pid として読めない中身にシグナルを送らないこと')
+    end
+
+    # ⚠⚠ **読めない pid ファイルで例外のまま抜けないこと（リリース前レビュー）。**
+    # 🔴 `File.read` は `File.open` を通らないので、開く側の rescue では塞げない。
+    def test_pid_tolerates_an_unreadable_pid_file
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:read)
+      File.define_singleton_method(:read) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target
+        next original.call(path, *args, &block)
+      end
+
+      assert_nil(daemon.pid)
+      # ⚠ 触れないので取得もできない。**起動しないが、backtrace では終わらない。**
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    ensure
+      File.define_singleton_method(:read, original) if original
+    end
+
     # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**
     # 🔴 `File.write` に戻すと**全員が勝つ**ので、このテストだけが落ちる。
     def test_create_pid_file_has_exactly_one_winner
       daemon = create
-      children = Array.new(4) {fork {exit(daemon.send(:create_pid_file) ? 0 : 1)}}
+      # ⚠ **バリアを張らないと「同時」にならない。** 逐次に走っても同じ結果になる
+      # ので、それでは `O_EXCL` の原子性ではなく「敗者が false を返すこと」しか
+      # 測れない（リリース前レビュー）。
+      gate = IO.pipe
+      children = Array.new(4) do
+        fork do
+          gate.last.close
+          gate.first.read(1)
+          exit(daemon.send(:create_pid_file) ? 0 : 1)
+        end
+      end
+      gate.first.close
+      gate.last.write('x' * children.size)
+      gate.last.close
 
       winners = children.count do |child|
         Process.waitpid2(child).last.success?
