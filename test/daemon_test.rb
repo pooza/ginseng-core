@@ -317,7 +317,11 @@ module Ginseng
 
       # 🔴 **`'123abc'.to_i` は `123`。** 先頭が数字なら壊れたファイルでも通ってしまい、
       # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
-      ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10'].each do |content|
+      # 🔴🔴 **`Integer(value, 10)` でもまだ足りない（Codex P1・2 巡目）。**
+      # Ruby は**アンダースコアを桁区切りとして受け付ける**ので `'12_34'` が `1234` になる。
+      broken = ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10',
+        '12_34', '+123', '１２３']
+      broken.each do |content|
         File.write(daemon.pid_file, content)
 
         assert_nil(daemon.pid, "#{content.inspect} は pid として読めない")

@@ -23,6 +23,10 @@ module Ginseng
       # いる間に 2 本目が立つ形を作らない）。
       PID_ACQUIRE_ATTEMPTS = 3
 
+      # pid ファイルに書かれてよい形。⚠ **10 進の数字だけ**（`\d` は ASCII なので
+      # 全角は入らない）。🔴 `Integer()` に任せると `'12_34'` や `'+123'` が通る。
+      PID_PATTERN = /\A\d+\z/
+
       # pid ファイルが指す pid。⚠ **pid として読めたときだけ返す** (#627)。
       #
       # 🔴🔴 **`to_i` の結果をそのまま返さないこと。** 空のファイルも壊れたファイルも
@@ -177,9 +181,13 @@ module Ginseng
       # 🔴 **`to_i` では足りない** — `'123abc'.to_i` は `123` を返すので、**先頭が数字
       # なら壊れたファイルでも通る**。⚠⚠ その番号は**無関係なプロセス**でありうるので、
       # `run_stop` がそちらへ `TERM` を送り、`run_start` はそれを常駐だと報告する。
+      #
+      # 🔴🔴 **`Integer(value, 10)` でも足りない (Codex P1・2 巡目)。** Ruby は
+      # **アンダースコアを桁区切りとして受け付ける**ので、`'12_34'` が `1234` になる。
+      # ⚠ pid ファイルに書かれてよいのは 10 進の数字だけなので、**変換の前に形を見る**。
       def parse_pid(value)
-        value = Integer(value.to_s.strip, 10, exception: false)
-        return nil unless value&.positive?
+        return nil unless (value = value.to_s.strip).match?(PID_PATTERN)
+        return nil unless (value = value.to_i).positive?
         return value
       end
 
