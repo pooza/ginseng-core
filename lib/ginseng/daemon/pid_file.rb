@@ -66,6 +66,12 @@ module Ginseng
       # 消さないこと。**
       PID_FILE_OPEN_FLAGS = File::RDWR | (defined?(File::NOFOLLOW) ? File::NOFOLLOW : 0)
 
+      # 読むときの open の旗。⚠⚠ **`O_NONBLOCK` が要る** — pid ファイルの位置に FIFO が
+      # 置かれていると、🔴 **開くところで止まる**（`status` / `start` / `restart` が
+      # 返らない）。⚠ 通常ファイルには影響しない。⚠ 型の確認は開いたあとに `fstat` で
+      # 行う（開く前に `File.file?` を見る形はレースになる）。
+      PID_FILE_READ_FLAGS = File::RDONLY | (defined?(File::NONBLOCK) ? File::NONBLOCK : 0)
+
       # pid ファイルが指す pid。⚠ **pid として読めたときだけ返す** (#627)。
       #
       # 🔴🔴 **`to_i` の結果をそのまま返さないこと。** 空のファイルも壊れたファイルも
@@ -161,12 +167,13 @@ module Ginseng
       # 取ってから読み直す** — 🔴 **自分が中身を読んでから `flock` を取るまでの間**に
       # 別の start が奪っていることがある（⚠ ロックは `LOCK_NB` なので待たない）。
       def reclaim_pid_file(observed)
+        written = false
         File.open(pid_file, PID_FILE_OPEN_FLAGS) do |f|
           # ⚠⚠ **通常ファイルであることを開いてから確かめる。** 🔴 `File.file?` を
           # 見てからここへ来るまでに FIFO へ差し替えられると、**`read` が返らない**
           # （このファイルが `LOCK_NB` で避けているハングが、別の入口から入る）。
           return false unless f.stat.file?
-          return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
+          return false unless lock_pid_file(f)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
           # 別の start が奪っていれば、**先頭 `PID_FILE_MAX_BYTES + 1` バイト**が
           # 変わっている（奪う側は必ず先頭から書き替えるので、そこだけで足りる）。
@@ -174,6 +181,7 @@ module Ginseng
           # 奪えなくなる）。
           return false unless f.read(PID_FILE_MAX_BYTES + 1).to_s == observed
           f.rewind
+          written = true
           f.write(Process.pid.to_s)
           f.flush
           f.truncate(f.pos)
@@ -188,6 +196,10 @@ module Ginseng
         # ⚠ 開く直前に消えた (#561)・読めない・書けない・ro・満杯も同じ扱いでよい —
         # **どれも「このファイルは奪えない」**で、次の周回か「取れなかった」に落ちる。
         report_unusable_pid_file(e)
+        # 🔴🔴 **書き始めたあとの失敗は取り直しに混ぜない (#633 Codex P2)。**
+        # `create_pid_file` と同じ理由 — ⚠⚠ **次の周回が「自分が既に取っている」と
+        # 読んで、書けたか分からないまま起動する**。
+        abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed') if written
         return false
       end
 
@@ -239,6 +251,8 @@ module Ginseng
 
       # ⚠ **テストのための継ぎ目**。「作成には勝ったが flock はまだ」という瞬間に
       # 別の start が奪う状況は、実プロセスを並べても順序を握れないので作れない。
+      # ⚠⚠ **作る側と奪う側で共有する** — 片方だけが通る形にすると、注入したテストが
+      # 「もう通らない道」を測ることになる（リリース前レビューで踏んだ形）。
       #
       # ⚠⚠ **`LOCK_NB` で待たない。** 🔴 待つ形にすると、隙間に外部プロセスが同じ
       # inode の `LOCK_EX` を握ったときに**無限に待つ**（そのあいだ pid ファイルは
@@ -278,31 +292,30 @@ module Ginseng
       # `Encoding::CompatibilityError` を上げない（⚠ 引数なしの `File.read` は UTF-8
       # で返るため、そこへ戻すと `pid` から例外が漏れる）。
       # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
-      # 在るのに読めないか。⚠⚠ **権限だけでは足りない (#633 Codex P2)。**
-      # 🔴 `EIO` のような読み取り失敗も「読めない」で、**それを :dead に倒すと
-      # `run_status` が「動いていない」と嘘をつき、`run_restart` が停止を飛ばす**。
-      # ⚠ 1 バイト読んで確かめる（中身は要らない）。
+      # 直前の `read_pid_file` が**在るのに読めなかった**か (#633 Codex P2)。
+      #
+      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
+      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
+      # `alive_state` は `pid`（＝ `read_pid_file`）を通ってからここへ来る。
       def pid_file_unreadable?
-        return false unless File.exist?(pid_file)
-        return true unless File.readable?(pid_file)
-        File.read(pid_file, 1)
-        return false
-      rescue SystemCallError
-        return true
+        return !@pid_file_error.nil?
       end
 
       def read_pid_file
-        return File.read(pid_file, PID_FILE_MAX_BYTES + 1).to_s if File.file?(pid_file)
+        @pid_file_error = nil
+        File.open(pid_file, PID_FILE_READ_FLAGS) do |f|
+          # ⚠⚠ **通常ファイル以外は読まない。** 🔴 FIFO を読むと**返ってこない**
+          # （`O_NONBLOCK` で開いているので、開くところまでは止まらない）。
+          return nil unless f.stat.file?
+          return f.read(PID_FILE_MAX_BYTES + 1).to_s
+        end
+      rescue Errno::ENOENT
         return nil
-      rescue SystemCallError
-        # ⚠⚠ **読む直前に消えることがある (#561)。** 相手の trap が消した直後で、
-        # 「無い」と同じ意味なので nil に倒す。🔴 ここで例外を上げると
-        # `run_restart` が `run_stop` の途中で抜け、**止めただけで後継を fork しない**。
-        #
-        # ⚠ **別ユーザーが残していて読めない場合も nil。** 🔴 例外のまま抜けると
-        # backtrace だけが出て、運用者には理由が伝わらない。⚠⚠ **読めない ＝ 触れない
-        # ので、後続の `create_pid_file` / `reclaim_pid_file` がどちらも失敗し、
-        # 「取れなかった」と言って終わる**（起動はしない）。
+      rescue SystemCallError => e
+        # ⚠⚠ **「無い」と「読めない」を混ぜない (#633 Codex P2)。** 読めなかった事実を
+        # 覚えておき、`alive_state` が :dead ではなく :unknown を返せるようにする
+        # （🔴 :dead だと `run_status` が嘘をつき、`run_restart` が停止を飛ばす）。
+        @pid_file_error = e
         return nil
       end
 

@@ -125,17 +125,14 @@ module Ginseng
     # 途中で抜けて**止めただけで後継を fork しない**。
     def test_pid_tolerates_concurrent_removal
       daemon = create(pid: unused_pid)
-      target = daemon.pid_file
-      original = File.method(:file?)
-      # File.file? の直後に消える状況を作る。
-      File.define_singleton_method(:file?) do |path|
-        FileUtils.rm_f(path) if path == target
-        original.call(path) || path == target
-      end
+      # 開こうとした瞬間には消えている状況を作る。
+      original = stub_read_error(daemon, Errno::ENOENT)
 
       assert_nil(daemon.pid)
+      # ⚠ 「無い」なので :dead。**読めなかった（:unknown）と混ぜない。**
+      assert_equal(:dead, daemon.alive_state)
     ensure
-      File.define_singleton_method(:file?, original) if original
+      File.define_singleton_method(:open, original) if original
     end
 
     # ⚠⚠ **本件の芯 (#622)。** pid ファイルが既に在って持ち主が生きているなら、
@@ -348,20 +345,12 @@ module Ginseng
     # ⚠ 権限そのものは測れない（CI は root で回る）ので、読めない状態を注入する。
     def test_alive_state_is_unknown_for_an_unreadable_pid_file
       daemon = create(pid: unused_pid)
-      target = daemon.pid_file
-      readable = File.method(:readable?)
-      read = File.method(:read)
-      File.define_singleton_method(:readable?) {|path| path == target ? false : readable.call(path)}
-      File.define_singleton_method(:read) do |path, *args, &block|
-        raise Errno::EACCES, path if path == target
-        next read.call(path, *args, &block)
-      end
+      original = stub_read_error(daemon, Errno::EACCES)
 
       assert_equal(:unknown, daemon.alive_state)
       assert_false(daemon.alive?)
     ensure
-      File.define_singleton_method(:readable?, readable) if readable
-      File.define_singleton_method(:read, read) if read
+      File.define_singleton_method(:open, original) if original
     end
 
     # 🔴🔴 **`run_start` の門は `abort_if_running!` (リリース前レビュー)。**
@@ -391,18 +380,13 @@ module Ginseng
     # 🔴 `File.read` は `File.open` を通らないので、開く側の rescue では塞げない。
     def test_pid_tolerates_an_unreadable_pid_file
       daemon = create(pid: unused_pid)
-      target = daemon.pid_file
-      original = File.method(:read)
-      File.define_singleton_method(:read) do |path, *args, &block|
-        raise Errno::EACCES, path if path == target
-        next original.call(path, *args, &block)
-      end
+      original = stub_read_error(daemon, Errno::EACCES)
 
       assert_nil(daemon.pid)
       # ⚠ 触れないので取得もできない。**起動しないが、backtrace では終わらない。**
       assert_raise(SystemExit) {daemon.send(:write_pid)}
     ensure
-      File.define_singleton_method(:read, original) if original
+      File.define_singleton_method(:open, original) if original
     end
 
     # 🔴🔴 **上限で切った先頭が「読める pid」に化けないこと (#629 Codex P1)。**
@@ -427,16 +411,64 @@ module Ginseng
     # プロセスを指している可能性があるのに。
     def test_alive_state_is_unknown_when_the_pid_file_cannot_be_read
       daemon = create(pid: unused_pid)
+      # ⚠ **1 回だけ失敗する**（一過性の EIO）。🔴 読み直して確かめる実装だと、
+      # 2 回目が成功して :dead に落ちる — **読めなかった事実を捨てている**。
       target = daemon.pid_file
-      original = File.method(:read)
-      File.define_singleton_method(:read) do |path, *args, &block|
-        raise Errno::EIO, path if path == target
+      original = File.method(:open)
+      raised = false
+      File.define_singleton_method(:open) do |path, *args, &block|
+        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS && !raised
+          raised = true
+          raise Errno::EIO, path
+        end
         next original.call(path, *args, &block)
       end
 
       assert_equal(:unknown, daemon.alive_state)
     ensure
-      File.define_singleton_method(:read, original) if original
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **FIFO を置かれても止まらないこと (#633 Codex P1)。**
+    #
+    # pid ファイルの位置に FIFO があると、⚠⚠ **書き手が現れるまで `open` も `read` も
+    # 返らない** — `status` / `start` / `restart` が丸ごとハングする。
+    # ⚠ このファイルは `LOCK_NB` でハングを避けているのに、読む側から入られていた。
+    def test_pid_does_not_block_on_a_fifo
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+
+      Timeout.timeout(5) do
+        assert_nil(daemon.pid)
+        assert_equal(:dead, daemon.alive_state)
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+    end
+
+    # 🔴 **中身が読めてしまう FIFO でも、pid として受け取らないこと (#633)。**
+    # ⚠ 書き手が居ると `O_NONBLOCK` でも中身は読める。**型で弾く**のはそのため。
+    def test_pid_ignores_a_fifo_with_a_writer
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+      File.open(daemon.pid_file, File::RDONLY | File::NONBLOCK) do |_reader|
+        File.open(daemon.pid_file, File::WRONLY | File::NONBLOCK) do |writer|
+          writer.write(Process.ppid.to_s)
+          writer.flush
+
+          Timeout.timeout(5) {assert_nil(daemon.pid, 'FIFO の中身を pid にしないこと')}
+        end
+      end
+    end
+
+    # 🔴🔴 **奪う側も、書き始めたあとの失敗で起動しないこと (#633 Codex P2)。**
+    def test_write_pid_does_not_start_after_a_late_reclaim_error
+      daemon = create(pid: unused_pid)
+      daemon.define_singleton_method(:lock_pid_file) do |file|
+        file.define_singleton_method(:truncate) {|_size| raise Errno::EIO, 'truncate'}
+        next super(file)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
     end
 
     # 🔴🔴 **書いたあとの失敗を取り直しに混ぜないこと (#633 Codex P2)。**
@@ -589,6 +621,21 @@ module Ginseng
     end
 
     private
+
+    # 読む経路の `File.open` にだけ errno を注入する。
+    #
+    # ⚠⚠ **注入点は実装が実際に通る場所に置くこと。** 🔴 `File.read` / `File.file?` に
+    # 挿していた版は、実装が `File.open` を使うようになった時点で**何も測らなくなった**
+    # （リリース前レビューで踏んだ形と同じ）。
+    def stub_read_error(daemon, error)
+      target = daemon.pid_file
+      original = File.method(:open)
+      File.define_singleton_method(:open) do |path, *args, &block|
+        raise error, path if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS
+        next original.call(path, *args, &block)
+      end
+      return original
+    end
 
     def create(pid: nil, error: nil)
       daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: @dir, error:})
