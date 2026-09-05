@@ -276,7 +276,8 @@ module Ginseng
       target = daemon.pid_file
       original = File.method(:open)
       File.define_singleton_method(:open) do |path, *args, &block|
-        raise Errno::EACCES, path if path == target && args.first == File::RDWR
+        flags = File::RDWR | Daemon::PidFile::NOFOLLOW
+        raise Errno::EACCES, path if path == target && args.first == flags
         next original.call(path, *args, &block)
       end
 
@@ -392,6 +393,33 @@ module Ginseng
       assert_raise(SystemExit) {daemon.send(:write_pid)}
     ensure
       File.define_singleton_method(:read, original) if original
+    end
+
+    # 🔴🔴 **symlink を辿らないこと (#629)。**
+    #
+    # 辿ると、pid ファイルを置き換えられる立場の相手に、⚠⚠ **デーモンのユーザーが
+    # 書ける任意のファイルを壊させる**（中身が pid の数字で上書き＋ truncate される）。
+    def test_write_pid_does_not_follow_a_symlink
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'do not touch')
+      File.symlink(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('do not touch', File.read(victim), 'リンク先を書き替えないこと')
+    end
+
+    # ⚠ **pid ファイルは丸ごと読まない (#629)。** 数桁と改行しか入らないので、
+    # 🔴 壊れたファイルや細工されたファイルをメモリへ載せる理由が無い。
+    def test_read_pid_file_is_bounded
+      daemon = create
+      File.write(daemon.pid_file, '9' * 10_000)
+
+      assert_equal(Daemon::PidFile::PID_FILE_MAX_BYTES, daemon.send(:read_pid_file).size)
+      # ⚠⚠ **桁数を切っているので「読めない中身」になり、奪って復帰できる。**
+      assert_nil(daemon.pid)
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
     end
 
     # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**
