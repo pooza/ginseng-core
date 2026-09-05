@@ -98,6 +98,11 @@ module Ginseng
       # — そこから `run_restart` が停止を飛ばし、二重起動に届く。
       # ⚠ 上流は `abort_if_running!` でも直接これを見るので、**利用側が見落としても
       # 起動は拒む**（→ `Daemon#abort_if_running!`）。
+      #
+      # 🔴 **判断の入口を通るまで下がらない。** 記録を消すのは `alive_state` /
+      # `abort_if_running!` / `run_status` / `run_stop` の入口だけなので、⚠⚠ **`pid` を
+      # 直接ポーリングする使い方では、一度失敗すると true のまま**になる（後の読み取りが
+      # 成功しても）。⚠ **`alive_state` を通せば下がる。**
       def pid_file_unreadable?
         return !@pid_file_error.nil?
       end
