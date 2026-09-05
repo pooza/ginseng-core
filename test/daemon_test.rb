@@ -395,6 +395,21 @@ module Ginseng
       File.define_singleton_method(:read, original) if original
     end
 
+    # 🔴🔴 **上限で切った先頭が「読める pid」に化けないこと (#629 Codex P1)。**
+    #
+    # `File.read(path, n)` は EOF に届いたかを教えないので、⚠⚠ **`'123' ＋ 空白 ＋
+    # ゴミ` を切って `strip` すると `123` として通る** — その番号は無関係なプロセスで
+    # ありうる（`run_stop` がそちらへ `TERM` を送る）。
+    def test_pid_rejects_an_oversized_file_whose_head_looks_like_a_pid
+      daemon = create
+      File.write(daemon.pid_file, "#{Process.ppid}#{' ' * 200}junk")
+
+      assert_nil(daemon.pid)
+      # ⚠ 読めないだけで、奪って復帰はできる。
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
     # 🔴🔴 **symlink を辿らないこと (#629)。**
     #
     # 辿ると、pid ファイルを置き換えられる立場の相手に、⚠⚠ **デーモンのユーザーが
@@ -415,7 +430,8 @@ module Ginseng
       daemon = create
       File.write(daemon.pid_file, '9' * 10_000)
 
-      assert_equal(Daemon::PidFile::PID_FILE_MAX_BYTES, daemon.send(:read_pid_file).size)
+      assert_equal(Daemon::PidFile::PID_FILE_MAX_BYTES + 1, daemon.send(:read_pid_file).size,
+        '上限を超えていることが分かるだけ余分に読むこと')
       # ⚠⚠ **桁数を切っているので「読めない中身」になり、奪って復帰できる。**
       assert_nil(daemon.pid)
       assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}

@@ -34,6 +34,7 @@ module Ginseng
       # **壊れたファイルや細工されたファイルを丸ごとメモリへ載せない**。
       # ⚠⚠ **奪うときの読み直しにも同じ上限を使う** — 違う長さで読むと、同じ中身が
       # 「変わった」に見えて永久に奪えなくなる。
+      # ⚠ **読むのは上限より 1 バイト多く。** 超えていることを知るため（下記 `parse_pid`）。
       PID_FILE_MAX_BYTES = 64
 
       # symlink を辿らないための旗 (#629)。🔴 辿ると、pid ファイルを置き換えられる
@@ -143,7 +144,7 @@ module Ginseng
           return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
           # 別の start が奪っていれば、それはもう自分が見たファイルではない。
-          return false unless f.read(PID_FILE_MAX_BYTES).to_s == observed
+          return false unless f.read(PID_FILE_MAX_BYTES + 1).to_s == observed
           f.rewind
           f.write(Process.pid.to_s)
           f.flush
@@ -207,13 +208,20 @@ module Ginseng
       # **アンダースコアを桁区切りとして受け付ける**ので、`'12_34'` が `1234` になる。
       # ⚠ pid ファイルに書かれてよいのは 10 進の数字だけなので、**変換の前に形を見る**。
       def parse_pid(value)
-        return nil unless (value = value.to_s.strip).match?(PID_PATTERN)
+        value = value.to_s
+        # 🔴🔴 **上限を超えていたら、切った先頭を読まない (#629 Codex P1)。**
+        # `File.read(path, n)` は EOF に届いたかを教えないので、⚠⚠ **`'123' ＋ 空白 ＋
+        # ゴミ` のようなファイルが、切ったうえで `strip` すると `123` として通る** —
+        # その番号は無関係なプロセスでありうる。⚠ 上限より 1 バイト多く読んであるので、
+        # **超えていること自体は分かる**（奪って復帰する側はそれでよい）。
+        return nil if value.bytesize > PID_FILE_MAX_BYTES
+        return nil unless (value = value.strip).match?(PID_PATTERN)
         return nil unless (value = value.to_i).positive?
         return value
       end
 
       def read_pid_file
-        return File.read(pid_file, PID_FILE_MAX_BYTES).to_s if File.file?(pid_file)
+        return File.read(pid_file, PID_FILE_MAX_BYTES + 1).to_s if File.file?(pid_file)
         return nil
       rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM
         # ⚠⚠ **読む直前に消えることがある (#561)。** 相手の trap が消した直後で、
