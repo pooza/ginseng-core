@@ -124,10 +124,9 @@ module Ginseng
     # ⚠⚠ **これは早期の診断であって、start 同士のレースは閉じない (#622)。**
     # 閉じているのは `write_pid` の `O_EXCL`。🔴 **ここを通ったことを「取れた」と
     # 読まないこと。**
-    # 読めなかったせいで pid が分からない状態か。⚠ **`pid` を先に呼ぶ**（`read_pid_file`
-    # が「読めなかった」を記録するのはそこ）。
-    def unreadable_pid_file?
-      return pid.nil? && pid_file_unreadable?
+    def abort_unreadable_pid_file!(error)
+      abort_start!("PID file '#{pid_file}' exists but could not be read.",
+        'pid file unreadable', error)
     end
 
     def abort_if_running!
@@ -136,17 +135,22 @@ module Ginseng
       # `pid&.positive?` で判定していると**「読めない」が :dead に化ける** — そこから
       # 生きている常駐の pid ファイルを奪いにいける。⚠ 上流でここを閉じておけば、
       # 利用側が見落としても二重起動には届かない。
-      # ⚠⚠ **ここで `pid_label` を使わない (#635 Codex P2)。** あれは `pid` を呼ぶので
-      # **pid ファイルを読み直し**、🔴 **記録してあった errno を消す**（一過性の失敗なら
-      # 2 回目が成功して、番号入りの矛盾したメッセージにもなる）。
-      if unreadable_pid_file?
-        abort_start!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
-      end
-      case alive_state
+      # ⚠⚠ **読むのはここだけ。以降は持ち回る (#635 Codex P2)。** 🔴 メッセージを
+      # 組み立てる途中で読み直すと、**記録してあった errno が消え**、一過性の失敗なら
+      # 番号入りの矛盾したメッセージにもなる。
+      found = pid
+      error = pid_file_error
+      abort_unreadable_pid_file!(error) if found.nil? && error
+      state = alive_state
+      # ⚠⚠ **サブクラスの `alive_state` も pid ファイルを読む。** そこで失敗したなら
+      # 🔴 **状態は決められていない** — :dead と答えられていても起動しない。
+      error = pid_file_error || error
+      abort_unreadable_pid_file!(error) if error
+      case state
       when :alive
-        abort_start!("#{app_name} is already running (PID #{pid}).", 'already running')
+        abort_start!("#{app_name} is already running (PID #{found}).", 'already running', error)
       when :unknown
-        abort_start!("#{pid_label} exists but is not ours.", 'pid file is not ours')
+        abort_start!("#{pid_label(found)} exists but is not ours.", 'pid file is not ours', error)
       end
     end
 
@@ -214,11 +218,12 @@ module Ginseng
     # ⚠ **「触れなかった」を「動いていない」と表示しない** (#510)。運用者が
     # 自分のユーザーで叩いたときに、動いているのに not running と出る形だった。
     def run_status
+      found = pid
       case alive_state
       when :alive
-        puts "#{app_name} is running (PID #{pid})"
+        puts "#{app_name} is running (PID #{found})"
       when :unknown
-        puts "#{app_name}: #{pid_label} exists but is not ours (unknown)"
+        puts "#{app_name}: #{pid_label(found)} exists but is not ours (unknown)"
       else
         puts "#{app_name} is not running"
       end

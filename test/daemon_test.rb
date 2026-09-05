@@ -491,6 +491,22 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **2 回目の読み取りで失敗しても、理由が残ること (#635 Codex P2・2 巡目)。**
+    #
+    # ⚠ 1 回目（門の手前）は通り、`alive_state` の中の読み取りで失敗する窓。
+    # ⚠⚠ **状態が決められていない**ので、`:unknown` として番号入りで報告するのではなく
+    # 「読めなかった」で拒む。
+    def test_refusal_keeps_the_error_from_the_second_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error], '読めなかった理由が残ること')
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **上書きされた `alive_state` が :dead と答えても、読めないなら起動しない (#635)。**
     #
     # ⚠ 利用側（`makoto2`）は `alive_state` を上書きし、`super` のあと `pid` を呼び直して
@@ -705,14 +721,17 @@ module Ginseng
     # ⚠⚠ **注入点は実装が実際に通る場所に置くこと。** 🔴 `File.read` / `File.file?` に
     # 挿していた版は、実装が `File.open` を使うようになった時点で**何も測らなくなった**
     # （リリース前レビューで踏んだ形と同じ）。
-    def stub_read_error(daemon, error, once: false)
+    # `on:` を渡すと**その回の読み取りだけ**失敗する。⚠⚠ **何回目で失敗するかで
+    # 通る道が変わる** — 1 回目なら「読めない」で即拒み、2 回目なら `alive_state` の
+    # 中で失敗するので、そこを区別できないと窓が残る（#635 Codex P2）。
+    def stub_read_error(daemon, error, once: false, on: nil)
       target = daemon.pid_file
       original = File.method(:open)
-      raised = false
+      reads = 0
       File.define_singleton_method(:open) do |path, *args, &block|
-        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS && !(once && raised)
-          raised = true
-          raise error, path
+        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS
+          reads += 1
+          raise error, path if on ? reads == on : !(once && reads > 1)
         end
         next original.call(path, *args, &block)
       end

@@ -103,8 +103,10 @@ module Ginseng
       end
 
       # ⚠ 読めない pid ファイルでは番号が分からないので、代わりに場所を出す。
-      def pid_label
-        return "PID #{pid}" if pid
+      # ⚠ **読み直さない。** 呼ぶ側が持っている pid を渡す（🔴 ここで `pid` を呼ぶと
+      # pid ファイルを読み直し、記録してあった errno を消す — #635 Codex P2）。
+      def pid_label(found)
+        return "PID #{found}" if found
         return "PID file '#{pid_file}'"
       end
 
@@ -162,23 +164,31 @@ module Ginseng
       # 付け替えるので、⚠⚠ **「起動しなかった」ことがどこにも残らないまま、親は
       # exit 0 で返る**。supervisor は叩き直し続け、**落ちているのにログが 1 行も
       # 増えない**という形になる。
-      def abort_start!(message, reason)
-        abort_daemon!("#{message} Not starting #{app_name}.", 'not started', reason)
+      def abort_start!(message, reason, error = pid_file_error)
+        abort_daemon!("#{message} Not starting #{app_name}.", 'not started', reason, error)
       end
 
       # 🔴🔴 **止める側の出口にも同じ規則を当てる (#635)。** `run_stop` の `warn` +
       # `exit 1` は `@logger` を通っていなかったので、⚠⚠ **`restart` が
       # 「起動を試みる前に」無音で終わる**経路が残っていた（`run_restart` は
       # `alive_state` が :dead でないときに `run_stop` を通る）。
-      def abort_stop!(message, reason)
-        abort_daemon!("#{message} Not stopping #{app_name}.", 'not stopped', reason)
+      def abort_stop!(message, reason, error = pid_file_error)
+        abort_daemon!("#{message} Not stopping #{app_name}.", 'not stopped', reason, error)
       end
 
-      def abort_daemon!(message, state, reason)
+      # ⚠⚠ **理由（errno）は引数で持ち回る (#635 Codex P2)。** 🔴 ここで
+      # `@pid_file_error` を読むと、**メッセージを組み立てる途中の読み直しで消えた
+      # あと**の値を見ることになる。呼ぶ側が「決めたときの証拠」を渡す。
+      def abort_daemon!(message, state, reason, error)
         warn message
         @logger.error(daemon: app_name, version: package_class.version,
-          message: state, reason:, pid_file:, error: @pid_file_error&.class&.to_s)
+          message: state, reason:, pid_file:, error: error&.class&.to_s)
         exit 1
+      end
+
+      # 直前の読み取りが失敗していたなら、その例外。⚠ **決めた時点で受け取っておく**。
+      def pid_file_error
+        return @pid_file_error
       end
 
       # 死んだ pid ファイルを**消さずに**奪う。奪えたら true。
