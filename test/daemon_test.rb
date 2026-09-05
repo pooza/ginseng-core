@@ -276,7 +276,8 @@ module Ginseng
       target = daemon.pid_file
       original = File.method(:open)
       File.define_singleton_method(:open) do |path, *args, &block|
-        raise Errno::EACCES, path if path == target && args.first == File::RDWR
+        flags = File::RDWR | Daemon::PidFile::NOFOLLOW
+        raise Errno::EACCES, path if path == target && args.first == flags
         next original.call(path, *args, &block)
       end
 
@@ -319,8 +320,11 @@ module Ginseng
       # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
       # 🔴🔴 **`Integer(value, 10)` でもまだ足りない（Codex P1・2 巡目）。**
       # Ruby は**アンダースコアを桁区切りとして受け付ける**ので `'12_34'` が `1234` になる。
+      # 🔴🔴 **`9999999999` は 10 桁だが `pid_t`（32bit 符号付き）の範囲外**（Codex P2）。
+      # `Process.kill` が `RangeError` を上げ、`alive_state` が `:unknown` に丸めるので、
+      # ⚠⚠ **通してしまうと起動を永久に拒み、奪って復帰する機会も来ない**。
       broken = ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10',
-        '12_34', '+123', '１２３']
+        '12_34', '+123', '１２３', '9999999999', '2147483648']
       broken.each do |content|
         File.write(daemon.pid_file, content)
 
@@ -392,6 +396,59 @@ module Ginseng
       assert_raise(SystemExit) {daemon.send(:write_pid)}
     ensure
       File.define_singleton_method(:read, original) if original
+    end
+
+    # 🔴🔴 **上限で切った先頭が「読める pid」に化けないこと (#629 Codex P1)。**
+    #
+    # `File.read(path, n)` は EOF に届いたかを教えないので、⚠⚠ **`'123' ＋ 空白 ＋
+    # ゴミ` を切って `strip` すると `123` として通る** — その番号は無関係なプロセスで
+    # ありうる（`run_stop` がそちらへ `TERM` を送る）。
+    def test_pid_rejects_an_oversized_file_whose_head_looks_like_a_pid
+      daemon = create
+      File.write(daemon.pid_file, "#{Process.ppid}#{' ' * 200}junk")
+
+      assert_nil(daemon.pid)
+      # ⚠ 読めないだけで、奪って復帰はできる。
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # 🔴🔴 **symlink を辿らないこと (#629)。**
+    #
+    # 辿ると、pid ファイルを置き換えられる立場の相手に、⚠⚠ **デーモンのユーザーが
+    # 書ける任意のファイルを壊させる**（中身が pid の数字で上書き＋ truncate される）。
+    def test_write_pid_does_not_follow_a_symlink
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'do not touch')
+      File.symlink(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('do not touch', File.read(victim), 'リンク先を書き替えないこと')
+    end
+
+    # ⚠⚠ **範囲外の番号でも「起動を永久に拒む」に落ちないこと (#629 Codex P2)。**
+    def test_write_pid_reclaims_a_pid_file_out_of_range
+      daemon = create
+      File.write(daemon.pid_file, '9999999999')
+
+      assert_equal(:dead, daemon.alive_state, ':unknown に丸めないこと')
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # ⚠ **pid ファイルは丸ごと読まない (#629)。** 数桁と改行しか入らないので、
+    # 🔴 壊れたファイルや細工されたファイルをメモリへ載せる理由が無い。
+    def test_read_pid_file_is_bounded
+      daemon = create
+      File.write(daemon.pid_file, '9' * 10_000)
+
+      assert_equal(Daemon::PidFile::PID_FILE_MAX_BYTES + 1, daemon.send(:read_pid_file).size,
+        '上限を超えていることが分かるだけ余分に読むこと')
+      # ⚠⚠ **桁数を切っているので「読めない中身」になり、奪って復帰できる。**
+      assert_nil(daemon.pid)
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
     end
 
     # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**

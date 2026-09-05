@@ -27,6 +27,29 @@ module Ginseng
       # 全角は入らない）。🔴 `Integer()` に任せると `'12_34'` や `'+123'` が通る。
       PID_PATTERN = /\A\d+\z/
 
+      # 番号としての上限 (#629 Codex P2)。`pid_t` は 32bit 符号付きなので、これを
+      # 超えると 🔴 **`Process.kill` が `RangeError` を上げ、`Process.alive_state` は
+      # それを `:unknown` に丸める**。⚠⚠ そうなると `abort_if_running!` が毎回
+      # 起動を拒み、**`write_pid` が奪って復帰する機会が来ない** — この上限が
+      # 防ごうとしている「永久に起動できない」そのものになる。
+      # ⚠ **桁数では切れない**（`9999999999` は 10 桁だが範囲外）。
+      PID_MAX = (2**31) - 1
+
+      # 読む上限 (#629)。⚠ pid ファイルに入ってよいのは数桁と改行だけなので、
+      # **壊れたファイルや細工されたファイルを丸ごとメモリへ載せない**。
+      # ⚠⚠ **奪うときの読み直しにも同じ上限を使う** — 違う長さで読むと、同じ中身が
+      # 「変わった」に見えて永久に奪えなくなる。
+      # ⚠ **読むのは上限より 1 バイト多く。** 超えていることを知るため（下記 `parse_pid`）。
+      PID_FILE_MAX_BYTES = 64
+
+      # symlink を辿らないための旗 (#629)。🔴 辿ると、pid ファイルを置き換えられる
+      # 立場の相手に**デーモンのユーザーが書ける任意のファイルを壊させる**
+      # （中身が pid の数字で上書き＋ truncate される。#622 のリリース前レビューで実測）。
+      # ⚠ 定数の無いプラットフォームがあるので、無ければ 0（＝ 何も足さない）に倒す。
+      # ⚠⚠ **`create_pid_file` には要らない** — `O_CREAT | O_EXCL` は symlink を
+      # `EEXIST` で拒む（dangling なリンクでも作らないことを実測）。
+      NOFOLLOW = File.const_defined?(:NOFOLLOW) ? File::NOFOLLOW : 0
+
       # pid ファイルが指す pid。⚠ **pid として読めたときだけ返す** (#627)。
       #
       # 🔴🔴 **`to_i` の結果をそのまま返さないこと。** 空のファイルも壊れたファイルも
@@ -122,22 +145,26 @@ module Ginseng
       # 取ってから読み直す** — 🔴 **自分が中身を読んでから `flock` を取るまでの間**に
       # 別の start が奪っていることがある（⚠ ロックは `LOCK_NB` なので待たない）。
       def reclaim_pid_file(observed)
-        File.open(pid_file, File::RDWR) do |f|
+        File.open(pid_file, File::RDWR | NOFOLLOW) do |f|
           return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
           # 別の start が奪っていれば、それはもう自分が見たファイルではない。
-          return false unless f.read == observed
+          return false unless f.read(PID_FILE_MAX_BYTES + 1).to_s == observed
           f.rewind
           f.write(Process.pid.to_s)
           f.flush
           f.truncate(f.pos)
           return true
         end
-      rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM
-        # ⚠ 開く直前に消えた (#561)か、別ユーザーが残していて書けないか。
-        # ⚠⚠ **どちらも例外のまま抜けない** — 🔴 backtrace だけが出て、運用者には
-        # 理由が伝わらない。消えていたなら次の周回で作り直し、書けないなら取り直しの
-        # 回数を使い切って下の warn に落ちる。
+      rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM, Errno::ELOOP => e
+        # ⚠ 開く直前に消えた (#561)か、別ユーザーが残していて書けないか、
+        # 🔴 **symlink だったか (#629)**。
+        # ⚠⚠ **どれも例外のまま抜けない** — backtrace だけが出て、運用者には理由が
+        # 伝わらない。消えていたなら次の周回で作り直し、そうでなければ取り直しの
+        # 回数を使い切って「取れなかった」に落ちる。
+        # ⚠ **理由はここでしか分からないので、握り潰す前に残す**（リリース前レビュー）。
+        @logger.warn(daemon: app_name, message: 'pid file is not usable',
+          error: e.class.to_s, pid_file:)
         return false
       end
 
@@ -186,13 +213,20 @@ module Ginseng
       # **アンダースコアを桁区切りとして受け付ける**ので、`'12_34'` が `1234` になる。
       # ⚠ pid ファイルに書かれてよいのは 10 進の数字だけなので、**変換の前に形を見る**。
       def parse_pid(value)
-        return nil unless (value = value.to_s.strip).match?(PID_PATTERN)
-        return nil unless (value = value.to_i).positive?
+        value = value.to_s
+        # 🔴🔴 **上限を超えていたら、切った先頭を読まない (#629 Codex P1)。**
+        # `File.read(path, n)` は EOF に届いたかを教えないので、⚠⚠ **`'123' ＋ 空白 ＋
+        # ゴミ` のようなファイルが、切ったうえで `strip` すると `123` として通る** —
+        # その番号は無関係なプロセスでありうる。⚠ 上限より 1 バイト多く読んであるので、
+        # **超えていること自体は分かる**（奪って復帰する側はそれでよい）。
+        return nil if value.bytesize > PID_FILE_MAX_BYTES
+        return nil unless (value = value.strip).match?(PID_PATTERN)
+        return nil unless (value = value.to_i).between?(1, PID_MAX)
         return value
       end
 
       def read_pid_file
-        return File.read(pid_file) if File.file?(pid_file)
+        return File.read(pid_file, PID_FILE_MAX_BYTES + 1).to_s if File.file?(pid_file)
         return nil
       rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM
         # ⚠⚠ **読む直前に消えることがある (#561)。** 相手の trap が消した直後で、
