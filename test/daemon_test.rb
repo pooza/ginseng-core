@@ -491,6 +491,23 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **`status` が壊れた行を出さないこと (#635 Codex P2・3 巡目)。**
+    #
+    # ⚠ 番号と状態を別々の読み取りから出していると、⚠⚠ **片方だけ失敗したときに
+    # `is running (PID )` になる** — しかも一過性の失敗、つまりこの PR が扱っている
+    # まさにその状況で。
+    def test_run_status_never_prints_an_empty_pid
+      daemon = create(pid: Process.ppid)
+      original = stub_read_error(daemon, Errno::EIO, on: 1)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_not_match(/PID \)/, output, '番号の無い running を出さないこと')
+      assert_match(/could not be read/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **2 回目の読み取りで失敗しても、理由が残ること (#635 Codex P2・2 巡目)。**
     #
     # ⚠ 1 回目（門の手前）は通り、`alive_state` の中の読み取りで失敗する窓。
@@ -736,6 +753,15 @@ module Ginseng
         next original.call(path, *args, &block)
       end
       return original
+    end
+
+    def capture_stdout
+      original = $stdout
+      $stdout = StringIO.new
+      yield
+      return $stdout.string
+    ensure
+      $stdout = original
     end
 
     def create(pid: nil, error: nil)

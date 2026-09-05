@@ -219,7 +219,13 @@ module Ginseng
     # 自分のユーザーで叩いたときに、動いているのに not running と出る形だった。
     def run_status
       found = pid
-      case alive_state
+      # ⚠⚠ **番号と状態は同じ読み取りから出す (#635 Codex P2)。** 🔴 別々に読むと、
+      # 片方だけ失敗したときに `is running (PID )` のような壊れた行になる。
+      return puts "#{app_name}: PID file '#{pid_file}' could not be read" if pid_file_error
+      state = alive_state
+      # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
+      state = :unknown if state == :alive && found.nil?
+      case state
       when :alive
         puts "#{app_name} is running (PID #{found})"
       when :unknown
