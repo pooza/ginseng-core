@@ -538,6 +538,29 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **上書きされた `alive_state` の中で失敗が消えないこと (#635 Codex P2・5 巡目)。**
+    #
+    # ⚠ 利用側（`makoto2`）は `super` のあとにもう一度 `pid` を呼ぶ。⚠⚠ **読み取りごとに
+    # 記録を消していると、途中の失敗が後の成功で消える** — 前後で挟むだけでは
+    # 原理的に見えない窓。🔴 消えると「読めなかった」が「他人の pid」に化け、
+    # override が :dead を返す形なら**起動まで通る**。
+    def test_refusal_keeps_an_error_cleared_inside_the_override
+      daemon = create(pid: unused_pid)
+      # `super` のあとに読み直す形（利用側の実物と同じ）。
+      daemon.define_singleton_method(:alive_state) do
+        state = super()
+        pid
+        next state
+      end
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **2 回目の読み取りで失敗しても、理由が残ること (#635 Codex P2・2 巡目)。**
     #
     # ⚠ 1 回目（門の手前）は通り、`alive_state` の中の読み取りで失敗する窓。

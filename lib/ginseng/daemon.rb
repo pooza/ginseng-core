@@ -63,6 +63,7 @@ module Ginseng
     # 存在するが触れない」なので、:dead と混ぜると **start が 2 本目を立て、
     # 1 本目がどの pid ファイルからも辿れない孤児になる**。
     def alive_state
+      reset_pid_file_error
       found = pid
       return Process.alive_state(found) if found
       # ⚠⚠ **読めないファイルが在るなら「無い」ではない (#627 Codex P2)。**
@@ -130,6 +131,7 @@ module Ginseng
     end
 
     def abort_if_running!
+      reset_pid_file_error
       # 🔴🔴 **読めなかったときは、サブクラスの `alive_state` に訊く前に拒む (#635)。**
       # ⚠⚠ **`pid` は「無い」も「読めない」も nil に畳む**ので、上書き側が
       # `pid&.positive?` で判定していると**「読めない」が :dead に化ける** — そこから
@@ -182,6 +184,7 @@ module Ginseng
     # 判断して 2 本目を立て、1 本目はどの pid ファイルからも辿れない孤児になる。
     # ⚠ **停止コマンド自身が孤児を作る**という形だった。
     def run_stop
+      reset_pid_file_error
       unless (p = pid)
         # ⚠⚠ **「無い」と「読めない」を言い分ける (#635)。** 🔴 読めないだけのときに
         # 「PID file not found」と言うのは**嘘**で、しかもそこで無音のまま終わると
@@ -220,6 +223,7 @@ module Ginseng
     # ⚠ **「触れなかった」を「動いていない」と表示しない** (#510)。運用者が
     # 自分のユーザーで叩いたときに、動いているのに not running と出る形だった。
     def run_status
+      reset_pid_file_error
       found = pid
       # ⚠⚠ **番号と状態は同じ読み取りから出す (#635 Codex P2)。** 🔴 別々に読むと、
       # 片方だけ失敗したときに `is running (PID )` のような壊れた行になる。

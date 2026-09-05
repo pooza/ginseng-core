@@ -186,9 +186,19 @@ module Ginseng
         exit 1
       end
 
-      # 直前の読み取りが失敗していたなら、その例外。⚠ **決めた時点で受け取っておく**。
+      # この判断のあいだに読み取りが失敗していたなら、その例外。
+      #
+      # 🔴🔴 **成功しても消さない (#635 Codex P2・5 巡目)。** ⚠⚠ 上書きされた
+      # `alive_state` は `super` のあとにもう一度 `pid` を呼ぶので、**途中の失敗が
+      # 後の成功で消える** — 前後で挟むだけでは原理的に見えない。消すのは
+      # 「判断を始めるとき」（→ `reset_pid_file_error`）だけにする。
       def pid_file_error
         return @pid_file_error
+      end
+
+      # ⚠ **判断の入口で 1 度だけ呼ぶ。** 読み取りごとではない（上記）。
+      def reset_pid_file_error
+        @pid_file_error = nil
       end
 
       # 死んだ pid ファイルを**消さずに**奪う。奪えたら true。
@@ -330,7 +340,6 @@ module Ginseng
       # で返るため、そこへ戻すと `pid` から例外が漏れる）。
       # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
       def read_pid_file
-        @pid_file_error = nil
         File.open(pid_file, PID_FILE_READ_FLAGS) do |f|
           # ⚠⚠ **通常ファイル以外は読まない。** 🔴 FIFO を読むと**返ってこない**
           # （`O_NONBLOCK` で開いているので、開くところまでは止まらない）。
