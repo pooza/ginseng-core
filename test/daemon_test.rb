@@ -138,6 +138,184 @@ module Ginseng
       File.define_singleton_method(:file?, original) if original
     end
 
+    # ⚠⚠ **本件の芯 (#622)。** pid ファイルが既に在って持ち主が生きているなら、
+    # `write_pid` は**上書きせずに終了する**。🔴 上書きすると、先に起動した 1 本が
+    # どの pid ファイルからも辿れない孤児になる（start 同士のレースの帰結）。
+    def test_write_pid_refuses_when_owner_is_alive
+      owner = Process.ppid
+      daemon = create(pid: owner)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(owner, daemon.pid, '先に取った側の pid が残ること')
+    end
+
+    # ⚠ **:unknown でも取らない** (#510)。触れないだけで生きている可能性がある。
+    # ⚠⚠ **剥がさないこと**まで測る — 剥がすと次の start が 2 本目を立てる。
+    def test_write_pid_refuses_when_owner_is_unknown
+      stale = unused_pid
+      daemon = create(pid: stale)
+      daemon.define_singleton_method(:alive_state) {:unknown}
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(stale, daemon.pid, 'pid ファイルを剥がさないこと')
+    end
+
+    # ⚠⚠ **異常終了で残った pid ファイルは剥がして取り直す (#622)。**
+    # `O_EXCL` だけで済ませると、**そのファイルが起動を永久に阻む**。
+    def test_write_pid_reclaims_dead_pid_file
+      daemon = create(pid: unused_pid)
+
+      # ⚠⚠ **`SystemExit` は受けること** — 素で投げさせるとスイート自体が途中で
+      # 終わり、🔴 **test-unit は「100% passed」のまま件数だけ減らす**（実測）。
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # ⚠⚠ **自分が既に取っている pid ファイルで自分を殺さないこと。**
+    # 🔴 `O_EXCL` にした以上、2 度目の呼び出しは必ず作成に失敗する — そこで
+    # `alive_state` を見ると**自分の pid が :alive** なので「already running」になる。
+    def test_write_pid_is_idempotent_for_the_owner
+      daemon = create
+      daemon.send(:write_pid)
+
+      # 🔴🔴 **`assert_nothing_raised` で受けること。** ここが `exit 1` に倒れると
+      # ⚠⚠ **SystemExit がスイート自体を打ち切る** — test-unit は**そこまでの件数で
+      # 「100% passed」と表示して緑で終わる**（実測: 17 件が 12 件になり、失敗は 0）。
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    def test_write_pid_creates_pid_file
+      daemon = create
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # 🔴 **剥がしてよいのは「自分が死んでいると判断した pid のまま」のときだけ (#532)。**
+    # 判断してから剥がすまでの間に別の start が取り直していたら、それは他人の pid
+    # ファイルで、⚠⚠ **消せばその 1 本を孤児にする**。
+    def test_write_pid_keeps_pid_file_taken_by_another_start
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      states = [:dead, :alive]
+      # alive_state を見ている隙に「別の start が取り直した」状態を作る。
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s) if states.first == :dead
+        next states.shift || :alive
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(successor, daemon.pid, '後から取った側の pid ファイルが残ること')
+    end
+
+    # ⚠⚠ **奪えるのはロックを取れた 1 本だけ (#622 Codex P1)。**
+    # 別の start が握っている間は奪わずに諦める（次の周回で読み直す）。
+    def test_reclaim_pid_file_yields_while_locked
+      stale = unused_pid
+      daemon = create(pid: stale)
+      File.open(daemon.pid_file, File::RDWR) do |holder|
+        holder.flock(File::LOCK_EX)
+
+        assert_false(daemon.send(:reclaim_pid_file, stale.to_s), 'ロックを取れなければ奪わない')
+        assert_equal(stale, daemon.pid, '中身を書き替えないこと')
+      end
+    end
+
+    # 🔴 **ロックを取ってから読み直すこと。** 待っている間に別の start が奪って
+    # いれば、それはもう自分が「死んでいる」と判断した pid ファイルではない。
+    def test_reclaim_pid_file_gives_up_when_content_changed
+      daemon = create(pid: Process.ppid)
+
+      assert_false(daemon.send(:reclaim_pid_file, unused_pid.to_s))
+      assert_equal(Process.ppid, daemon.pid, '中身を書き替えないこと')
+    end
+
+    # 🔴🔴 **見捨てられた空の pid ファイルから復帰できること (#622 Codex P1)。**
+    #
+    # `O_EXCL` に勝った 1 本が pid を書く前に死ぬと、**中身の無い pid ファイル**が
+    # 残る。⚠⚠ **ここを「取得の途中かもしれない」と読んで拒むと、失敗した 1 回の
+    # 起動が恒久的な起動不能に化ける**（手で消すまで直らない）。
+    #
+    # ⚠ 奪ってよいのは、**奪われた側が書き戻さない**から
+    # （→ `test_create_pid_file_backs_off_when_taken_before_the_lock`）。
+    def test_write_pid_reclaims_an_abandoned_empty_pid_file
+      daemon = create
+      File.write(daemon.pid_file, '')
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # 🔴🔴 **作成から flock までの隙間で奪われていたら、書かずに負けを認めること。**
+    # ⚠⚠ **これが無いと、空のファイルを奪った側と作った側の 2 本が起動する。**
+    def test_create_pid_file_backs_off_when_taken_before_the_lock
+      daemon = create
+      successor = Process.ppid
+      # flock を取る直前に別の start が奪った状態を作る（実プロセスでは順序を握れない）。
+      daemon.define_singleton_method(:lock_pid_file) do |file|
+        File.write(pid_file, successor.to_s)
+        next file.flock(File::LOCK_EX)
+      end
+
+      assert_false(daemon.send(:create_pid_file), '奪われていたら負けを認めること')
+      assert_equal(successor, daemon.pid, '奪った側の pid を上書きしないこと')
+    end
+
+    # ⚠⚠ **触れない pid ファイルで落ちないこと。** 別ユーザーが残したファイルは
+    # 書けない。🔴 例外のまま抜けると backtrace だけが出て、運用者には理由が伝わらない。
+    # ⚠ 権限そのものではなく `Errno::EACCES` の扱いを測る（CI は root で回るので、
+    # chmod では再現できない）。
+    def test_write_pid_gives_up_cleanly_when_pid_file_is_unwritable
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:open)
+      File.define_singleton_method(:open) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target && args.first == File::RDWR
+        next original.call(path, *args, &block)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **start の経路で pid ファイルを消さないこと (#622 Codex P1)。**
+    #
+    # 「消して作り直す」だと、⚠⚠ **同じ stale を見た 2 本が両方 `remove_pid` の
+    # 検査を通る** — 片方が消して作った直後に、もう片方の `rm_f` が**その新しい
+    # pid ファイルを消す**。⚠ 奪うのは**中身の差し替え**で行い、ファイルの同一性を
+    # 変えない（消される相手を作らない）。
+    def test_write_pid_never_unlinks
+      daemon = create(pid: unused_pid)
+      removed = []
+      original = FileUtils.method(:rm_f)
+      FileUtils.define_singleton_method(:rm_f) do |*args|
+        removed.push(args.first)
+        next original.call(*args)
+      end
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal([], removed, 'pid ファイルを消さずに奪うこと')
+      assert_equal(Process.pid, daemon.pid)
+    ensure
+      FileUtils.define_singleton_method(:rm_f, original) if original
+    end
+
+    # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**
+    # 🔴 `File.write` に戻すと**全員が勝つ**ので、このテストだけが落ちる。
+    def test_create_pid_file_has_exactly_one_winner
+      daemon = create
+      children = Array.new(4) {fork {exit(daemon.send(:create_pid_file) ? 0 : 1)}}
+
+      winners = children.count do |child|
+        Process.waitpid2(child).last.success?
+      end
+
+      assert_equal(1, winners, '勝てるのは 1 本だけ')
+      assert_path_exist(daemon.pid_file)
+    end
+
     private
 
     def create(pid: nil, error: nil)
