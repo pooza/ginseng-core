@@ -105,7 +105,9 @@ module Ginseng
       # ⚠ 読めない pid ファイルでは番号が分からないので、代わりに場所を出す。
       # ⚠ **読み直さない。** 呼ぶ側が持っている pid を渡す（🔴 ここで `pid` を呼ぶと
       # pid ファイルを読み直し、記録してあった errno を消す — #635 Codex P2）。
-      def pid_label(found)
+      # ⚠⚠ **引数の既定を外さないこと (#635 Codex P2・8 巡目)。** これは `v1.23.6` で
+      # 公開した形なので、**必須にすると利用側が `ArgumentError` で落ちる**。
+      def pid_label(found = pid)
         return "PID #{found}" if found
         return "PID file '#{pid_file}'"
       end

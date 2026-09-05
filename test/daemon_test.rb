@@ -491,6 +491,15 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # ⚠⚠ **`pid_label` は `v1.23.6` で公開した形。引数なしでも呼べること (#635 Codex P2)。**
+    # 🔴 必須にすると、上書きしている利用側が `ArgumentError` で落ちる。
+    def test_pid_label_is_callable_without_an_argument
+      daemon = create(pid: unused_pid)
+
+      assert_equal("PID #{daemon.pid}", daemon.send(:pid_label))
+      assert_match(/PID file/, create.send(:pid_label))
+    end
+
     # 🔴🔴 **検証の読み取り自身が失敗しても、正しく報告すること (#635 Codex P2・7 巡目)。**
     # ⚠⚠ 失敗すると `nil` が返るので、**「変わった」にも「変わっていない」にも化ける**。
     def test_run_status_reports_a_failed_verification_read
