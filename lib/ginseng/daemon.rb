@@ -140,17 +140,19 @@ module Ginseng
       # 番号入りの矛盾したメッセージにもなる。
       found = pid
       error = pid_file_error
-      abort_unreadable_pid_file!(error) if found.nil? && error
       state = alive_state
-      # ⚠⚠ **サブクラスの `alive_state` も pid ファイルを読む。** そこで失敗したなら
-      # 🔴 **状態は決められていない** — :dead と答えられていても起動しない。
-      error = pid_file_error || error
+      # ⚠⚠ **`alive_state` も pid ファイルを読む。** どちらの読み取りで失敗しても
+      # 🔴 **状態は決められていない** — :dead / :alive と答えられていても起動しない。
+      error ||= pid_file_error
       abort_unreadable_pid_file!(error) if error
       case state
       when :alive
-        abort_start!("#{app_name} is already running (PID #{found}).", 'already running', error)
+        # ⚠ **番号が無いなら場所を出す。** 2 つの読み取りの間に別の start が
+        # 作った場合、`found` は nil のまま（🔴 `(PID )` にしない）。
+        abort_start!("#{app_name} is already running (#{pid_label(found)}).", 'already running',
+          nil)
       when :unknown
-        abort_start!("#{pid_label(found)} exists but is not ours.", 'pid file is not ours', error)
+        abort_start!("#{pid_label(found)} exists but is not ours.", 'pid file is not ours', nil)
       end
     end
 
@@ -221,8 +223,10 @@ module Ginseng
       found = pid
       # ⚠⚠ **番号と状態は同じ読み取りから出す (#635 Codex P2)。** 🔴 別々に読むと、
       # 片方だけ失敗したときに `is running (PID )` のような壊れた行になる。
-      return puts "#{app_name}: PID file '#{pid_file}' could not be read" if pid_file_error
+      error = pid_file_error
       state = alive_state
+      error ||= pid_file_error
+      return puts "#{app_name}: PID file '#{pid_file}' could not be read" if error
       # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
       state = :unknown if state == :alive && found.nil?
       case state

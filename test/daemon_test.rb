@@ -491,6 +491,36 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **2 回目の読み取りで失敗したら、`status` もそう言うこと (#635 Codex P2・4 巡目)。**
+    # ⚠⚠ 番号を持ったまま `:unknown` を報告すると、**「その pid は他人のもの」という
+    # 別の話に化ける** — 実際には読めなかっただけ。
+    def test_run_status_reports_a_failed_second_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/could not be read/, output)
+      assert_not_match(/is not ours/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **2 つの読み取りの間に別の start が pid ファイルを作っても、番号の無い
+    # メッセージにしないこと (#635 Codex P2・4 巡目)。**
+    def test_abort_if_running_never_reports_an_empty_pid
+      daemon = create
+      daemon.define_singleton_method(:alive_state) {:alive}
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      end
+
+      assert_equal('already running', daemon.logs.first.last[:reason])
+      assert_not_match(/\(PID \)/, output, '番号の無い括弧を出さないこと')
+      assert_match(/PID file/, output)
+    end
+
     # 🔴🔴 **`status` が壊れた行を出さないこと (#635 Codex P2・3 巡目)。**
     #
     # ⚠ 番号と状態を別々の読み取りから出していると、⚠⚠ **片方だけ失敗したときに
@@ -762,6 +792,17 @@ module Ginseng
       return $stdout.string
     ensure
       $stdout = original
+    end
+
+    # ⚠ `warn` の行も測る。🔴 ログの `reason` だけ見ていると、**運用者が実際に読む
+    # 文言**（`(PID )` のような壊れた形）を素通りさせる。
+    def capture_stderr
+      original = $stderr
+      $stderr = StringIO.new
+      yield
+      return $stderr.string
+    ensure
+      $stderr = original
     end
 
     def create(pid: nil, error: nil)
