@@ -124,7 +124,19 @@ module Ginseng
     # ⚠⚠ **これは早期の診断であって、start 同士のレースは閉じない (#622)。**
     # 閉じているのは `write_pid` の `O_EXCL`。🔴 **ここを通ったことを「取れた」と
     # 読まないこと。**
+    # 読めなかったせいで pid が分からない状態か。⚠ **`pid` を先に呼ぶ**（`read_pid_file`
+    # が「読めなかった」を記録するのはそこ）。
+    def unreadable_pid_file?
+      return pid.nil? && pid_file_unreadable?
+    end
+
     def abort_if_running!
+      # 🔴🔴 **読めなかったときは、サブクラスの `alive_state` に訊く前に拒む (#635)。**
+      # ⚠⚠ **`pid` は「無い」も「読めない」も nil に畳む**ので、上書き側が
+      # `pid&.positive?` で判定していると**「読めない」が :dead に化ける** — そこから
+      # 生きている常駐の pid ファイルを奪いにいける。⚠ 上流でここを閉じておけば、
+      # 利用側が見落としても二重起動には届かない。
+      abort_start!("#{pid_label} could not be read.", 'pid file unreadable') if unreadable_pid_file?
       case alive_state
       when :alive
         abort_start!("#{app_name} is already running (PID #{pid}).", 'already running')
@@ -160,8 +172,13 @@ module Ginseng
     # ⚠ **停止コマンド自身が孤児を作る**という形だった。
     def run_stop
       unless (p = pid)
-        warn 'PID file not found. Is the daemon started?'
-        exit 1
+        # ⚠⚠ **「無い」と「読めない」を言い分ける (#635)。** 🔴 読めないだけのときに
+        # 「PID file not found」と言うのは**嘘**で、しかもそこで無音のまま終わると
+        # `restart` が「起動を試みる前に」消える。
+        if pid_file_unreadable?
+          abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
+        end
+        abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
       end
       send_signal('TERM', p)
       # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
@@ -172,8 +189,7 @@ module Ginseng
       warn 'PID file found, but process was not running.'
     rescue Errno::EPERM
       # ⚠ **pid ファイルは残す。**消すと生きたままのプロセスが辿れなくなる。
-      warn "PID '#{p}' is not ours. Not stopping #{app_name}."
-      exit 1
+      abort_stop!("PID '#{p}' is not ours.", 'pid file is not ours')
     end
 
     def run_restart(args = [])

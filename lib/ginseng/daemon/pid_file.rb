@@ -87,6 +87,21 @@ module Ginseng
         return parse_pid(read_pid_file)
       end
 
+      # 直前の `pid`（＝ `read_pid_file`）が**在るのに読めなかった**か (#633)。
+      #
+      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
+      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
+      #
+      # ⚠⚠ **`alive_state` を上書きして `super` のあと `pid` を呼び直す利用側は、
+      # これも見ること (#635)。** 🔴 `pid` は「無い」も「読めない」も `nil` に畳むので、
+      # **`pid&.positive?` のような判定だけだと「読めない」が「動いていない」に化ける**
+      # — そこから `run_restart` が停止を飛ばし、二重起動に届く。
+      # ⚠ 上流は `abort_if_running!` でも直接これを見るので、**利用側が見落としても
+      # 起動は拒む**（→ `Daemon#abort_if_running!`）。
+      def pid_file_unreadable?
+        return !@pid_file_error.nil?
+      end
+
       # ⚠ 読めない pid ファイルでは番号が分からないので、代わりに場所を出す。
       def pid_label
         return "PID #{pid}" if pid
@@ -148,9 +163,21 @@ module Ginseng
       # exit 0 で返る**。supervisor は叩き直し続け、**落ちているのにログが 1 行も
       # 増えない**という形になる。
       def abort_start!(message, reason)
-        warn "#{message} Not starting #{app_name}."
+        abort_daemon!("#{message} Not starting #{app_name}.", 'not started', reason)
+      end
+
+      # 🔴🔴 **止める側の出口にも同じ規則を当てる (#635)。** `run_stop` の `warn` +
+      # `exit 1` は `@logger` を通っていなかったので、⚠⚠ **`restart` が
+      # 「起動を試みる前に」無音で終わる**経路が残っていた（`run_restart` は
+      # `alive_state` が :dead でないときに `run_stop` を通る）。
+      def abort_stop!(message, reason)
+        abort_daemon!("#{message} Not stopping #{app_name}.", 'not stopped', reason)
+      end
+
+      def abort_daemon!(message, state, reason)
+        warn message
         @logger.error(daemon: app_name, version: package_class.version,
-          message: 'not started', reason:, pid_file:)
+          message: state, reason:, pid_file:, error: @pid_file_error&.class&.to_s)
         exit 1
       end
 
@@ -292,15 +319,6 @@ module Ginseng
       # `Encoding::CompatibilityError` を上げない（⚠ 引数なしの `File.read` は UTF-8
       # で返るため、そこへ戻すと `pid` から例外が漏れる）。
       # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
-      # 直前の `read_pid_file` が**在るのに読めなかった**か (#633 Codex P2)。
-      #
-      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
-      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
-      # `alive_state` は `pid`（＝ `read_pid_file`）を通ってからここへ来る。
-      def pid_file_unreadable?
-        return !@pid_file_error.nil?
-      end
-
       def read_pid_file
         @pid_file_error = nil
         File.open(pid_file, PID_FILE_READ_FLAGS) do |f|

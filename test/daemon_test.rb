@@ -10,12 +10,30 @@ module Ginseng
     # シグナル送信だけ差し替えたデーモン。⚠ 他人のプロセスへ実際に TERM を送る
     # テストは書けないので、継ぎ目 (send_signal) で例外を注入する。
     class Stub < Daemon
-      attr_reader :signals
+      attr_reader :signals, :logs
 
       def initialize(opts = {})
         super
         @signals = []
         @error = opts[:error]
+        # ⚠⚠ **ログは「出たこと」を測る対象**（リリース前レビューの赤 2 回とも
+        # 「起動しなかったのに 1 行も残らない」形だった）。syslog へは出さない。
+        @logs = []
+        @logger = Recorder.new(@logs)
+      end
+
+      # 出力先ではなく記録だけする logger。⚠ 上流が渡す Hash をそのまま持つ。
+      class Recorder
+        def initialize(logs)
+          @logs = logs
+        end
+
+        [:error, :warn, :info, :debug, :fatal].each do |severity|
+          define_method(severity) do |message = nil|
+            @logs.push([severity, message])
+            return true
+          end
+        end
       end
 
       def command
@@ -429,6 +447,60 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **起動しない・止められないときは、必ず logger に 1 行残ること (#635)。**
+    #
+    # ⚠⚠ **stderr は当てにできない** — `run_restart` は fork した子の stderr を
+    # `File::NULL` へ付け替え、利用側の起動スクリプトも非 tty では捨てる。
+    # 🔴 リリース前レビューは**同じ形の赤を 2 回**出している（1 回目は
+    # `create_pid_file`、2 回目は `run_stop`）。**出口ごとに測る。**
+    def test_every_refusal_is_logged
+      # ⚠ 状態はケースごとに作る（`create` は同じ working_dir を使うので持ち越す）。
+      refusals = {
+        'start: 既に動いている' => [Process.ppid, :write_pid],
+        'stop: pid ファイルが無い' => [nil, :run_stop],
+      }
+
+      refusals.each do |name, (pid, method)|
+        daemon = create(pid:)
+        assert_raise(SystemExit, name) {daemon.send(method)}
+        assert_equal([:error], daemon.logs.map(&:first), name)
+        assert(daemon.logs.first.last.key?(:reason), "#{name}: 理由が入っていること")
+      end
+    end
+
+    # 🔴🔴 **読めない pid ファイルで `restart` が無音にならないこと (#635)。**
+    #
+    # ⚠⚠ **`run_restart` は `alive_state` が :dead でなければ `run_stop` を通る。**
+    # 読めないと :unknown なので必ず通り、そこが黙って `exit 1` していた
+    # （⚠ しかも「PID file not found」は**嘘** — ファイルはそこに在る）。
+    def test_run_stop_logs_when_the_pid_file_cannot_be_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EACCES)
+
+      assert_equal(:unknown, daemon.alive_state, 'restart はここで run_stop を通る')
+      assert_raise(SystemExit) {daemon.send(:run_stop)}
+      assert_equal([:error], daemon.logs.map(&:first))
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **上書きされた `alive_state` が :dead と答えても、読めないなら起動しない (#635)。**
+    #
+    # ⚠ 利用側（`makoto2`）は `alive_state` を上書きし、`super` のあと `pid` を呼び直して
+    # `pid&.positive?` で判定している。⚠⚠ **`pid` は「無い」も「読めない」も nil に
+    # 畳む**ので、読めないときに :dead へ化ける — そこから**生きている常駐の pid
+    # ファイルを奪いにいける**。上流で拒む。
+    def test_abort_if_running_refuses_when_the_pid_file_cannot_be_read
+      daemon = create(pid: unused_pid)
+      daemon.define_singleton_method(:alive_state) {:dead}
+      original = stub_read_error(daemon, Errno::EIO)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **FIFO を置かれても止まらないこと (#633 Codex P1)。**
     #
     # pid ファイルの位置に FIFO があると、⚠⚠ **書き手が現れるまで `open` も `read` も
@@ -639,6 +711,10 @@ module Ginseng
 
     def create(pid: nil, error: nil)
       daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: @dir, error:})
+      # ⚠ **同じ working_dir を使い回すので、状態は毎回作り直す。**
+      # 🔴 `pid:` 無しを「pid ファイルが無い」の意味で使うテストが、前のテストの
+      # 書いたものを拾っていた。
+      FileUtils.rm_f(daemon.pid_file)
       File.write(daemon.pid_file, pid.to_s) if pid
       return daemon
     end
