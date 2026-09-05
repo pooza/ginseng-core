@@ -276,7 +276,7 @@ module Ginseng
       target = daemon.pid_file
       original = File.method(:open)
       File.define_singleton_method(:open) do |path, *args, &block|
-        flags = File::RDWR | Daemon::PidFile::NOFOLLOW
+        flags = Daemon::PidFile::PID_FILE_OPEN_FLAGS
         raise Errno::EACCES, path if path == target && args.first == flags
         next original.call(path, *args, &block)
       end
@@ -316,16 +316,23 @@ module Ginseng
     def test_pid_rejects_a_broken_pid_file
       daemon = create
 
-      # 🔴 **`'123abc'.to_i` は `123`。** 先頭が数字なら壊れたファイルでも通ってしまい、
-      # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
-      # 🔴🔴 **`Integer(value, 10)` でもまだ足りない（Codex P1・2 巡目）。**
-      # Ruby は**アンダースコアを桁区切りとして受け付ける**ので `'12_34'` が `1234` になる。
-      # 🔴🔴 **`9999999999` は 10 桁だが `pid_t`（32bit 符号付き）の範囲外**（Codex P2）。
-      # `Process.kill` が `RangeError` を上げ、`alive_state` が `:unknown` に丸めるので、
-      # ⚠⚠ **通してしまうと起動を永久に拒み、奪って復帰する機会も来ない**。
-      broken = ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10',
-        '12_34', '+123', '１２３', '9999999999', '2147483648']
-      broken.each do |content|
+      # ⚠ **どの門で落ちるかで分けて並べる。** 3 つの上限（量・形・番号）は理由が
+      # 別なので、まとめて 1 本の配列にすると何を測っているのか読めなくなる。
+      broken = {
+        # 🔴 **`'123abc'.to_i` は `123`。** 先頭が数字なら壊れたファイルでも通り、
+        # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
+        # 🔴 **`Integer(value, 10)` でもまだ足りない** — Ruby は**アンダースコアを
+        # 桁区切りとして受け付ける**ので `'12_34'` が `1234` になる（Codex P1・2 巡目）。
+        形: ['', "\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10', '12_34',
+          '+123', '１２３'],
+        # ⚠ `0` は「自分のプロセスグループ」を指すので pid ではない (#627)。
+        下端: ['0', "0\n"],
+        # 🔴🔴 **`9999999999` は 10 桁だが `pid_t`（32bit 符号付き）の範囲外**（Codex P2）。
+        # `Process.kill` が `RangeError` を上げ、`alive_state` が `:unknown` に丸めるので、
+        # ⚠⚠ **通してしまうと起動を永久に拒み、奪って復帰する機会も来ない**。
+        上端: ['2147483648', '9999999999'],
+      }
+      broken.values.flatten.each do |content|
         File.write(daemon.pid_file, content)
 
         assert_nil(daemon.pid, "#{content.inspect} は pid として読めない")
@@ -413,6 +420,45 @@ module Ginseng
       assert_equal(Process.pid, daemon.pid)
     end
 
+    # 🔴🔴 **`O_NOFOLLOW` の errno はプラットフォームで違う (#633)。**
+    #
+    # Linux / macOS は `ELOOP`、**FreeBSD は `EMLINK`**（キュアスタ！の本番は FreeBSD）。
+    # ⚠⚠ **errno を列挙すると、そこでだけ例外が突き抜ける** — `run_restart` の子は
+    # stderr を `/dev/null` へ付け替えているので、backtrace すら残らない。
+    def test_write_pid_gives_up_cleanly_on_a_freebsd_style_nofollow_error
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:open)
+      File.define_singleton_method(:open) do |path, *args, &block|
+        flags = Daemon::PidFile::PID_FILE_OPEN_FLAGS
+        raise Errno::EMLINK, path if path == target && args.first == flags
+        next original.call(path, *args, &block)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **作れないときも「取れなかった」で終わること（リリース前レビューの赤）。**
+    #
+    # `create_pid_file` が `EEXIST` しか握らないと、⚠ `tmp/pids` が書けない・ro・
+    # 満杯・fd 枯渇のときに例外のまま抜ける。⚠⚠ **`run_restart` の子では backtrace も
+    # 消え、親は exit 0 で返る** — 落ちているのにログが 1 行も増えない。
+    def test_write_pid_gives_up_cleanly_when_the_pid_file_cannot_be_created
+      daemon = create
+      target = daemon.pid_file
+      original = File.method(:open)
+      File.define_singleton_method(:open) do |path, *args, &block|
+        raise Errno::EACCES, path if path == target
+        next original.call(path, *args, &block)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
     # 🔴🔴 **symlink を辿らないこと (#629)。**
     #
     # 辿ると、pid ファイルを置き換えられる立場の相手に、⚠⚠ **デーモンのユーザーが
@@ -427,12 +473,41 @@ module Ginseng
       assert_equal('do not touch', File.read(victim), 'リンク先を書き替えないこと')
     end
 
+    # ⚠⚠ **上限の内側は通ること。** 🔴 外側だけを測ると、`<` と `<=` の取り違えを
+    # 素通りさせる（実際、上限を 11 バイトや 4096 バイトへ動かしてもスイートは
+    # 全緑だった — リリース前レビューの実測）。
+    def test_pid_accepts_the_boundaries
+      daemon = create
+
+      # 番号の上端ちょうど（`pid_t` の最大）。
+      File.write(daemon.pid_file, '2147483647')
+
+      assert_equal(2_147_483_647, daemon.pid)
+
+      # 読む量の上限ちょうど（64 バイト）。⚠ 期待値は**リテラル**で置く — 定数から
+      # 作ると、実装と一緒に動いて何も固定しない。
+      File.write(daemon.pid_file, "123#{' ' * 61}")
+
+      assert_equal(64, File.size(daemon.pid_file))
+      assert_equal(123, daemon.pid)
+    end
+
+    # ⚠⚠ **不正な UTF-8 バイトで例外を上げないこと。** 🔴 長さを渡さない `File.read` は
+    # UTF-8 で返るので、`strip` / `match?` が `Encoding::CompatibilityError` を上げ、
+    # `pid` を呼んだ側が落ちる（`run_restart` は途中で抜けて後継を fork しない）。
+    def test_pid_tolerates_invalid_byte_sequences
+      daemon = create
+      File.binwrite(daemon.pid_file, "123\xFF")
+
+      assert_nothing_raised {daemon.pid}
+      assert_nil(daemon.pid)
+    end
+
     # ⚠⚠ **範囲外の番号でも「起動を永久に拒む」に落ちないこと (#629 Codex P2)。**
     def test_write_pid_reclaims_a_pid_file_out_of_range
       daemon = create
       File.write(daemon.pid_file, '9999999999')
 
-      assert_equal(:dead, daemon.alive_state, ':unknown に丸めないこと')
       assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
       assert_equal(Process.pid, daemon.pid)
     end
@@ -443,12 +518,10 @@ module Ginseng
       daemon = create
       File.write(daemon.pid_file, '9' * 10_000)
 
-      assert_equal(Daemon::PidFile::PID_FILE_MAX_BYTES + 1, daemon.send(:read_pid_file).size,
+      # ⚠ 期待値は**リテラル**（65 = 上限 64 ＋ 超過を知るための 1 バイト）。
+      # 🔴 定数から作ると実装と一緒に動いて、上限が何であっても緑になる。
+      assert_equal(65, daemon.send(:read_pid_file).bytesize,
         '上限を超えていることが分かるだけ余分に読むこと')
-      # ⚠⚠ **桁数を切っているので「読めない中身」になり、奪って復帰できる。**
-      assert_nil(daemon.pid)
-      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
-      assert_equal(Process.pid, daemon.pid)
     end
 
     # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**
