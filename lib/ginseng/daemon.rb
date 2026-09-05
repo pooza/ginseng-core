@@ -136,22 +136,21 @@ module Ginseng
     def write_pid
       PID_ACQUIRE_ATTEMPTS.times do
         return if create_pid_file
-        # ⚠ **判断より先に読む。** 読んだあとで中身が変わっていたら奪わない
-        # （reclaim_pid_file がロックの中で読み直す）。
-        stale = pid
+        # ⚠ **解釈する前の中身を覚える。** 奪うときに**ロックの中で同じものか**を
+        # 確かめるので、`to_i` した結果では足りない（🔴 空と `'0'` と `'abc'` が
+        # 同じ `0` になる）。
+        observed = read_pid_file
+        # ⚠ 読む直前に消えることがある (#561)。作り直しから試す。
+        next if observed.nil?
         # ⚠⚠ **自分が既に取っているなら取得済み。** ここを通さないと、同じプロセスから
         # 2 度呼ばれたときに**自分の pid を見て「already running」で終了する**。
-        return if stale == Process.pid
-        # ⚠ **:alive / :unknown はここで終わる。** サブクラスが上書きした
-        # alive_state を通すために、pid を渡さずこちらを呼ぶ。
-        abort_if_running!
-        # 🔴🔴 **空の pid ファイルは「取得の途中」であって stale ではない
-        # (#622 Codex P1)。** `O_EXCL` に勝った 1 本が、まだ pid を書いていない状態。
-        # ⚠⚠ **`File.read('').to_i` は `0` を返し、`0` は truthy** なので、
-        # `alive_state` を上書きしている利用側（非正の pid を :dead と読む）では
-        # **奪えてしまい、2 本とも起動する**。⚠ 読む直前に消えた場合 (#561) も同じ扱い。
-        next unless stale&.positive?
-        return if reclaim_pid_file(stale)
+        return if observed.to_i == Process.pid
+        # 🔴 **pid として読めない中身に生死を訊かない。** 空・非正の中身は訊く相手が
+        # 居ない — 既定では `Process.kill(0, 0)` が成功して :alive、`alive_state` を
+        # 上書きしている利用側では :dead と、**答えが実装で割れる** (#627)。
+        # ⚠ 奪ってよいかは、この下の `reclaim_pid_file` がロックの中で決める。
+        abort_if_running! if observed.to_i.positive?
+        return if reclaim_pid_file(observed)
       end
       warn "Could not acquire PID file '#{pid_file}'. Not starting #{app_name}."
       exit 1
@@ -168,12 +167,12 @@ module Ginseng
     # ⚠ **ファイルの同一性を変えない**（unlink しない）ので、消される相手が居ない。
     # `flock` を取れた 1 本だけが**中身を差し替えて**持ち主になる。⚠⚠ **ロックを
     # 取ってから読み直す** — 待っている間に別の start が奪っていることがある。
-    def reclaim_pid_file(stale)
-      # ⚠ **呼ぶ側に頼らない。** 非正の pid は「取得の途中」で、奪う相手ではない。
-      return false unless stale.positive?
+    def reclaim_pid_file(observed)
       File.open(pid_file, File::RDWR) do |f|
         return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
-        return false unless f.read.to_i == stale
+        # ⚠⚠ **ロックを取ってから読み直す。** 待っている間に別の start が奪って
+        # いれば、それはもう自分が見たファイルではない。
+        return false unless f.read == observed
         f.rewind
         f.write(Process.pid.to_s)
         f.flush
@@ -191,15 +190,39 @@ module Ginseng
     # ⚠⚠ **`File.write` にしないこと (#622)。** あれは在っても上書きするので、
     # 「無ければ作る」の原子性が無い。
     def create_pid_file
-      File.open(pid_file, File::WRONLY | File::CREAT | File::EXCL) do |f|
+      File.open(pid_file, File::RDWR | File::CREAT | File::EXCL) do |f|
         # ⚠ **書く側は必ずロックを取る。** 取らないと、奪いに来た側が
         # **書きかけの中身**を読む（reclaim_pid_file はロックの中で読み直す）。
-        f.flock(File::LOCK_EX)
+        lock_pid_file(f)
+        # 🔴🔴 **作成から flock までの隙間で奪われていたら、書かずに負けを認める
+        # (#622 Codex P1)。** ⚠⚠ **この 1 行があるから、空のファイルを「見捨てられた」
+        # と読んで奪ってよくなる** — 奪われた側が上書きし返さないので、2 本とも
+        # 起動する形にならない。⚠ 負けたことは呼ぶ側が次の周回で読み直して知る。
+        return false unless f.read.empty?
+        f.rewind
         f.write(Process.pid.to_s)
       end
       return true
     rescue Errno::EEXIST
       return false
+    end
+
+    # ⚠ **テストのための継ぎ目**。「作成には勝ったが flock はまだ」という瞬間に
+    # 別の start が奪う状況は、実プロセスを並べても順序を握れないので作れない。
+    def lock_pid_file(file)
+      return file.flock(File::LOCK_EX)
+    end
+
+    # pid ファイルの中身を**解釈せずに**返す。無ければ nil。
+    #
+    # ⚠ `pid` は `to_i` した結果しか返さないので、🔴 **空と `'0'` と壊れた中身が
+    # 区別できない**。奪うときの「同じものか」の判定にはこちらを使う。
+    def read_pid_file
+      return File.read(pid_file) if File.file?(pid_file)
+      return nil
+    rescue Errno::ENOENT
+      # ⚠ 読む直前に消えることがある (#561)。
+      return nil
     end
 
     # ⚠⚠ **自分が知っている pid のままのときだけ消す (#532)。**
