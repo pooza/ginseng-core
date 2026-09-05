@@ -136,7 +136,12 @@ module Ginseng
       # `pid&.positive?` で判定していると**「読めない」が :dead に化ける** — そこから
       # 生きている常駐の pid ファイルを奪いにいける。⚠ 上流でここを閉じておけば、
       # 利用側が見落としても二重起動には届かない。
-      abort_start!("#{pid_label} could not be read.", 'pid file unreadable') if unreadable_pid_file?
+      # ⚠⚠ **ここで `pid_label` を使わない (#635 Codex P2)。** あれは `pid` を呼ぶので
+      # **pid ファイルを読み直し**、🔴 **記録してあった errno を消す**（一過性の失敗なら
+      # 2 回目が成功して、番号入りの矛盾したメッセージにもなる）。
+      if unreadable_pid_file?
+        abort_start!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
+      end
       case alive_state
       when :alive
         abort_start!("#{app_name} is already running (PID #{pid}).", 'already running')

@@ -431,16 +431,7 @@ module Ginseng
       daemon = create(pid: unused_pid)
       # ⚠ **1 回だけ失敗する**（一過性の EIO）。🔴 読み直して確かめる実装だと、
       # 2 回目が成功して :dead に落ちる — **読めなかった事実を捨てている**。
-      target = daemon.pid_file
-      original = File.method(:open)
-      raised = false
-      File.define_singleton_method(:open) do |path, *args, &block|
-        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS && !raised
-          raised = true
-          raise Errno::EIO, path
-        end
-        next original.call(path, *args, &block)
-      end
+      original = stub_read_error(daemon, Errno::EIO, once: true)
 
       assert_equal(:unknown, daemon.alive_state)
     ensure
@@ -481,6 +472,21 @@ module Ginseng
       assert_raise(SystemExit) {daemon.send(:run_stop)}
       assert_equal([:error], daemon.logs.map(&:first))
       assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **拒む理由を組み立てる途中で、読み直して errno を消さないこと (#635 Codex P2)。**
+    #
+    # ⚠ `pid_label` は `pid` を呼ぶので pid ファイルを読み直す。一過性の失敗だと
+    # ⚠⚠ **2 回目が成功して `error: nil` になり、しかも「PID 123 could not be read」と
+    # いう矛盾したメッセージになる** — 足したばかりの errno の記録が消える。
+    def test_refusal_keeps_the_read_error
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, once: true)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error], '読めなかった理由が残ること')
     ensure
       File.define_singleton_method(:open, original) if original
     end
@@ -699,11 +705,15 @@ module Ginseng
     # ⚠⚠ **注入点は実装が実際に通る場所に置くこと。** 🔴 `File.read` / `File.file?` に
     # 挿していた版は、実装が `File.open` を使うようになった時点で**何も測らなくなった**
     # （リリース前レビューで踏んだ形と同じ）。
-    def stub_read_error(daemon, error)
+    def stub_read_error(daemon, error, once: false)
       target = daemon.pid_file
       original = File.method(:open)
+      raised = false
       File.define_singleton_method(:open) do |path, *args, &block|
-        raise error, path if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS
+        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS && !(once && raised)
+          raised = true
+          raise error, path
+        end
         next original.call(path, *args, &block)
       end
       return original
