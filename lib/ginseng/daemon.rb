@@ -145,12 +145,17 @@ module Ginseng
       state = alive_state
       # ⚠⚠ **`alive_state` も pid ファイルを読む。** どちらの読み取りで失敗しても
       # 🔴 **状態は決められていない** — :dead / :alive と答えられていても起動しない。
+      # ⚠ `alive_state` は入口でもあり記録を消すので、**呼ぶ前に受け取っておく**。
+      error ||= pid_file_error
+      current = pid
       error ||= pid_file_error
       abort_unreadable_pid_file!(error) if error
+      # ⚠⚠ **検査のあいだに変わったなら番号を名乗らない (#635 Codex P2・7 巡目)。**
+      # 状態は新しい方を、番号は古い方を指すため。⚠ **拒むこと自体は変わらない。**
+      found = nil if current != found
       case state
       when :alive
-        # ⚠ **番号が無いなら場所を出す。** 2 つの読み取りの間に別の start が
-        # 作った場合、`found` は nil のまま（🔴 `(PID )` にしない）。
+        # ⚠ **番号が無いなら場所を出す**（🔴 `(PID )` にしない）。
         abort_start!("#{app_name} is already running (#{pid_label(found)}).", 'already running',
           nil)
       when :unknown
@@ -229,6 +234,12 @@ module Ginseng
       # 片方だけ失敗したときに `is running (PID )` のような壊れた行になる。
       error = pid_file_error
       state = alive_state
+      # ⚠⚠ **`alive_state` は入口でもあるので記録を消す。** 🔴 だから**呼ぶ前に
+      # 受け取っておく**（持ち越しは `alive_state` の内側でだけ効く）。
+      error ||= pid_file_error
+      current = pid
+      # ⚠⚠ **検証の読み取り自身の失敗も見る。** 🔴 失敗すると `nil` が返り、
+      # 「変わった」にも「変わっていない」にも化ける (#635 Codex P2・7 巡目)。
       error ||= pid_file_error
       return puts "#{app_name}: PID file '#{pid_file}' could not be read" if error
       # 🔴🔴 **検査のあいだに中身が変わったら、番号と状態は別のプロセスを指す
@@ -236,7 +247,7 @@ module Ginseng
       # 書いた場合、**`alive_state` は新しい方を見て `:alive`、番号は古い方**になり、
       # **死んだ番号を「動いている」と報告する**。⚠ `alive_state` は利用側の上書き点で
       # 引数を取れないので、**変わっていないことを確かめる**側で閉じる。
-      return puts "#{app_name}: PID file changed while checking (unknown)" if pid != found
+      return puts "#{app_name}: PID file changed while checking (unknown)" if current != found
       # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
       state = :unknown if state == :alive && found.nil?
       case state

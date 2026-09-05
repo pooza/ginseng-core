@@ -491,6 +491,38 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **検証の読み取り自身が失敗しても、正しく報告すること (#635 Codex P2・7 巡目)。**
+    # ⚠⚠ 失敗すると `nil` が返るので、**「変わった」にも「変わっていない」にも化ける**。
+    def test_run_status_reports_a_failed_verification_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 3)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/could not be read/, output)
+      assert_not_match(/changed while checking/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **起動を拒むときも、変わった番号を名乗らないこと (#635 Codex P2・7 巡目)。**
+    # ⚠ 拒むこと自体は変わらないが、**ログに残る番号が別のプロセスのもの**になる。
+    def test_abort_if_running_does_not_name_a_changed_pid
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s)
+        next :alive
+      end
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      end
+
+      assert_not_match(/PID \d/, output, '別のプロセスの番号を名乗らないこと')
+      assert_match(/PID file/, output)
+    end
+
     # 🔴🔴 **検査のあいだに pid ファイルが変わったら、番号入りで報告しないこと
     # (#635 Codex P2・6 巡目)。**
     #
