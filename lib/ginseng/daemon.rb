@@ -4,6 +4,12 @@ module Ginseng
   class Daemon
     include Package
 
+    # pid ファイルを取り直す回数 (#622)。⚠ **死んだ pid ファイルを剥がして作り直す
+    # のは 1 回で足りる**が、剥がした直後に別の start に勝たれることがあるので少し
+    # 余裕を持たせる。⚠⚠ **無制限にはしない** — 回り続けるより起動しないほうが安全
+    # （こちらが待っている間に 2 本目が立つ形を作らない）。
+    PID_ACQUIRE_ATTEMPTS = 3
+
     attr_reader :pid_file, :working_dir, :app_name
 
     def initialize(opts = {})
@@ -109,8 +115,50 @@ module Ginseng
 
     private
 
+    # pid ファイルを**原子的に**取得する。取れなければ起動しない (#622)。
+    #
+    # 🔴 **`abort_if_running!` → `write_pid` の 2 段では閉じない。** pid ファイルが
+    # 書かれるのはプロセスの起動から数秒後（`bundle exec` のブート）なので、
+    # ⚠⚠ **その窓に入った 2 本目も「未起動」と判断してすり抜ける**。両方が起動し、
+    # 後から書いた方だけが pid ファイルに残るので、**先の 1 本はどの pid ファイル
+    # からも辿れない孤児になる** — #509 / #510 / #532 で潰したのと同じ結末の、
+    # **start 同士のレース**。⚠ 実例は pooza/mulukhiya-toot-proxy#4675（sidekiq が
+    # 2 本立ち、スケジュール登録された全ワーカーが毎サイクル二重投入された）。
+    #
+    # ⚠⚠ **`O_EXCL` は「無ければ作る」を原子的に行う**ので、勝てるのは 1 本だけになる。
+    # ⚠ **`O_EXCL` だけだと異常終了で残った pid ファイルが起動を永久に阻む**ので、
+    # **死んでいると断定できたときに限って**剥がして取り直す（🔴 **:unknown では
+    # 剥がさない**。触れないだけで生きている可能性がある — #510）。
+    #
+    # ⚠ **ここは利用側の override 点でもある**（pid が外から見えるより前に trap を
+    # 張る、など）。**`super` を呼ぶ形は保つこと。**
     def write_pid
-      File.write(pid_file, Process.pid.to_s)
+      PID_ACQUIRE_ATTEMPTS.times do
+        return if create_pid_file
+        # ⚠ **判断より先に読む。** 読んだあとで中身が変わっても、剥がすのは
+        # **まだ stale のままのとき**だけになる（remove_pid の契約。#532）。
+        stale = pid
+        # ⚠ **:alive / :unknown はここで終わる。** サブクラスが上書きした
+        # alive_state を通すために、pid を渡さずこちらを呼ぶ。
+        abort_if_running!
+        # ⚠ 読む直前に消えることがある (#561)。⚠⚠ **`remove_pid(nil)` は無条件削除**
+        # なので渡さない — 別の start がいま作った pid ファイルを消しうる。
+        next unless stale
+        remove_pid(stale)
+      end
+      warn "Could not acquire PID file '#{pid_file}'. Not starting #{app_name}."
+      exit 1
+    end
+
+    # ⚠⚠ **`File.write` にしないこと (#622)。** あれは在っても上書きするので、
+    # 「無ければ作る」の原子性が無い。
+    def create_pid_file
+      File.open(pid_file, File::WRONLY | File::CREAT | File::EXCL) do |f|
+        f.write(Process.pid.to_s)
+      end
+      return true
+    rescue Errno::EEXIST
+      return false
     end
 
     # ⚠⚠ **自分が知っている pid のままのときだけ消す (#532)。**
@@ -139,6 +187,10 @@ module Ginseng
     # ⚠ **:unknown でも起動しない** (#509 / #510)。pid ファイルが指すプロセスに
     # 触れないだけで、生きている可能性がある。ここで通すと 2 本目が立ち、
     # 1 本目が孤児になる。
+    #
+    # ⚠⚠ **これは早期の診断であって、start 同士のレースは閉じない (#622)。**
+    # 閉じているのは `write_pid` の `O_EXCL`。🔴 **ここを通ったことを「取れた」と
+    # 読まないこと。**
     def abort_if_running!
       case alive_state
       when :alive
@@ -151,6 +203,7 @@ module Ginseng
     end
 
     def run_start(args = [])
+      # ⚠ 早期に理由を出すためのもの。**取得そのものは write_pid が原子的に行う** (#622)。
       abort_if_running!
       puts motd
       write_pid

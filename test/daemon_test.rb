@@ -138,6 +138,77 @@ module Ginseng
       File.define_singleton_method(:file?, original) if original
     end
 
+    # ⚠⚠ **本件の芯 (#622)。** pid ファイルが既に在って持ち主が生きているなら、
+    # `write_pid` は**上書きせずに終了する**。🔴 上書きすると、先に起動した 1 本が
+    # どの pid ファイルからも辿れない孤児になる（start 同士のレースの帰結）。
+    def test_write_pid_refuses_when_owner_is_alive
+      owner = Process.ppid
+      daemon = create(pid: owner)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(owner, daemon.pid, '先に取った側の pid が残ること')
+    end
+
+    # ⚠ **:unknown でも取らない** (#510)。触れないだけで生きている可能性がある。
+    # ⚠⚠ **剥がさないこと**まで測る — 剥がすと次の start が 2 本目を立てる。
+    def test_write_pid_refuses_when_owner_is_unknown
+      stale = unused_pid
+      daemon = create(pid: stale)
+      daemon.define_singleton_method(:alive_state) {:unknown}
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(stale, daemon.pid, 'pid ファイルを剥がさないこと')
+    end
+
+    # ⚠⚠ **異常終了で残った pid ファイルは剥がして取り直す (#622)。**
+    # `O_EXCL` だけで済ませると、**そのファイルが起動を永久に阻む**。
+    def test_write_pid_reclaims_dead_pid_file
+      daemon = create(pid: unused_pid)
+
+      daemon.send(:write_pid)
+
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    def test_write_pid_creates_pid_file
+      daemon = create
+
+      daemon.send(:write_pid)
+
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # 🔴 **剥がしてよいのは「自分が死んでいると判断した pid のまま」のときだけ (#532)。**
+    # 判断してから剥がすまでの間に別の start が取り直していたら、それは他人の pid
+    # ファイルで、⚠⚠ **消せばその 1 本を孤児にする**。
+    def test_write_pid_keeps_pid_file_taken_by_another_start
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      states = [:dead, :alive]
+      # alive_state を見ている隙に「別の start が取り直した」状態を作る。
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s) if states.first == :dead
+        next states.shift || :alive
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(successor, daemon.pid, '後から取った側の pid ファイルが残ること')
+    end
+
+    # ⚠⚠ **原子性は分岐を並べても測れない。実際に同時へ走らせる (#622)。**
+    # 🔴 `File.write` に戻すと**全員が勝つ**ので、このテストだけが落ちる。
+    def test_create_pid_file_has_exactly_one_winner
+      daemon = create
+      children = Array.new(4) {fork {exit(daemon.send(:create_pid_file) ? 0 : 1)}}
+
+      winners = children.count do |child|
+        Process.waitpid2(child).last.success?
+      end
+
+      assert_equal(1, winners, '勝てるのは 1 本だけ')
+      assert_path_exist(daemon.pid_file)
+    end
+
     private
 
     def create(pid: nil, error: nil)
