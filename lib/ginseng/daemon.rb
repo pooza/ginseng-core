@@ -145,8 +145,12 @@ module Ginseng
         # ⚠ **:alive / :unknown はここで終わる。** サブクラスが上書きした
         # alive_state を通すために、pid を渡さずこちらを呼ぶ。
         abort_if_running!
-        # ⚠ 読む直前に消えることがある (#561)。作り直しから試す。
-        next unless stale
+        # 🔴🔴 **空の pid ファイルは「取得の途中」であって stale ではない
+        # (#622 Codex P1)。** `O_EXCL` に勝った 1 本が、まだ pid を書いていない状態。
+        # ⚠⚠ **`File.read('').to_i` は `0` を返し、`0` は truthy** なので、
+        # `alive_state` を上書きしている利用側（非正の pid を :dead と読む）では
+        # **奪えてしまい、2 本とも起動する**。⚠ 読む直前に消えた場合 (#561) も同じ扱い。
+        next unless stale&.positive?
         return if reclaim_pid_file(stale)
       end
       warn "Could not acquire PID file '#{pid_file}'. Not starting #{app_name}."
@@ -165,6 +169,8 @@ module Ginseng
     # `flock` を取れた 1 本だけが**中身を差し替えて**持ち主になる。⚠⚠ **ロックを
     # 取ってから読み直す** — 待っている間に別の start が奪っていることがある。
     def reclaim_pid_file(stale)
+      # ⚠ **呼ぶ側に頼らない。** 非正の pid は「取得の途中」で、奪う相手ではない。
+      return false unless stale.positive?
       File.open(pid_file, File::RDWR) do |f|
         return false unless f.flock(File::LOCK_EX | File::LOCK_NB)
         return false unless f.read.to_i == stale

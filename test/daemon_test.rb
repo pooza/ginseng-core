@@ -231,6 +231,23 @@ module Ginseng
       assert_equal(Process.ppid, daemon.pid, '中身を書き替えないこと')
     end
 
+    # 🔴🔴 **空の pid ファイルを奪わないこと (#622 Codex P1)。**
+    #
+    # `O_EXCL` の作成に勝った 1 本が、**まだ pid を書いていない**状態がある。
+    # ⚠⚠ **`File.read('').to_i` は `0`。`0` は truthy** なので、`alive_state` を
+    # 上書きしている利用側（🔴 **`makoto2` は非正の pid を :dead と読む**）では
+    # **奪えてしまい、奪った側と作った側の 2 本が起動する**。
+    def test_write_pid_does_not_reclaim_an_empty_pid_file
+      daemon = create
+      # 取得の途中（作成には勝ったが pid はまだ）を再現する。
+      File.write(daemon.pid_file, '')
+      # 利用側の alive_state の override（非正の pid を :dead と読む）を模す。
+      daemon.define_singleton_method(:alive_state) {:dead}
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('', File.read(daemon.pid_file), '書きかけの pid ファイルを奪わないこと')
+    end
+
     # ⚠⚠ **触れない pid ファイルで落ちないこと。** 別ユーザーが残したファイルは
     # 書けない。🔴 例外のまま抜けると backtrace だけが出て、運用者には理由が伝わらない。
     # ⚠ 権限そのものではなく `Errno::EACCES` の扱いを測る（CI は root で回るので、
