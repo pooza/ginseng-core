@@ -204,6 +204,7 @@ module Ginseng
       # ⚠⚠ **`File.write` にしないこと (#622)。** あれは在っても上書きするので、
       # 「無ければ作る」の原子性が無い。
       def create_pid_file
+        written = false
         File.open(pid_file, File::RDWR | File::CREAT | File::EXCL) do |f|
           # ⚠ **書く側は必ずロックを取る。** 取らないと、奪いに来た側が
           # **書きかけの中身**を読む（reclaim_pid_file はロックの中で読み直す）。
@@ -215,6 +216,7 @@ module Ginseng
           return false unless f.read.empty?
           f.rewind
           f.write(Process.pid.to_s)
+          written = true
         end
         return true
       rescue Errno::EEXIST
@@ -227,6 +229,11 @@ module Ginseng
         # 付け替えているので backtrace すら残らず、親は exit 0 で返る**。
         # ⚠ 奪う側 (`reclaim_pid_file`) と対称にする。
         report_unusable_pid_file(e)
+        # 🔴🔴 **書いたあとの失敗は取り直しに混ぜない (#633 Codex P2)。**
+        # close / writeback が落ちた場合、pid は書けているので、⚠⚠ **次の周回は
+        # 「自分が既に取っている」と読んで、書けたか分からないまま起動する**。
+        # ここは取り合いに負けたのではないので、**そのまま終わる**。
+        abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed') if written
         return false
       end
 
@@ -271,6 +278,19 @@ module Ginseng
       # `Encoding::CompatibilityError` を上げない（⚠ 引数なしの `File.read` は UTF-8
       # で返るため、そこへ戻すと `pid` から例外が漏れる）。
       # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
+      # 在るのに読めないか。⚠⚠ **権限だけでは足りない (#633 Codex P2)。**
+      # 🔴 `EIO` のような読み取り失敗も「読めない」で、**それを :dead に倒すと
+      # `run_status` が「動いていない」と嘘をつき、`run_restart` が停止を飛ばす**。
+      # ⚠ 1 バイト読んで確かめる（中身は要らない）。
+      def pid_file_unreadable?
+        return false unless File.exist?(pid_file)
+        return true unless File.readable?(pid_file)
+        File.read(pid_file, 1)
+        return false
+      rescue SystemCallError
+        return true
+      end
+
       def read_pid_file
         return File.read(pid_file, PID_FILE_MAX_BYTES + 1).to_s if File.file?(pid_file)
         return nil

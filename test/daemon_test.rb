@@ -420,6 +420,43 @@ module Ginseng
       assert_equal(Process.pid, daemon.pid)
     end
 
+    # 🔴🔴 **読めない理由は権限だけではない (#633 Codex P2)。**
+    #
+    # `EIO` のような読み取り失敗を `:dead` に倒すと、⚠⚠ **`run_status` が「動いて
+    # いない」と嘘をつき、`run_restart` が停止を飛ばす** — pid ファイルが生きている
+    # プロセスを指している可能性があるのに。
+    def test_alive_state_is_unknown_when_the_pid_file_cannot_be_read
+      daemon = create(pid: unused_pid)
+      target = daemon.pid_file
+      original = File.method(:read)
+      File.define_singleton_method(:read) do |path, *args, &block|
+        raise Errno::EIO, path if path == target
+        next original.call(path, *args, &block)
+      end
+
+      assert_equal(:unknown, daemon.alive_state)
+    ensure
+      File.define_singleton_method(:read, original) if original
+    end
+
+    # 🔴🔴 **書いたあとの失敗を取り直しに混ぜないこと (#633 Codex P2)。**
+    #
+    # close / writeback が落ちると pid は書けているので、⚠⚠ **次の周回が「自分が
+    # 既に取っている」と読んで、書けたか分からないまま起動する**。
+    def test_write_pid_does_not_start_after_a_late_write_error
+      daemon = create
+      # 書いたあとの close で落ちる状況を作る。
+      daemon.define_singleton_method(:lock_pid_file) do |file|
+        file.define_singleton_method(:close) do
+          super()
+          raise Errno::EIO, 'close'
+        end
+        next super(file)
+      end
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+    end
+
     # 🔴🔴 **`O_NOFOLLOW` の errno はプラットフォームで違う (#633)。**
     #
     # Linux / macOS は `ELOOP`、**FreeBSD は `EMLINK`**（キュアスタ！の本番は FreeBSD）。
