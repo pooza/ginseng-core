@@ -320,8 +320,11 @@ module Ginseng
       # ⚠⚠ **`run_stop` がその番号の無関係なプロセスへ `TERM` を送る**（Codex P1）。
       # 🔴🔴 **`Integer(value, 10)` でもまだ足りない（Codex P1・2 巡目）。**
       # Ruby は**アンダースコアを桁区切りとして受け付ける**ので `'12_34'` が `1234` になる。
+      # 🔴🔴 **`9999999999` は 10 桁だが `pid_t`（32bit 符号付き）の範囲外**（Codex P2）。
+      # `Process.kill` が `RangeError` を上げ、`alive_state` が `:unknown` に丸めるので、
+      # ⚠⚠ **通してしまうと起動を永久に拒み、奪って復帰する機会も来ない**。
       broken = ['', "\n", '0', "0\n", 'not a pid', '-1', '123abc', '12 34', "1\n2", '0x10',
-        '12_34', '+123', '１２３']
+        '12_34', '+123', '１２３', '9999999999', '2147483648']
       broken.each do |content|
         File.write(daemon.pid_file, content)
 
@@ -422,6 +425,16 @@ module Ginseng
 
       assert_raise(SystemExit) {daemon.send(:write_pid)}
       assert_equal('do not touch', File.read(victim), 'リンク先を書き替えないこと')
+    end
+
+    # ⚠⚠ **範囲外の番号でも「起動を永久に拒む」に落ちないこと (#629 Codex P2)。**
+    def test_write_pid_reclaims_a_pid_file_out_of_range
+      daemon = create
+      File.write(daemon.pid_file, '9999999999')
+
+      assert_equal(:dead, daemon.alive_state, ':unknown に丸めないこと')
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
     end
 
     # ⚠ **pid ファイルは丸ごと読まない (#629)。** 数桁と改行しか入らないので、

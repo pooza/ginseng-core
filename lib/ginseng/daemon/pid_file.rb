@@ -25,10 +25,15 @@ module Ginseng
 
       # pid ファイルに書かれてよい形。⚠ **10 進の数字だけ**（`\d` は ASCII なので
       # 全角は入らない）。🔴 `Integer()` に任せると `'12_34'` や `'+123'` が通る。
-      # ⚠⚠ **桁数も切る (#629)** — どんな `pid_max` でも 10 桁に収まる。切らないと、
-      # 🔴 **数字だけの巨大なファイルが「pid として読める」ことになり**、生死を
-      # 訊けないので `:unknown` に落ちて**起動を永久に阻む**（奪って復帰もできない）。
-      PID_PATTERN = /\A\d{1,10}\z/
+      PID_PATTERN = /\A\d+\z/
+
+      # 番号としての上限 (#629 Codex P2)。`pid_t` は 32bit 符号付きなので、これを
+      # 超えると 🔴 **`Process.kill` が `RangeError` を上げ、`Process.alive_state` は
+      # それを `:unknown` に丸める**。⚠⚠ そうなると `abort_if_running!` が毎回
+      # 起動を拒み、**`write_pid` が奪って復帰する機会が来ない** — この上限が
+      # 防ごうとしている「永久に起動できない」そのものになる。
+      # ⚠ **桁数では切れない**（`9999999999` は 10 桁だが範囲外）。
+      PID_MAX = (2**31) - 1
 
       # 読む上限 (#629)。⚠ pid ファイルに入ってよいのは数桁と改行だけなので、
       # **壊れたファイルや細工されたファイルを丸ごとメモリへ載せない**。
@@ -216,7 +221,7 @@ module Ginseng
         # **超えていること自体は分かる**（奪って復帰する側はそれでよい）。
         return nil if value.bytesize > PID_FILE_MAX_BYTES
         return nil unless (value = value.strip).match?(PID_PATTERN)
-        return nil unless (value = value.to_i).positive?
+        return nil unless (value = value.to_i).between?(1, PID_MAX)
         return value
       end
 
