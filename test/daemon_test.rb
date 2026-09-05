@@ -10,12 +10,30 @@ module Ginseng
     # シグナル送信だけ差し替えたデーモン。⚠ 他人のプロセスへ実際に TERM を送る
     # テストは書けないので、継ぎ目 (send_signal) で例外を注入する。
     class Stub < Daemon
-      attr_reader :signals
+      attr_reader :signals, :logs
 
       def initialize(opts = {})
         super
         @signals = []
         @error = opts[:error]
+        # ⚠⚠ **ログは「出たこと」を測る対象**（リリース前レビューの赤 2 回とも
+        # 「起動しなかったのに 1 行も残らない」形だった）。syslog へは出さない。
+        @logs = []
+        @logger = Recorder.new(@logs)
+      end
+
+      # 出力先ではなく記録だけする logger。⚠ 上流が渡す Hash をそのまま持つ。
+      class Recorder
+        def initialize(logs)
+          @logs = logs
+        end
+
+        [:error, :warn, :info, :debug, :fatal].each do |severity|
+          define_method(severity) do |message = nil|
+            @logs.push([severity, message])
+            return true
+          end
+        end
       end
 
       def command
@@ -413,18 +431,225 @@ module Ginseng
       daemon = create(pid: unused_pid)
       # ⚠ **1 回だけ失敗する**（一過性の EIO）。🔴 読み直して確かめる実装だと、
       # 2 回目が成功して :dead に落ちる — **読めなかった事実を捨てている**。
-      target = daemon.pid_file
-      original = File.method(:open)
-      raised = false
-      File.define_singleton_method(:open) do |path, *args, &block|
-        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS && !raised
-          raised = true
-          raise Errno::EIO, path
-        end
-        next original.call(path, *args, &block)
-      end
+      original = stub_read_error(daemon, Errno::EIO, once: true)
 
       assert_equal(:unknown, daemon.alive_state)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **起動しない・止められないときは、必ず logger に 1 行残ること (#635)。**
+    #
+    # ⚠⚠ **stderr は当てにできない** — `run_restart` は fork した子の stderr を
+    # `File::NULL` へ付け替え、利用側の起動スクリプトも非 tty では捨てる。
+    # 🔴 リリース前レビューは**同じ形の赤を 2 回**出している（1 回目は
+    # `create_pid_file`、2 回目は `run_stop`）。**出口ごとに測る。**
+    def test_every_refusal_is_logged
+      # ⚠ 状態はケースごとに作る（`create` は同じ working_dir を使うので持ち越す）。
+      refusals = {
+        'start: 既に動いている' => [Process.ppid, :write_pid],
+        'stop: pid ファイルが無い' => [nil, :run_stop],
+      }
+
+      refusals.each do |name, (pid, method)|
+        daemon = create(pid:)
+        assert_raise(SystemExit, name) {daemon.send(method)}
+        assert_equal([:error], daemon.logs.map(&:first), name)
+        assert(daemon.logs.first.last.key?(:reason), "#{name}: 理由が入っていること")
+      end
+    end
+
+    # 🔴🔴 **読めない pid ファイルで `restart` が無音にならないこと (#635)。**
+    #
+    # ⚠⚠ **`run_restart` は `alive_state` が :dead でなければ `run_stop` を通る。**
+    # 読めないと :unknown なので必ず通り、そこが黙って `exit 1` していた
+    # （⚠ しかも「PID file not found」は**嘘** — ファイルはそこに在る）。
+    def test_run_stop_logs_when_the_pid_file_cannot_be_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EACCES)
+
+      assert_equal(:unknown, daemon.alive_state, 'restart はここで run_stop を通る')
+      assert_raise(SystemExit) {daemon.send(:run_stop)}
+      assert_equal([:error], daemon.logs.map(&:first))
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **拒む理由を組み立てる途中で、読み直して errno を消さないこと (#635 Codex P2)。**
+    #
+    # ⚠ `pid_label` は `pid` を呼ぶので pid ファイルを読み直す。一過性の失敗だと
+    # ⚠⚠ **2 回目が成功して `error: nil` になり、しかも「PID 123 could not be read」と
+    # いう矛盾したメッセージになる** — 足したばかりの errno の記録が消える。
+    def test_refusal_keeps_the_read_error
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, once: true)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error], '読めなかった理由が残ること')
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # ⚠⚠ **`pid_label` は `v1.23.6` で公開した形。引数なしでも呼べること (#635 Codex P2)。**
+    # 🔴 必須にすると、上書きしている利用側が `ArgumentError` で落ちる。
+    def test_pid_label_is_callable_without_an_argument
+      daemon = create(pid: unused_pid)
+
+      assert_equal("PID #{daemon.pid}", daemon.send(:pid_label))
+      assert_match(/PID file/, create.send(:pid_label))
+    end
+
+    # 🔴🔴 **検証の読み取り自身が失敗しても、正しく報告すること (#635 Codex P2・7 巡目)。**
+    # ⚠⚠ 失敗すると `nil` が返るので、**「変わった」にも「変わっていない」にも化ける**。
+    def test_run_status_reports_a_failed_verification_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 3)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/could not be read/, output)
+      assert_not_match(/changed while checking/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **起動を拒むときも、変わった番号を名乗らないこと (#635 Codex P2・7 巡目)。**
+    # ⚠ 拒むこと自体は変わらないが、**ログに残る番号が別のプロセスのもの**になる。
+    def test_abort_if_running_does_not_name_a_changed_pid
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s)
+        next :alive
+      end
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      end
+
+      assert_not_match(/PID \d/, output, '別のプロセスの番号を名乗らないこと')
+      assert_match(/PID file/, output)
+    end
+
+    # 🔴🔴 **検査のあいだに pid ファイルが変わったら、番号入りで報告しないこと
+    # (#635 Codex P2・6 巡目)。**
+    #
+    # ⚠⚠ 別の start が死んだ pid を奪って自分のものを書くと、`alive_state` は新しい方を
+    # 見て `:alive`、番号は古い方になる — 🔴 **死んだ番号を「動いている」と報告する**。
+    def test_run_status_detects_a_pid_change_while_checking
+      daemon = create(pid: unused_pid)
+      successor = Process.ppid
+      # 検査のあいだに別の start が奪った状態を作る。
+      daemon.define_singleton_method(:alive_state) do
+        File.write(pid_file, successor.to_s)
+        next :alive
+      end
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_not_match(/is running/, output, '死んだ番号を running と言わないこと')
+      assert_match(/changed while checking/, output)
+    end
+
+    # 🔴🔴 **2 回目の読み取りで失敗したら、`status` もそう言うこと (#635 Codex P2・4 巡目)。**
+    # ⚠⚠ 番号を持ったまま `:unknown` を報告すると、**「その pid は他人のもの」という
+    # 別の話に化ける** — 実際には読めなかっただけ。
+    def test_run_status_reports_a_failed_second_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/could not be read/, output)
+      assert_not_match(/is not ours/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **2 つの読み取りの間に別の start が pid ファイルを作っても、番号の無い
+    # メッセージにしないこと (#635 Codex P2・4 巡目)。**
+    def test_abort_if_running_never_reports_an_empty_pid
+      daemon = create
+      daemon.define_singleton_method(:alive_state) {:alive}
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      end
+
+      assert_equal('already running', daemon.logs.first.last[:reason])
+      assert_not_match(/\(PID \)/, output, '番号の無い括弧を出さないこと')
+      assert_match(/PID file/, output)
+    end
+
+    # 🔴🔴 **`status` が壊れた行を出さないこと (#635 Codex P2・3 巡目)。**
+    #
+    # ⚠ 番号と状態を別々の読み取りから出していると、⚠⚠ **片方だけ失敗したときに
+    # `is running (PID )` になる** — しかも一過性の失敗、つまりこの PR が扱っている
+    # まさにその状況で。
+    def test_run_status_never_prints_an_empty_pid
+      daemon = create(pid: Process.ppid)
+      original = stub_read_error(daemon, Errno::EIO, on: 1)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_not_match(/PID \)/, output, '番号の無い running を出さないこと')
+      assert_match(/could not be read/, output)
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **上書きされた `alive_state` の中で失敗が消えないこと (#635 Codex P2・5 巡目)。**
+    #
+    # ⚠ 利用側（`makoto2`）は `super` のあとにもう一度 `pid` を呼ぶ。⚠⚠ **読み取りごとに
+    # 記録を消していると、途中の失敗が後の成功で消える** — 前後で挟むだけでは
+    # 原理的に見えない窓。🔴 消えると「読めなかった」が「他人の pid」に化け、
+    # override が :dead を返す形なら**起動まで通る**。
+    def test_refusal_keeps_an_error_cleared_inside_the_override
+      daemon = create(pid: unused_pid)
+      # `super` のあとに読み直す形（利用側の実物と同じ）。
+      daemon.define_singleton_method(:alive_state) do
+        state = super()
+        pid
+        next state
+      end
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **2 回目の読み取りで失敗しても、理由が残ること (#635 Codex P2・2 巡目)。**
+    #
+    # ⚠ 1 回目（門の手前）は通り、`alive_state` の中の読み取りで失敗する窓。
+    # ⚠⚠ **状態が決められていない**ので、`:unknown` として番号入りで報告するのではなく
+    # 「読めなかった」で拒む。
+    def test_refusal_keeps_the_error_from_the_second_read
+      daemon = create(pid: unused_pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
+      assert_equal('Errno::EIO', daemon.logs.first.last[:error], '読めなかった理由が残ること')
+      assert_equal('pid file unreadable', daemon.logs.first.last[:reason])
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **上書きされた `alive_state` が :dead と答えても、読めないなら起動しない (#635)。**
+    #
+    # ⚠ 利用側（`makoto2`）は `alive_state` を上書きし、`super` のあと `pid` を呼び直して
+    # `pid&.positive?` で判定している。⚠⚠ **`pid` は「無い」も「読めない」も nil に
+    # 畳む**ので、読めないときに :dead へ化ける — そこから**生きている常駐の pid
+    # ファイルを奪いにいける**。上流で拒む。
+    def test_abort_if_running_refuses_when_the_pid_file_cannot_be_read
+      daemon = create(pid: unused_pid)
+      daemon.define_singleton_method(:alive_state) {:dead}
+      original = stub_read_error(daemon, Errno::EIO)
+
+      assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
     ensure
       File.define_singleton_method(:open, original) if original
     end
@@ -627,18 +852,49 @@ module Ginseng
     # ⚠⚠ **注入点は実装が実際に通る場所に置くこと。** 🔴 `File.read` / `File.file?` に
     # 挿していた版は、実装が `File.open` を使うようになった時点で**何も測らなくなった**
     # （リリース前レビューで踏んだ形と同じ）。
-    def stub_read_error(daemon, error)
+    # `on:` を渡すと**その回の読み取りだけ**失敗する。⚠⚠ **何回目で失敗するかで
+    # 通る道が変わる** — 1 回目なら「読めない」で即拒み、2 回目なら `alive_state` の
+    # 中で失敗するので、そこを区別できないと窓が残る（#635 Codex P2）。
+    def stub_read_error(daemon, error, once: false, on: nil)
       target = daemon.pid_file
       original = File.method(:open)
+      reads = 0
       File.define_singleton_method(:open) do |path, *args, &block|
-        raise error, path if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS
+        if path == target && args.first == Daemon::PidFile::PID_FILE_READ_FLAGS
+          reads += 1
+          raise error, path if on ? reads == on : !(once && reads > 1)
+        end
         next original.call(path, *args, &block)
       end
       return original
     end
 
+    def capture_stdout
+      original = $stdout
+      $stdout = StringIO.new
+      yield
+      return $stdout.string
+    ensure
+      $stdout = original
+    end
+
+    # ⚠ `warn` の行も測る。🔴 ログの `reason` だけ見ていると、**運用者が実際に読む
+    # 文言**（`(PID )` のような壊れた形）を素通りさせる。
+    def capture_stderr
+      original = $stderr
+      $stderr = StringIO.new
+      yield
+      return $stderr.string
+    ensure
+      $stderr = original
+    end
+
     def create(pid: nil, error: nil)
       daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: @dir, error:})
+      # ⚠ **同じ working_dir を使い回すので、状態は毎回作り直す。**
+      # 🔴 `pid:` 無しを「pid ファイルが無い」の意味で使うテストが、前のテストの
+      # 書いたものを拾っていた。
+      FileUtils.rm_f(daemon.pid_file)
       File.write(daemon.pid_file, pid.to_s) if pid
       return daemon
     end

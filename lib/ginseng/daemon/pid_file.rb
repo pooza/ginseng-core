@@ -87,9 +87,33 @@ module Ginseng
         return parse_pid(read_pid_file)
       end
 
+      # 直前の `pid`（＝ `read_pid_file`）が**在るのに読めなかった**か (#633)。
+      #
+      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
+      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
+      #
+      # ⚠⚠ **`alive_state` を上書きして `super` のあと `pid` を呼び直す利用側は、
+      # これも見ること (#635)。** 🔴 `pid` は「無い」も「読めない」も `nil` に畳むので、
+      # **`pid&.positive?` のような判定だけだと「読めない」が「動いていない」に化ける**
+      # — そこから `run_restart` が停止を飛ばし、二重起動に届く。
+      # ⚠ 上流は `abort_if_running!` でも直接これを見るので、**利用側が見落としても
+      # 起動は拒む**（→ `Daemon#abort_if_running!`）。
+      #
+      # 🔴 **判断の入口を通るまで下がらない。** 記録を消すのは `alive_state` /
+      # `abort_if_running!` / `run_status` / `run_stop` の入口だけなので、⚠⚠ **`pid` を
+      # 直接ポーリングする使い方では、一度失敗すると true のまま**になる（後の読み取りが
+      # 成功しても）。⚠ **`alive_state` を通せば下がる。**
+      def pid_file_unreadable?
+        return !@pid_file_error.nil?
+      end
+
       # ⚠ 読めない pid ファイルでは番号が分からないので、代わりに場所を出す。
-      def pid_label
-        return "PID #{pid}" if pid
+      # ⚠ **読み直さない。** 呼ぶ側が持っている pid を渡す（🔴 ここで `pid` を呼ぶと
+      # pid ファイルを読み直し、記録してあった errno を消す — #635 Codex P2）。
+      # ⚠⚠ **引数の既定を外さないこと (#635 Codex P2・8 巡目)。** これは `v1.23.6` で
+      # 公開した形なので、**必須にすると利用側が `ArgumentError` で落ちる**。
+      def pid_label(found = pid)
+        return "PID #{found}" if found
         return "PID file '#{pid_file}'"
       end
 
@@ -147,11 +171,41 @@ module Ginseng
       # 付け替えるので、⚠⚠ **「起動しなかった」ことがどこにも残らないまま、親は
       # exit 0 で返る**。supervisor は叩き直し続け、**落ちているのにログが 1 行も
       # 増えない**という形になる。
-      def abort_start!(message, reason)
-        warn "#{message} Not starting #{app_name}."
+      def abort_start!(message, reason, error = pid_file_error)
+        abort_daemon!("#{message} Not starting #{app_name}.", 'not started', reason, error)
+      end
+
+      # 🔴🔴 **止める側の出口にも同じ規則を当てる (#635)。** `run_stop` の `warn` +
+      # `exit 1` は `@logger` を通っていなかったので、⚠⚠ **`restart` が
+      # 「起動を試みる前に」無音で終わる**経路が残っていた（`run_restart` は
+      # `alive_state` が :dead でないときに `run_stop` を通る）。
+      def abort_stop!(message, reason, error = pid_file_error)
+        abort_daemon!("#{message} Not stopping #{app_name}.", 'not stopped', reason, error)
+      end
+
+      # ⚠⚠ **理由（errno）は引数で持ち回る (#635 Codex P2)。** 🔴 ここで
+      # `@pid_file_error` を読むと、**メッセージを組み立てる途中の読み直しで消えた
+      # あと**の値を見ることになる。呼ぶ側が「決めたときの証拠」を渡す。
+      def abort_daemon!(message, state, reason, error)
+        warn message
         @logger.error(daemon: app_name, version: package_class.version,
-          message: 'not started', reason:, pid_file:)
+          message: state, reason:, pid_file:, error: error&.class&.to_s)
         exit 1
+      end
+
+      # この判断のあいだに読み取りが失敗していたなら、その例外。
+      #
+      # 🔴🔴 **成功しても消さない (#635 Codex P2・5 巡目)。** ⚠⚠ 上書きされた
+      # `alive_state` は `super` のあとにもう一度 `pid` を呼ぶので、**途中の失敗が
+      # 後の成功で消える** — 前後で挟むだけでは原理的に見えない。消すのは
+      # 「判断を始めるとき」（→ `reset_pid_file_error`）だけにする。
+      def pid_file_error
+        return @pid_file_error
+      end
+
+      # ⚠ **判断の入口で 1 度だけ呼ぶ。** 読み取りごとではない（上記）。
+      def reset_pid_file_error
+        @pid_file_error = nil
       end
 
       # 死んだ pid ファイルを**消さずに**奪う。奪えたら true。
@@ -292,17 +346,7 @@ module Ginseng
       # `Encoding::CompatibilityError` を上げない（⚠ 引数なしの `File.read` は UTF-8
       # で返るため、そこへ戻すと `pid` から例外が漏れる）。
       # ⚠ `IO#read(len)` は EOF で `nil` を返すので `to_s` が要る。
-      # 直前の `read_pid_file` が**在るのに読めなかった**か (#633 Codex P2)。
-      #
-      # 🔴🔴 **読み直して確かめない。** 一過性の `EIO` は 2 回目に成功しうるので、
-      # ⚠⚠ **確かめ直すと「読めなかった」という事実そのものを捨てる**。
-      # `alive_state` は `pid`（＝ `read_pid_file`）を通ってからここへ来る。
-      def pid_file_unreadable?
-        return !@pid_file_error.nil?
-      end
-
       def read_pid_file
-        @pid_file_error = nil
         File.open(pid_file, PID_FILE_READ_FLAGS) do |f|
           # ⚠⚠ **通常ファイル以外は読まない。** 🔴 FIFO を読むと**返ってこない**
           # （`O_NONBLOCK` で開いているので、開くところまでは止まらない）。
