@@ -701,6 +701,52 @@ module Ginseng
       assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
     end
 
+    # 🔴🔴 **最終要素だけ見ても足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ `tmp` の側を symlink にすれば、`tmp/pids` は**本物のディレクトリ**なので
+    # 検査を通る — 🔴 実測で victim が pid の数字で上書きされた。
+    def test_write_pid_refuses_when_an_ancestor_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # ⚠ **拒むときは原因の段を名乗る。** 🔴 `tmp/pids` を出すと、運用者は
+    # 「ディレクトリはあるのに」となる（symlink なのは `tmp` の側）。
+    def test_write_pid_names_the_unusable_directory
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+
+      assert_match(%r{#{Regexp.escape(File.join(@dir, 'tmp'))}'}, output)
+    end
+
+    # ⚠⚠ **作業ディレクトリより上は見ない (#632)。** 🔴 Capistrano 式の `current` のように
+    # **上に symlink を置く運用は正当**で、そこを拒むと配置ごと壊す。
+    def test_write_pid_allows_a_symlinked_working_dir
+      real = File.join(@dir, 'releases/1')
+      FileUtils.mkdir_p(File.join(real, 'tmp/pids'))
+      link = File.join(@dir, 'current')
+      File.symlink(real, link)
+      daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: link})
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
     # ⚠ **素のディレクトリなら従来どおり取れる。** 🔴 置き場所の検査を入れたことで
     # **普通の起動が拒まれていないこと**を固定する。
     def test_write_pid_accepts_a_plain_pid_dir

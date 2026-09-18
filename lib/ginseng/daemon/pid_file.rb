@@ -145,7 +145,9 @@ module Ginseng
       # ⚠ **ここは利用側の override 点でもある**（pid が外から見えるより前に trap を
       # 張る、など）。**`super` を呼ぶ形は保つこと。**
       def write_pid
-        abort_unusable_pid_dir! unless pid_dir?
+        if (unusable = unusable_pid_dir)
+          abort_unusable_pid_dir!(unusable)
+        end
         PID_ACQUIRE_ATTEMPTS.times do
           return if create_pid_file
           # ⚠ **解釈する前の中身を覚える。** 奪うときに**ロックの中で同じものか**を
@@ -283,26 +285,54 @@ module Ginseng
         return false
       end
 
-      # pid ファイルの**置き場所**が、symlink でない本物のディレクトリか (#632)。
+      # pid ファイルの**置き場所**が、symlink を含まない本物のディレクトリか (#632)。
       #
       # 🔴🔴 **`O_NOFOLLOW` が効くのはパスの最終要素だけ。** `tmp/pids` 自体を別の
       # ディレクトリへのリンクにされると、**リンク先のファイルを掴まされる**（実測）。
       #
-      # ⚠ **ここも「正当な形がありうる」ので測ってから入れている** — Capistrano 式に
-      # `tmp` を `shared/tmp` へ逸す形はありうるが、⚠⚠ **利用側 4 本と cookbook を見た範囲では
-      # どれも素のディレクトリ**だった（2026-09-19）。
+      # 🔴🔴 **最終要素だけ見ても足りない (#632 Codex P1)。** ⚠⚠ `tmp` の側を symlink にされると、
+      # `tmp/pids` は本物のディレクトリなので検査を通り、**同じ破壊ができる**
+      # （実測した: victim が pid の数字で上書きされた）。**下から 1 段ずつ見る。**
+      #
+      # ⚠⚠ **作業ディレクトリより上は見ない。** 🔴 Capistrano 式の `current` のように、
+      # **上に symlink を置く運用は正当**で、そこを拒むと配置ごと壊す。
+      # ⚠ そこを書き換えられる相手は、どうせアプリ本体を差し替えられる。
       #
       # ⚠ **開いてから確かめられないので TOCTOU は残る。** それでも、入れ替えを
       # 「間に合わせる」必要のある形へ落とせる。
-      def pid_dir?
-        return File.lstat(File.dirname(pid_file)).directory?
-      rescue SystemCallError
-        return false
+      # ⚠ **使えない段を返す（真偽ではなく）。** 🔴 拒んだときに**どの段が原因か**を
+      # 出さないと、運用者は `tmp/pids` を見て「ディレクトリはあるのに」となる
+      # （実際に symlink なのは `tmp` の側）。
+      def unusable_pid_dir
+        guarded_dirs.each do |dir|
+          return dir unless File.lstat(dir).directory?
+        rescue SystemCallError
+          return dir
+        end
+        return nil
       end
 
-      def abort_unusable_pid_dir!
-        abort_start!("PID directory '#{File.dirname(pid_file)}' is not a directory.",
-          'pid dir unusable', nil)
+      # 検査するディレクトリを、pid ファイルの親から**作業ディレクトリの手前まで**並べる。
+      #
+      # ⚠ **作業ディレクトリに届かない形（`pid_file` を外へ向けている利用側）では、
+      # 親 1 段だけ見る** — 🔴 そのまま上へ辿ると `/` まで全段を拒むことになる。
+      # ⚠ `working_dir` を持たない混ぜ方（`Daemon` 以外）も同じ扱い。
+      def guarded_dirs
+        parent = File.expand_path(File.dirname(pid_file))
+        base = respond_to?(:working_dir) ? File.expand_path(working_dir.to_s) : nil
+        return [parent] unless base
+        dirs = []
+        dir = parent
+        while dir != base
+          return [parent] if File.dirname(dir) == dir
+          dirs.push(dir)
+          dir = File.dirname(dir)
+        end
+        return dirs
+      end
+
+      def abort_unusable_pid_dir!(dir)
+        abort_start!("PID directory '#{dir}' is not a usable directory.", 'pid dir unusable', nil)
       end
 
       # 🔴 **握り潰す前に理由を残す（リリース前レビューの赤）。** stderr は
