@@ -77,6 +77,83 @@ module Ginseng
       assert_equal(:dead, daemon.alive_state)
     end
 
+    # ⚠⚠ **`alive_state` は pid ファイルを 1 回だけ読み、その番号を上書き点へ渡す
+    # (#638)。** 🔴 利用側（`makoto2`）は身元（`/proc/<pid>/cmdline`）を足すために
+    # `super` のあと `pid` を読み直していた — ⚠ **2 回の読みの間に書き換わると、
+    # 「A の生死」に「B の身元」を掛けた答え**になる。
+    def test_alive_state_hands_the_number_it_read_to_the_override
+      daemon = create(pid: Process.pid)
+      seen = []
+      reads = 0
+      daemon.define_singleton_method(:alive_state_of) do |found|
+        seen.push(found)
+        next super(found)
+      end
+      daemon.define_singleton_method(:pid) do
+        reads += 1
+        next super()
+      end
+
+      assert_equal(:alive, daemon.alive_state)
+      assert_equal([Process.pid], seen, '読んだ番号がそのまま渡ること')
+      assert_equal(1, reads, 'pid ファイルを読み直さないこと')
+    end
+
+    # ⚠ **番号が取れなかったときの答えは `alive_state` が決める (#638)。**
+    # 🔴 上書き点に nil を渡すと、利用側が毎回「番号の無い場合」を書くことになり、
+    # ⚠⚠ そこで :dead に倒すと**読めないだけの pid ファイルが「起動していない」に化ける**。
+    def test_alive_state_of_is_not_called_without_a_number
+      daemon = create
+      seen = []
+      daemon.define_singleton_method(:alive_state_of) do |found|
+        seen.push(found)
+        next :alive
+      end
+
+      assert_equal(:dead, daemon.alive_state)
+      assert_empty(seen, '番号が無いときは上書き点を通らないこと')
+    end
+
+    # 🔴 **読めないときも上書き点を通らないこと (#638)。** ⚠⚠ ここで通すと、利用側の
+    # 身元チェックが「番号が無い」を :dead と答え、**生きている常駐の pid ファイルを
+    # 奪いにいける**（#635 で上流に寄せた判断が戻る）。
+    def test_alive_state_of_is_not_called_when_the_pid_file_cannot_be_read
+      daemon = create(pid: Process.pid)
+      seen = []
+      daemon.define_singleton_method(:alive_state_of) do |found|
+        seen.push(found)
+        next :alive
+      end
+      original = stub_read_error(daemon, Errno::EIO)
+
+      assert_equal(:unknown, daemon.alive_state)
+      assert_empty(seen, '読めないときは上書き点を通らないこと')
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **判断の入口は `alive_state` を通すこと (#638)。** ⚠⚠ 入口が
+    # `alive_state_of` を直に呼ぶ形へ畳まれると、**上書きした身元チェックが黙って
+    # 外れる** — 生きてはいるが「うちの常駐ではない」pid を `status` が running と言う。
+    def test_run_status_honours_the_override
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:alive_state_of) {|_found| :dead}
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/is not running/, output)
+      assert_not_match(/is running/, output, '身元の否定が届くこと')
+    end
+
+    # ⚠ **起動の門にも届くこと (#638)。** 🔴 pid が再利用されているだけなら、
+    # 利用側は起動させたい（上流だけ見ると :alive で永久に拒む）。
+    def test_abort_if_running_honours_the_override
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:alive_state_of) {|_found| :dead}
+
+      assert_nothing_raised(SystemExit) {daemon.send(:abort_if_running!)}
+    end
+
     def test_run_stop_sends_term_and_removes_pid
       daemon = create(pid: Process.pid)
       daemon.send(:run_stop)

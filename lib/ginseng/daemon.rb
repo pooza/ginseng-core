@@ -62,16 +62,39 @@ module Ginseng
     # ⚠ **:unknown を :dead と同じに扱わないこと。** `EPERM` は「プロセスは
     # 存在するが触れない」なので、:dead と混ぜると **start が 2 本目を立て、
     # 1 本目がどの pid ファイルからも辿れない孤児になる**。
+    # ⚠⚠ **pid ファイルを読むのはここだけ。読んだ番号は `alive_state_of` へ渡す
+    # (#638)。** 🔴 利用側が身元を足すために読み直すと、**2 回の読みの間に書き換わった
+    # とき「A の生死」に「B の身元」を掛けた答え**になる。
     def alive_state
       reset_pid_file_error
       found = pid
-      return Process.alive_state(found) if found
+      return alive_state_of(found) if found
       # ⚠⚠ **読めないファイルが在るなら「無い」ではない (#627 Codex P2)。**
       # 🔴 :dead と答えると `run_status` が「動いていない」と嘘をつき、
       # `run_restart` が停止を飛ばす。**触れないだけで生きている可能性がある**
       # ので :unknown に倒す（#510 と同じ理由）。
       return :unknown if pid_file_unreadable?
       return :dead
+    end
+
+    # 読んだ番号 `found` が指すプロセスの状態。⚠ **利用側の上書き点** (#638)。
+    #
+    # 🔴 pid が再利用されていると `Process.alive_state` は**無関係なプロセスを :alive と
+    # 答える**ので、利用側は「それが本当にうちの常駐か」を足したい（`/proc/<pid>/cmdline`
+    # を見る、など）。⚠⚠ **`alive_state` を上書きして `super` のあとに `pid` を読み直す
+    # 形にすると、2 回の読みの間に pid ファイルが書き換わったとき答えが混ざる**
+    # （pooza/makoto2#200）。ここで受け取れば読み直さずに済む。
+    #
+    # ⚠ **`found` は nil にならない** — 番号が取れなかったときの答え（:unknown / :dead）は
+    # `alive_state` が決める。⚠⚠ **上書き側で pid ファイルを読み直さないこと。**
+    #
+    # 🔴🔴 **判断の入口（`abort_if_running!` / `run_restart` / `run_status`）は、引き続き
+    # `alive_state` を通すこと。** ⚠⚠ 入口の「前後で読み直して、変わったら決めない」を
+    # ここの直呼びへ畳むと、**`alive_state` を上書きしている利用側の身元チェックが黙って
+    # 外れる**（pid の再利用を `status` と `start` で見逃す）。畳んでよいのは「`alive_state`
+    # の上書きをやめてよい」と告知して、利用側が移ってから。
+    def alive_state_of(found)
+      return Process.alive_state(found)
     end
 
     # ⚠ **既存の呼び出し側のために真偽 2 値のまま残す**（:unknown は false 側）。
