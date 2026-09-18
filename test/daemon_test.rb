@@ -731,7 +731,7 @@ module Ginseng
         assert_raise(SystemExit) {daemon.send(:write_pid)}
       end
 
-      assert_match(%r{#{Regexp.escape(File.join(@dir, 'tmp'))}'}, output)
+      assert_match(/#{Regexp.escape(File.join(@dir, 'tmp'))}'/, output)
     end
 
     # ⚠⚠ **作業ディレクトリより上は見ない (#632)。** 🔴 Capistrano 式の `current` のように
