@@ -48,6 +48,14 @@ module Ginseng
       end
     end
 
+    # ⚠ **`exec` はプロセスを置き換えるので、テストからは呼べない。**
+    # 🔴 測りたいのは**失敗したときに何が残るか**なので、そちらだけ差し替える。
+    class FailingStub < Stub
+      def start(_args = [])
+        raise Errno::ENOENT, 'bundle'
+      end
+    end
+
     def setup
       @dir = Dir.mktmpdir
       FileUtils.mkdir_p(File.join(@dir, 'tmp/pids'))
@@ -75,6 +83,150 @@ module Ginseng
       daemon = create(pid: unused_pid)
 
       assert_equal(:dead, daemon.alive_state)
+    end
+
+    # 🔴🔴 **`exec` が落ちても成功と同じ 1 行しか出ていなかった (#637)。**
+    #
+    # ⚠⚠ `start` は `info` を出してから `exec` するので、**コマンドのパスが変わった**
+    # ときでもログは成功時と同一だった。🔴 `restart` の子は stderr が `/dev/null`。
+    def test_run_start_reports_a_failed_exec
+      daemon = FailingStub.new({application: 'GinsengDaemonTest', working_dir: @dir})
+      FileUtils.rm_f(daemon.pid_file)
+
+      output = capture_stdout do
+        capture_stderr do
+          assert_raise(SystemExit) {daemon.send(:run_start)}
+        end
+      end
+
+      assert_equal('start failed', daemon.logs.last.last[:reason])
+      assert_equal('Errno::ENOENT', daemon.logs.last.last[:error])
+      assert_not_empty(output)
+    end
+
+    # ⚠ **起動できていない pid ファイルを残さない (#637)。**
+    def test_run_start_removes_the_pid_file_after_a_failed_exec
+      daemon = FailingStub.new({application: 'GinsengDaemonTest', working_dir: @dir})
+      FileUtils.rm_f(daemon.pid_file)
+
+      capture_stdout do
+        capture_stderr do
+          assert_raise(SystemExit) {daemon.send(:run_start)}
+        end
+      end
+
+      assert_false(File.exist?(daemon.pid_file))
+    end
+
+    # 🔴 **`ESRCH` だけ logger を通っていなかった (#637)。**
+    # ⚠⚠ **pid ファイルが在るのに中のプロセスが消えている**は、運用上
+    # いちばん知りたい状態。
+    def test_run_stop_logs_a_missing_process
+      daemon = create(pid: Process.pid, error: Errno::ESRCH)
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_include(daemon.logs.map {|_severity, message| message[:reason]},
+        'process was not running')
+    end
+
+    # 🔴🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+    def test_run_stop_reports_an_invalid_pid_file
+      daemon = create
+      File.write(daemon.pid_file, "ごみ\n")
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:run_stop)}
+      end
+
+      assert_match(/is not a valid PID file/, output)
+      assert_not_match(/not found/, output, '在るのに「無い」と言わないこと')
+      assert_equal('pid file invalid', daemon.logs.last.last[:reason])
+    end
+
+    # ⚠ `status` も同じ第 3 の状態を言い分ける (#637)。
+    def test_run_status_reports_an_invalid_pid_file
+      daemon = create
+      File.write(daemon.pid_file, "ごみ\n")
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/is not a valid PID file/, output)
+      assert_not_match(/is not running/, output)
+    end
+
+    # ⚠ `start` も同じ (#637)。🔴 従来は `Could not acquire`（`error: nil`）だけだった。
+    def test_write_pid_reports_an_invalid_pid_file
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+
+      Timeout.timeout(5) do
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+
+      assert_equal('pid file invalid', daemon.logs.last.last[:reason])
+    end
+
+    # 🔴🔴 **`remove_pid` の失敗が完全に無音だった (#637)。**
+    # ⚠⚠ stdout / stderr / ログすべて空で exit 0 — 「stop は成功」に見えて pid
+    # ファイルが残る。🔴 その間に pid が再利用されると、`already running (PID N)` が
+    # 無関係のプロセスを指す。
+    def test_run_stop_logs_a_pid_file_left_behind
+      daemon = create(pid: Process.pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # ⚠ **後継が取り直した形では黕る (#532 / #637)。**
+    # 🔴🔴 ここで警報を出すと、**正常な交代のたびに鳴る**。
+    def test_run_stop_is_quiet_when_a_successor_took_over
+      daemon = create(pid: Process.pid)
+      successor = Process.ppid
+      daemon.define_singleton_method(:send_signal) do |signal, pid|
+        File.write(pid_file, successor.to_s)
+        next super(signal, pid)
+      end
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_not_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+      assert_equal(successor, daemon.pid, '後継の pid ファイルを消さないこと')
+    end
+
+    # 🔴 **通常ファイルでないことを黙って落とさない (#637)。**
+    #
+    # ⚠⚠ **読んだあとに差し替えられた形**（`read_pid_file` は通常ファイルとして
+    # 読めていた）なので、継ぎ目を直に叩いて測る。🔴 無音だと、最後に出るのは
+    # `Could not acquire PID file` だけになる。
+    def test_reclaim_pid_file_refuses_a_non_regular_file
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+
+      Timeout.timeout(5) do
+        assert_false(daemon.send(:reclaim_pid_file, '123'))
+      end
+
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file is not a regular file')
+    end
+
+    # ⚠ **番号が無いときに "exists" と言わない (#637)。**
+    # 🔴 2 つの読み取りの間に現れて消えた形もここへ来る。
+    def test_run_status_does_not_claim_a_missing_pid_file_exists
+      daemon = create
+      daemon.define_singleton_method(:alive_state) {:unknown}
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/state is unknown/, output)
+      assert_not_match(/exists/, output)
     end
 
     def test_run_stop_sends_term_and_removes_pid

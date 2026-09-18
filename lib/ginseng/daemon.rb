@@ -180,6 +180,17 @@ module Ginseng
         exit
       end
       start(args)
+    rescue StandardError => e
+      # 🔴🔴 **`exec` が落ちても、成功と同じ 1 行しか出ていなかった (#637)。**
+      # `start` は `info` を出してから `exec` するので、⚠⚠ **コマンドのパスが
+      # 変わった・`bundle` が無いといった失敗でも、ログは成功時と同一**だった。
+      # 🔴 `run_restart` の子は stderr を `/dev/null` へ付け替えているので、
+      # **例外の backtrace も消える**。
+      #
+      # ⚠ **書いた pid ファイルは戻す。** 起動できていないのに残すと、次の `start` が
+      # ファイルを見て判断することになる（⚠⚠ **中身が自分のもののときだけ消す** — #532）。
+      remove_pid(Process.pid)
+      abort_start!("Could not start: #{e.message}", 'start failed', e)
     end
 
     # ⚠ **シグナルを送ってから pid ファイルを消すこと** (#509)。
@@ -197,6 +208,14 @@ module Ginseng
         if pid_file_unreadable?
           abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
         end
+        # 🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+        # ⚠⚠ #635 は「無い」と「読めない」を言い分けたが、**第 3 の状態**
+        # （FIFO / ディレクトリ / dangling symlink / 空 / ゴミ / 64B 超え）が
+        # 「無い」側へ落ちていた。🔴 **原因にたどり着けない。**
+        if pid_file_present?
+          abort_stop!("PID file '#{pid_file}' exists but is not a valid PID file.",
+            'pid file invalid')
+        end
         abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
       end
       send_signal('TERM', p)
@@ -206,6 +225,11 @@ module Ginseng
       # 既に居ないので pid ファイルは消してよい（⚠ ただし中身が p のときだけ）。
       remove_pid(p)
       warn 'PID file found, but process was not running.'
+      # 🔴 **ここだけ logger を通っていなかった (#637)。** ⚠⚠ **pid ファイルが在るのに
+      # 中のプロセスが消えている**は運用上いちばん知りたい状態で、他の出口
+      # （not found / unreadable / EPERM）は全部 `abort_stop!` を通るので、**ここだけ非対称**だった。
+      @logger.warn(daemon: app_name, version: package_class.version,
+        message: 'stop', reason: 'process was not running', pid_file:)
     rescue Errno::EPERM
       # ⚠ **pid ファイルは残す。**消すと生きたままのプロセスが辿れなくなる。
       abort_stop!("PID '#{p}' is not ours.", 'pid file is not ours')
@@ -250,14 +274,27 @@ module Ginseng
       return puts "#{app_name}: PID file changed while checking (unknown)" if current != found
       # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
       state = :unknown if state == :alive && found.nil?
+      report_status(state, found)
+    end
+
+    # ⚠ **報告だけを切り出してある (#637)。** 判断（読み直して変わっていないか）は
+    # `run_status` に残す — 切り出すと、⚠⚠ **「変わったら決めない」が報告側に混ざる**。
+    def report_status(state, found)
       case state
       when :alive
-        puts "#{app_name} is running (PID #{found})"
+        return puts "#{app_name} is running (PID #{found})"
       when :unknown
-        puts "#{app_name}: #{pid_label(found)} exists but is not ours (unknown)"
-      else
-        puts "#{app_name} is not running"
+        # ⚠ **番号が無いときに "exists" と言わない (#637)。** 🔴 2 つの読み取りの
+        # 間に現れて消えた形もここへ来るので、**在ると断定できていない**。
+        return puts "#{app_name}: PID file '#{pid_file}' state is unknown" unless found
+        return puts "#{app_name}: #{pid_label(found)} exists but is not ours (unknown)"
       end
+      # 🔴 **`stop` と同じ第 3 の状態を、`status` でも言い分ける (#637)。**
+      # ⚠⚠ 在るのに "is not running" と答えると、**置かれているゴミに気づけない**。
+      if pid_file_present?
+        return puts "#{app_name}: PID file '#{pid_file}' exists but is not a valid PID file"
+      end
+      return puts "#{app_name} is not running"
     end
   end
 end
