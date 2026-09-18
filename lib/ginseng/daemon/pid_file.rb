@@ -54,9 +54,12 @@ module Ginseng
       # 🔴 `File.const_defined?` は継承を見るので使わない — 利用側がトップレベルに
       # `NOFOLLOW` を定義していると true になり、`File::NOFOLLOW` で NameError になる。
       #
-      # ⚠ **効くのはパスの最終要素だけ。** ハードリンクも、`tmp/pids` 自体が symlink
-      # の場合も辿る（#632）。**読む側（`read_pid_file` / `alive_state`）も辿る**が、
-      # そちらは読むだけで、結論は「取れなかった」に落ちる。
+      # ⚠ **効くのはパスの最終要素だけ。** ⚠⚠ **これは変わらない** — 残り 2 通りは
+      # 別に塞いてある（#632）: **ハードリンクは `own_link?`**（奪る前に `nlink` を見る）、
+      # **`tmp/pids` 自体の symlink は `pid_dir?`**（`write_pid` の入口で `lstat`）。
+      # 🔴 **どちらもここの旗では塞がらないので、消すと戻る。**
+      # ⚠ **読む側（`read_pid_file` / `alive_state`）は辿る**が、そちらは読むだけで、
+      # 結論は「取れなかった」に落ちる。
       # ⚠ **`create_pid_file` には要らない** — `O_CREAT | O_EXCL` は symlink を
       # `EEXIST` で拒む（dangling なリンクでも作らないことを実測）。
       #
@@ -142,6 +145,7 @@ module Ginseng
       # ⚠ **ここは利用側の override 点でもある**（pid が外から見えるより前に trap を
       # 張る、など）。**`super` を呼ぶ形は保つこと。**
       def write_pid
+        abort_unusable_pid_dir! unless pid_dir?
         PID_ACQUIRE_ATTEMPTS.times do
           return if create_pid_file
           # ⚠ **解釈する前の中身を覚える。** 奪うときに**ロックの中で同じものか**を
@@ -227,6 +231,12 @@ module Ginseng
           # 見てからここへ来るまでに FIFO へ差し替えられると、**`read` が返らない**
           # （このファイルが `LOCK_NB` で避けているハングが、別の入口から入る）。
           return false unless f.stat.file?
+          # 🔴🔴 **ハードリンクされた pid ファイルは奪わない (#632)。**
+          # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` なら
+          # **同じ結末**（victim が pid の数字で上書き＋truncate）になる。
+          # 🔴 Linux は `fs.protected_hardlinks=1` が緩和するが、**FreeBSD は
+          # `security.bsd.hardlink_check_uid` が既定 0**（本番の一部が FreeBSD）。
+          return false unless own_link?(f)
           return false unless lock_pid_file(f)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
           # 別の start が奪っていれば、**先頭 `PID_FILE_MAX_BYTES + 1` バイト**が
@@ -255,6 +265,44 @@ module Ginseng
         # 読んで、書けたか分からないまま起動する**。
         abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed') if written
         return false
+      end
+
+      # ハードリンクされていないか (#632)。
+      #
+      # ⚠⚠ **`nlink` を見るのは「正当な形がありうる」だけに、入れる前に測ってある。**
+      # 🔴 ハードリンクを使うバックアップ（rsnapshot 系・`rsync --link-dest`）が走っていると
+      # `nlink` が 2 になり、**起動しなくなる**。⚠ 実測（2026-09-19）: 利用側のバックアップは
+      # `rsync -avz --delete --mkpath` と ZFS のスナップショットで、**`--link-dest` は使っていない**。
+      #
+      # ⚠ **奪るときだけ見ればよい。** `create_pid_file` は `O_CREAT | O_EXCL` なので、
+      # 既にあるリンクを開くことが原理的に無い。
+      def own_link?(file)
+        return true if file.stat.nlink == 1
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'pid file is hard linked', nlink: file.stat.nlink, pid_file:)
+        return false
+      end
+
+      # pid ファイルの**置き場所**が、symlink でない本物のディレクトリか (#632)。
+      #
+      # 🔴🔴 **`O_NOFOLLOW` が効くのはパスの最終要素だけ。** `tmp/pids` 自体を別の
+      # ディレクトリへのリンクにされると、**リンク先のファイルを掴まされる**（実測）。
+      #
+      # ⚠ **ここも「正当な形がありうる」ので測ってから入れている** — Capistrano 式に
+      # `tmp` を `shared/tmp` へ逸す形はありうるが、⚠⚠ **利用側 4 本と cookbook を見た範囲では
+      # どれも素のディレクトリ**だった（2026-09-19）。
+      #
+      # ⚠ **開いてから確かめられないので TOCTOU は残る。** それでも、入れ替えを
+      # 「間に合わせる」必要のある形へ落とせる。
+      def pid_dir?
+        return File.lstat(File.dirname(pid_file)).directory?
+      rescue SystemCallError
+        return false
+      end
+
+      def abort_unusable_pid_dir!
+        abort_start!("PID directory '#{File.dirname(pid_file)}' is not a directory.",
+          'pid dir unusable', nil)
       end
 
       # 🔴 **握り潰す前に理由を残す（リリース前レビューの赤）。** stderr は

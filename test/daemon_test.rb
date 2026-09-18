@@ -654,6 +654,62 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **ハードリンクされた pid ファイルを奪わない (#632)。**
+    #
+    # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` で
+    # **同じ結末**になる — victim が pid の数字で上書き＋ truncate される。
+    # 🔴 Linux の `fs.protected_hardlinks` は緩和だが、**FreeBSD の既定には無い**。
+    def test_write_pid_refuses_a_hard_linked_pid_file
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # 🔴 **握り潐さず理由を残す。** ⚠ stderr は `run_restart` の子で捨てられるので、
+    # **logger に出ないと消える**（#633 / #635 と同じ規則）。
+    def test_write_pid_logs_why_a_hard_linked_pid_file_is_refused
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file is hard linked')
+    end
+
+    # 🔴🔴 **`tmp/pids` 自体が symlink なら起動しない (#632)。**
+    # ⚠⚠ `O_NOFOLLOW` が効くのは**パスの最終要素だけ**なので、置き場所を
+    # 差し替えられると**リンク先のファイルを掴まされる**。
+    def test_write_pid_refuses_when_the_pid_dir_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(elsewhere)
+      pids = File.join(@dir, 'tmp/pids')
+      FileUtils.remove_entry(pids)
+      File.symlink(elsewhere, pids)
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # ⚠ **素のディレクトリなら従来どおり取れる。** 🔴 置き場所の検査を入れたことで
+    # **普通の起動が拒まれていないこと**を固定する。
+    def test_write_pid_accepts_a_plain_pid_dir
+      daemon = create
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
     # 🔴🔴 **FIFO を置かれても止まらないこと (#633 Codex P1)。**
     #
     # pid ファイルの位置に FIFO があると、⚠⚠ **書き手が現れるまで `open` も `read` も
