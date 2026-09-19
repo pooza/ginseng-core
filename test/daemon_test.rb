@@ -684,6 +684,38 @@ module Ginseng
         'pid file is hard linked')
     end
 
+    # 🔴🔴 **`nlink` だけでは足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ 開いてから確かめるまでの間に **pid ファイルの側の名前を外されると**、
+    # victim の `nlink` は 2 → 1 に落ち、🔴 **検査を通ってしまう**（実測で確認）。
+    def test_reclaim_pid_file_refuses_when_the_path_was_unlinked
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        File.unlink(daemon.pid_file)
+
+        assert_equal(1, f.stat.nlink, '前提: 片方を外されると nlink は 1 に見える')
+        assert_false(daemon.send(:own_link?, f), '経路が同じ inode を指すことまで見ること')
+      end
+
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # ⚠ **素の pid ファイルは通す。** 🔴 同一性の検査を入れたことで
+    # **普通の奪取が拒まれていないこと**を固定する。
+    def test_reclaim_pid_file_accepts_a_plain_pid_file
+      daemon = create
+      File.write(daemon.pid_file, '123')
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        assert_true(daemon.send(:own_link?, f))
+      end
+    end
+
     # 🔴🔴 **`tmp/pids` 自体が symlink なら起動しない (#632)。**
     # ⚠⚠ `O_NOFOLLOW` が効くのは**パスの最終要素だけ**なので、置き場所を
     # 差し替えられると**リンク先のファイルを掴まされる**。

@@ -279,9 +279,32 @@ module Ginseng
       # ⚠ **奪るときだけ見ればよい。** `create_pid_file` は `O_CREAT | O_EXCL` なので、
       # 既にあるリンクを開くことが原理的に無い。
       def own_link?(file)
-        return true if file.stat.nlink == 1
+        stat = file.stat
+        unless stat.nlink == 1
+          @logger.warn(daemon: app_name, version: package_class.version,
+            message: 'pid file is hard linked', nlink: stat.nlink, pid_file:)
+          return false
+        end
+        return true if same_pid_file?(stat)
         @logger.warn(daemon: app_name, version: package_class.version,
-          message: 'pid file is hard linked', nlink: file.stat.nlink, pid_file:)
+          message: 'pid file changed while checking', pid_file:)
+        return false
+      end
+
+      # 開いたものと、いまの経路が同じ inode を指しているか (#632 Codex P1)。
+      #
+      # 🔴🔴 **`nlink` だけでは足りない。** ⚠⚠ 開いてから確かめるまでの間に
+      # **pid ファイルの側の名前を外されると**、victim の `nlink` は 2 → 1 に落ち、
+      # 🔴 **検査を通ってしまう**（実測: そのまま書くと victim が壊れた）。
+      #
+      # ⚠⚠ **これでも窓は閉じ切らない（#643 へ送った）。**
+      # 検査のあとに張り直される形は残る。🔴 **完全に閉じるには
+      # 「同じ inode を書き換える」形そのものをやめる必要があり**、それは #622 の
+      # 取得（`flock` で中身を差し替える）との設計変更になる。
+      def same_pid_file?(stat)
+        current = File.lstat(pid_file)
+        return current.dev == stat.dev && current.ino == stat.ino
+      rescue SystemCallError
         return false
       end
 
