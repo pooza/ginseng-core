@@ -61,7 +61,7 @@ module Ginseng
     # ⚠ 伏字は `Masking::FILTERED` — 🔴 **利用側で同じ文字列を定義し直さない**ため。
     def masked(text)
       return secrets.inject(text.to_s) do |dest, secret|
-        [secret, secret.shellescape].uniq.inject(dest) do |masked, pattern|
+        mask_patterns(secret, dest.encoding).inject(dest) do |masked, pattern|
           # ⚠ **ブロック形式で渡す**。置換文字列にすると `\\1` などが
           # 後方参照として食われる。
           masked.gsub(pattern) {Masking::FILTERED}
@@ -127,6 +127,32 @@ module Ginseng
     end
 
     private
+
+    # 伏せる形を、**本文側の符号化に寄せてから**返す (#642 Codex P2)。
+    #
+    # 🔴🔴 **符号化が食い違うと `gsub` が落ちる。** 実測: UTF-8 の非 ASCII な秘密を
+    # Shift_JIS / BINARY の本文へ当てると `Encoding::CompatibilityError`。
+    # ⚠⚠ **コマンドは成功しているのに `log_exec` が例外を上げる** —
+    # `exec` / `exec_system` が失敗に化ける。
+    #
+    # ⚠ **その符号化で表せない秘密は、本文に現れようが無い** — 当てずに飛ばしてよい
+    # （🔴 伏せ損ねにはならない）。
+    def mask_patterns(secret, encoding)
+      return [secret, secret.shellescape].uniq.filter_map do |pattern|
+        convert_encoding(pattern, encoding)
+      end
+    end
+
+    # ⚠ **BINARY だけ `force_encoding`** — 🔴 `encode` は非 ASCII を必ず
+    # `UndefinedConversionError` にするが、BINARY の本文に入っているのは
+    # **元のバイト列そのもの**なので、ラベルを合わせるのが正しい。
+    def convert_encoding(pattern, encoding)
+      return pattern if pattern.encoding == encoding
+      return pattern.dup.force_encoding(encoding) if encoding == Encoding::BINARY
+      return pattern.encode(encoding)
+    rescue EncodingError
+      return nil
+    end
 
     # サブプロセスへ渡す環境変数。Bundler.with_unbundled_env が剥がすのは
     # BUNDLE_* / GEM_* / RUBYLIB / RUBYOPT 等「Bundler が設定したもの」だけで、

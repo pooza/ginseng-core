@@ -135,6 +135,28 @@ module Ginseng
       assert_equal('[FILTERED]', @command.masked('s3cret'))
     end
 
+    # 🔴🔴 **符号化が食い違っても落ちない (#642 Codex P2)。**
+    #
+    # ⚠⚠ UTF-8 の非 ASCII な秘密を Shift_JIS / BINARY の本文へそのまま当てると
+    # `Encoding::CompatibilityError` になり、🔴 **コマンドは成功しているのに
+    # `log_exec` が例外を上げる**。
+    def test_masked_handles_other_encodings
+      @command.secrets = ['秘密']
+
+      assert_equal('コマンド [FILTERED]'.encode('Windows-31J'),
+        @command.masked('コマンド 秘密'.encode('Windows-31J')))
+      assert_equal('コマンド [FILTERED]'.dup.force_encoding('ASCII-8BIT'),
+        @command.masked('コマンド 秘密'.dup.force_encoding('ASCII-8BIT')))
+    end
+
+    # ⚠ **その符号化で表せない秘密は、本文に現れようが無い (#642)。**
+    # 🔴 飛ばしても伏せ損ねにはならないし、落ちてもいけない。
+    def test_masked_skips_a_secret_that_cannot_appear
+      @command.secrets = ['秘密']
+
+      assert_equal('hello'.encode('US-ASCII'), @command.masked('hello'.encode('US-ASCII')))
+    end
+
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
