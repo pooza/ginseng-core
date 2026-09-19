@@ -257,7 +257,10 @@ module Ginseng
         return false if Process.waitpid(child, Process::WNOHANG)
         sleep(PID_POLL_SECONDS)
       end
-      return true
+      # 🔴🔴 **最後にもう一度見る (#630 Codex P2)。** ⚠⚠ 最後の `sleep` のあいだに
+      # 落ちると、ループの条件が偽になって**見ないまま成功と答えてしまう** —
+      # 🔴 猟予の中で落ちているのに「起動した」と言うことになる。
+      return !Process.waitpid(child, Process::WNOHANG)
     rescue Errno::ECHILD
       # ⚠ 既に収穫されている（detach していないので通常は来ないが、
       # 利用側が `SIGCHLD` を扱っているとありう）。**分からないので成功側に倒さない。**

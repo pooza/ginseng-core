@@ -108,6 +108,18 @@ module Ginseng
       end
     end
 
+    # 🔴🔴 **猟予の終わり際に落ちた子を見落とさない (#630 Codex P2)。**
+    #
+    # ⚠⚠ 最後の `sleep` のあいだに落ちると、ループの条件が偽になって
+    # **見ないまま成功と答えてしまう**。⚠ 猟予 0 秒（ループを 1 回も回さない）で測る。
+    def test_await_child_checks_once_more_at_the_deadline
+      daemon = create
+      child = fork {exit 1}
+      sleep 0.5
+
+      assert_false(daemon.send(:await_child, child, 0), '締め切りでもう一度見ること')
+    end
+
     # ⚠ **落ちたことを見たら即座に戻る**（猟予を使い切らない）。
     def test_await_child_returns_false_as_soon_as_the_child_exits
       daemon = create
