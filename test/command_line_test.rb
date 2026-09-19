@@ -37,6 +37,85 @@ module Ginseng
       assert_equal('/etc', @command.stdout.chomp)
     end
 
+    # 記録だけする logger。⚠ **伏せたかどうかは「出た行」でしか測れない**。
+    class Recorder
+      attr_reader :logs
+
+      def initialize
+        @logs = []
+      end
+
+      [:error, :warn, :info, :debug, :fatal].each do |severity|
+        define_method(severity) do |message = nil|
+          @logs.push([severity, message])
+          return true
+        end
+      end
+    end
+
+    # 🔴🔴 **引数そのものが資格情報になる (#642)。**
+    # ⚠⚠ `Masking#mask` はキー名で判定するので、`command:` の 1 つの文字列には効かない。
+    def test_exec_masks_secrets_in_the_command
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.secrets = ['s3cret']
+      @command.args = ['echo', 'https://example.com/api/push/s3cret']
+      @command.exec
+
+      assert_equal('echo https://example.com/api/push/[FILTERED]', logger.logs.last.last[:command])
+    end
+
+    # ⚠⚠ **shellescape した形も伏せる (#642)。** `to_s` はエスケープ済みの文字列を返すので、
+    # 🔴 生の形だけ見ていると**クォートされたときに黙って漏れる**。
+    def test_masked_covers_the_escaped_form
+      @command.secrets = ['a b']
+
+      assert_equal('[FILTERED]', @command.masked('a\ b'))
+      assert_equal('[FILTERED]', @command.masked('a b'))
+    end
+
+    # 🔴 **`env:` の値も伏せる (#642)。** ⚠⚠ 実測: キー名が `TOKEN` なら上流の
+    # `mask` が落とすが、`PUSH_URL` のような名前だと**パスのトークンがそのまま出る**。
+    def test_exec_masks_secrets_in_the_env
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.secrets = ['s3cret']
+      @command.env = {'PUSH_URL' => 'https://example.com/api/push/s3cret'}
+      @command.args = ['echo', 'hello']
+      @command.exec
+
+      assert_equal({'PUSH_URL' => 'https://example.com/api/push/[FILTERED]'},
+        logger.logs.last.last[:env])
+    end
+
+    # ⚠ **渡さなければ従来どおり (#642)。** 🔴 値の型（`nil` など）も変えない。
+    def test_exec_leaves_the_env_alone_without_secrets
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.env = {'EMPTY' => nil}
+      @command.args = ['echo', 'hello']
+      @command.exec
+
+      assert_equal({'EMPTY' => nil}, logger.logs.last.last[:env])
+    end
+
+    # 🔴🔴 **空文字・`nil` は落とす (#642)。**
+    # ⚠⚠ 空文字で `gsub` すると**全文字の隙間に `[FILTERED]` が入る**。
+    def test_secrets_ignores_blank_values
+      @command.secrets = ['', nil, '  ']
+
+      assert_empty(@command.secrets)
+      assert_equal('hello', @command.masked('hello'))
+    end
+
+    # ⚠⚠ **長いものから伏せる (#642)。** 🔴 短い秘密が長い秘密の一部だと、
+    # 先に短いほうを置換して `[FILTERED]def` のような中途半端な形になる。
+    def test_masked_prefers_the_longest_secret
+      @command.secrets = ['abc', 'abcdef']
+
+      assert_equal('[FILTERED]', @command.masked('abcdef'))
+    end
+
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
