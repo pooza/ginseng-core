@@ -183,6 +183,23 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **もう無いなら黙る (#637 Codex P2)。**
+    #
+    # ⚠⚠ 相手の trap が先に自分の pid ファイルを消すので、止める側が見るときには
+    # 無くなっていることがある — 🔴 **これは正常な停止なので、鳴ると誤報になる**。
+    def test_run_stop_is_quiet_when_the_pid_file_is_already_gone
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:send_signal) do |signal, pid|
+        FileUtils.rm_f(pid_file)
+        next super(signal, pid)
+      end
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_not_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+    end
+
     # ⚠ **後継が取り直した形では黕る (#532 / #637)。**
     # 🔴🔴 ここで警報を出すと、**正常な交代のたびに鳴る**。
     def test_run_stop_is_quiet_when_a_successor_took_over

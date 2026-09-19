@@ -413,7 +413,11 @@ module Ginseng
         # 🔴 読めない（`nil`）は別 — **stdout / stderr / ログすべて空で exit 0** になり、
         # ⚠⚠ **「stop は成功」に見えて pid ファイルが残る**。その間に pid が再利用されると、
         # `already running (PID N)` が無関係のプロセスを指す。
-        report_pid_file_left(expected) unless found
+        # 🔴🔴 **もう無いなら黙る (#637 Codex P2)。** ⚠⚠ 相手の trap が先に
+        # **自分の pid ファイルを消す**ので、止める側がここへ来たときには
+        # 無くなっていることがある — **これは正常な停止**。
+        # 🔴 ここで鳴ると、**警報が誤報になる**（上の「後継が取り直した形」と同じ理由）。
+        report_pid_file_left(expected) if !found && pid_file_present?
         return nil
       end
 
