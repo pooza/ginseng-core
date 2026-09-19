@@ -21,7 +21,7 @@ module Ginseng
       @user = nil
       @dir = environment_class.dir
       # ⚠ **既定は空** (#642)。渡さなければ振る舞いは従来と変わらない。
-      @secrets = []
+      @secrets = [].freeze
       self.args = args
     end
 
@@ -38,9 +38,17 @@ module Ginseng
     #
     # ⚠⚠ **長いものから伏せる** — 🔴 短い秘密が長い秘密の一部だと、先に短いほうを
     # 置換して `[FILTERED]def` のような中途半端な形になる。
+    # 🔴🔴 **渡された値は複写して凍らせる (#642 Codex P1)。**
+    #
+    # ⚠⚠ `attr_reader` で配列をそのまま渡すと、**`secrets << value` でここの正規化を
+    # 迴回できる** — 🔴 空文字を足されれば全文字の隙間に印が入り、順番が崩れれば
+    # `[FILTERED]def` のように**資格情報の一部が残る**。凍らせておけば `FrozenError` で止まる。
+    #
+    # ⚠ **文字列も複写する** — 🔴 `to_s` は String に対して**自分を返す**ので、
+    # 呼び出し側があとから書き換えると**伏せる値がずれて黙って漏れる**。
     def secrets=(values)
-      @secrets = values.to_a.compact.map(&:to_s).reject(&:blank?)
-        .uniq.sort_by {|secret| -secret.length}
+      @secrets = values.to_a.compact.map {|value| value.to_s.dup.freeze}
+        .reject(&:blank?).uniq.sort_by {|secret| -secret.length}.freeze
     end
 
     # 文字列の中の資格情報を伏せる (#642)。

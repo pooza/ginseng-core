@@ -116,6 +116,25 @@ module Ginseng
       assert_equal('[FILTERED]', @command.masked('abcdef'))
     end
 
+    # 🔴🔴 **正規化を迴回させない (#642 Codex P1)。**
+    # ⚠⚠ `secrets << value` を許すと、空文字も順番の崩れも入り込む。
+    def test_secrets_cannot_be_mutated_in_place
+      @command.secrets = ['abc']
+
+      assert_raise(FrozenError) {@command.secrets << 'abcdef'}
+      assert_equal(['abc'], @command.secrets)
+    end
+
+    # 🔴 **渡された文字列を持ち回さない (#642 Codex P1)。**
+    # ⚠⚠ `to_s` は String に対して自分を返すので、呼び出し側の書き換えが届く。
+    def test_secrets_are_decoupled_from_the_caller
+      secret = +'s3cret'
+      @command.secrets = [secret]
+      secret << 'X'
+
+      assert_equal('[FILTERED]', @command.masked('s3cret'))
+    end
+
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
