@@ -77,6 +77,59 @@ module Ginseng
       assert_equal(:dead, daemon.alive_state)
     end
 
+    # 🔴🔴 **子の起動失敗を exit 0 で返さない (#630)。**
+    #
+    # ⚠⚠ 子は stdout / stderr を `/dev/null` へ付け替えているので、**親が見なければ
+    # 監視・デプロイのスクリプトからは「再起動は成功」に見える**。
+    # ⚠ `Stub#command` は `true` なので**すぐ終わる** — 常駐しないコマンドの形。
+    def test_run_restart_reports_a_child_that_did_not_stay_up
+      daemon = create
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:run_restart)}
+      end
+
+      assert_match(/did not stay up/, output)
+      assert_equal('not restarted', daemon.logs.last.last[:message])
+      assert_equal('child exited', daemon.logs.last.last[:reason])
+    end
+
+    # ⚠ **生きていれば猟予を使い切って真を返す (#630)。**
+    # 🔴 こちらを本番の猟予（3 秒）で測るとテストがその分止まるので、**短く渡す**。
+    def test_await_child_waits_out_the_grace_period
+      daemon = create
+      child = fork {sleep 5}
+
+      begin
+        assert_true(daemon.send(:await_child, child, 0.3))
+      ensure
+        Process.kill('TERM', child)
+        Process.waitpid(child)
+      end
+    end
+
+    # 🔴🔴 **猟予の終わり際に落ちた子を見落とさない (#630 Codex P2)。**
+    #
+    # ⚠⚠ 最後の `sleep` のあいだに落ちると、ループの条件が偽になって
+    # **見ないまま成功と答えてしまう**。⚠ 猟予 0 秒（ループを 1 回も回さない）で測る。
+    def test_await_child_checks_once_more_at_the_deadline
+      daemon = create
+      child = fork {exit 1}
+      sleep 0.5
+
+      assert_false(daemon.send(:await_child, child, 0), '締め切りでもう一度見ること')
+    end
+
+    # ⚠ **落ちたことを見たら即座に戻る**（猟予を使い切らない）。
+    def test_await_child_returns_false_as_soon_as_the_child_exits
+      daemon = create
+      child = fork {exit 1}
+      started = Time.now
+
+      assert_false(daemon.send(:await_child, child, 5))
+      assert_operator(Time.now - started, :<, 5, '猟予を使い切らないこと')
+    end
+
     def test_run_stop_sends_term_and_removes_pid
       daemon = create(pid: Process.pid)
       daemon.send(:run_stop)

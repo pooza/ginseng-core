@@ -9,6 +9,14 @@ module Ginseng
     # 利用側の見え方（`write_pid` を override する、など）は同じ。
     include PidFile
 
+    # ⚠ `restart` が子の生存を見る猟予（秒） (#630)。🔴 **長くすると `restart` が
+    # 戻らなくなる**。⚠⚠ pid ファイルの取得は `exec` の前なのですぐに終わる —
+    # ここで見ているのは主に `exec` の成否。
+    PID_WAIT_SECONDS = 3
+
+    # ⚠ 見にいく間隔（秒）。
+    PID_POLL_SECONDS = 0.1
+
     attr_reader :pid_file, :working_dir, :app_name
 
     def initialize(opts = {})
@@ -211,6 +219,19 @@ module Ginseng
       abort_stop!("PID '#{p}' is not ours.", 'pid file is not ours')
     end
 
+    # 🔴🔴 **子の起動失敗を exit 0 で返さない (#630)。**
+    #
+    # ⚠⚠ 従来は fork して `Process.detach` するだけで、**終了ステータスを見ていなかった** —
+    # 子は stdout / stderr を `File::NULL` へ付け替えているので、🔴 **監視やデプロイの
+    # スクリプトからは「再起動は成功した」に見えていた**。
+    #
+    # ⚠ **「起動できた」の定義をここで決めている** — 子が `PID_WAIT_SECONDS` のあいだ
+    # 落ちずに残っていること。⚠⚠ **pid ファイルを取れただけでは足りない** —
+    # 🔴 `write_pid` は `exec` の**前**に走るので、コマンドが無いときでも一度は取れる
+    # （#637 で、そのあと `abort_start!` を通って exit 1 になる）。
+    #
+    # ⚠ **それでも完全ではない** — 猟予を過ぎてから落ちる形は拾えない。
+    # 🔴 **拾えないところを広げるために待ち続けない** — `restart` が戻らなくなる。
     def run_restart(args = [])
       # ⚠ **:unknown でも止めにいく** (#510)。ここを alive? で切ると、EPERM の
       # ときに停止を飛ばしたまま start へ進んで 2 本目が立つ。
@@ -222,7 +243,36 @@ module Ginseng
         $stderr.reopen(File::NULL, 'w')
         run_start(args)
       end
+      abort_restart!(child) unless await_child(child)
       Process.detach(child)
+    end
+
+    # 子が猟予のあいだ残っていたか (#630)。
+    #
+    # ⚠⚠ **落ちたことを見たら即座に戻る** — 猟予を使い切るのは「起動している」側だけ。
+    # ⚠ `WNOHANG` の `waitpid` は、まだ生きていれば nil を返す。
+    def await_child(child, seconds = PID_WAIT_SECONDS)
+      deadline = Time.now + seconds
+      while Time.now < deadline
+        return false if Process.waitpid(child, Process::WNOHANG)
+        sleep(PID_POLL_SECONDS)
+      end
+      # 🔴🔴 **最後にもう一度見る (#630 Codex P2)。** ⚠⚠ 最後の `sleep` のあいだに
+      # 落ちると、ループの条件が偽になって**見ないまま成功と答えてしまう** —
+      # 🔴 猟予の中で落ちているのに「起動した」と言うことになる。
+      return !Process.waitpid(child, Process::WNOHANG)
+    rescue Errno::ECHILD
+      # ⚠ 既に収穫されている（detach していないので通常は来ないが、
+      # 利用側が `SIGCHLD` を扱っているとありう）。**分からないので成功側に倒さない。**
+      return false
+    end
+
+    # 🔴 **stderr と logger の両方へ出して終わる (#630)。** ⚠⚠ 子の出力は
+    # `/dev/null` へ行っているので、**親が出さないと端末には何も残らない**。
+    # ⚠ 子の側の理由（`exec` が落ちたなど）は #637 で syslog に残る。
+    def abort_restart!(child)
+      abort_daemon!("#{app_name} did not stay up (PID #{child}). Check the log.",
+        'not restarted', 'child exited', nil)
     end
 
     # ⚠ **「触れなかった」を「動いていない」と表示しない** (#510)。運用者が
