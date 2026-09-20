@@ -55,8 +55,9 @@ module Ginseng
       # `NOFOLLOW` を定義していると true になり、`File::NOFOLLOW` で NameError になる。
       #
       # ⚠ **効くのはパスの最終要素だけ。** ⚠⚠ **これは変わらない** — 残り 2 通りは
-      # 別に塞いてある（#632）: **ハードリンクは `own_link?`**（奪る前に `nlink` を見る）、
-      # **`tmp/pids` 自体の symlink は `pid_dir?`**（`write_pid` の入口で `lstat`）。
+      # 別に塞いてある（#632）: **ハードリンクは `own_link?`**（奪う前に `nlink` を見る）、
+      # **`tmp/pids` 自体の symlink は `unusable_pid_dir`**（`write_pid` の入口で、
+      # `guarded_dirs` の各段を `lstat`）。
       # 🔴 **どちらもここの旗では塞がらないので、消すと戻る。**
       # ⚠ **読む側（`read_pid_file` / `alive_state`）は辿る**が、そちらは読むだけで、
       # 結論は「取れなかった」に落ちる。
@@ -185,7 +186,7 @@ module Ginseng
         # 🔴 **取れなかった理由を出す (#637)。** ⚠⚠ FIFO / ディレクトリが置かれているとき、
         # 従来は `Could not acquire PID file`（`error: nil`）だけで、**原因にたどり着けなかった**。
         # ⚠ **番号として読めるならここへ来ない** — それは別の start との競合なので、
-        # 🔴 **「不正な pid ファイル」と言うと嫁になる**。
+        # 🔴 **「不正な pid ファイル」と言うと嘘になる**。
         if pid_file_present? && pid.nil?
           abort_start!("PID file '#{pid_file}' exists but is not a valid PID file.",
             'pid file invalid')
@@ -215,10 +216,16 @@ module Ginseng
       # ⚠⚠ **理由（errno）は引数で持ち回る (#635 Codex P2)。** 🔴 ここで
       # `@pid_file_error` を読むと、**メッセージを組み立てる途中の読み直しで消えた
       # あと**の値を見ることになる。呼ぶ側が「決めたときの証拠」を渡す。
+      # 🔴🔴 **例外の本文も残す（リリース前レビューの黄・2 観点が独立に指摘）。**
+      # ⚠⚠ `warn` は **stderr にしか出ず、`run_restart` の子は stderr を `File::NULL`
+      # へ付け替えている**ので、クラス名だけだと「`bundle` が無いのか、常駐の
+      # コマンドのパスが変わったのか」を切り分けられない。
+      # ⚠ `detail:` は `Logger#create_message` の `mask` を通るので、埋まった URL は
+      # 伏せられる（`error:` はクラス名のままにする — 既存の grep が効かなくなる）。
       def abort_daemon!(message, state, reason, error)
         warn message
         @logger.error(daemon: app_name, version: package_class.version,
-          message: state, reason:, pid_file:, error: error&.class&.to_s)
+          message: state, reason:, pid_file:, error: error&.class&.to_s, detail: error&.message)
         exit 1
       end
 
@@ -313,7 +320,7 @@ module Ginseng
       # `nlink` が 2 になり、**起動しなくなる**。⚠ 実測（2026-09-19）: 利用側のバックアップは
       # `rsync -avz --delete --mkpath` と ZFS のスナップショットで、**`--link-dest` は使っていない**。
       #
-      # ⚠ **奪るときだけ見ればよい。** `create_pid_file` は `O_CREAT | O_EXCL` なので、
+      # ⚠ **奪うときだけ見ればよい。** `create_pid_file` は `O_CREAT | O_EXCL` なので、
       # 既にあるリンクを開くことが原理的に無い。
       def own_link?(file)
         stat = file.stat
@@ -354,9 +361,15 @@ module Ginseng
       # `tmp/pids` は本物のディレクトリなので検査を通り、**同じ破壊ができる**
       # （実測した: victim が pid の数字で上書きされた）。**下から 1 段ずつ見る。**
       #
-      # ⚠⚠ **作業ディレクトリより上は見ない。** 🔴 Capistrano 式の `current` のように、
-      # **上に symlink を置く運用は正当**で、そこを拒むと配置ごと壊す。
+      # ⚠⚠ **作業ディレクトリより上は見ない。** 🔴 リリース単位のディレクトリを
+      # `current` のような symlink で切り替える運用は正当で、そこを拒むと配置ごと壊す。
       # ⚠ そこを書き換えられる相手は、どうせアプリ本体を差し替えられる。
+      #
+      # 🔴🔴 **逆に、作業ディレクトリ配下（`tmp` / `tmp/pids`）を symlink にする配置は
+      # 拒む。** ⚠⚠ Capistrano の `linked_dirs` は既定で `tmp/pids` を共有先への
+      # symlink にするので、**その配置では常駐が上がらない**（手で実体へ戻すまで直らない）。
+      # ⚠ 手元の利用側と cookbook には該当なしを実測したが、**配布時に残りでも
+      # `ls -ld tmp tmp/pids` を取ること**。
       #
       # ⚠ **開いてから確かめられないので TOCTOU は残る。** それでも、入れ替えを
       # 「間に合わせる」必要のある形へ落とせる。
@@ -375,8 +388,11 @@ module Ginseng
       # 検査するディレクトリを、pid ファイルの親から**作業ディレクトリの手前まで**並べる。
       #
       # ⚠ **作業ディレクトリに届かない形（`pid_file` を外へ向けている利用側）では、
-      # 親 1 段だけ見る** — 🔴 そのまま上へ辿ると `/` まで全段を拒むことになる。
+      # 親 1 段だけ見る** — ⚠ そのまま上へ辿ると `/` まで全段を拒むことになる。
       # ⚠ `working_dir` を持たない混ぜ方（`Daemon` 以外）も同じ扱い。
+      # ⚠⚠ **親が作業ディレクトリそのものなら空を返す**（`pid_file` を `tmp/pids` の
+      # 外へ向けた利用側）。🔴 **そこは「上は見ない」の側なので検査は 1 段も走らない** —
+      # 既定（`tmp/pids`）から動かした利用側では、この守りは効いていない。
       def guarded_dirs
         parent = File.expand_path(File.dirname(pid_file))
         base = respond_to?(:working_dir) ? File.expand_path(working_dir.to_s) : nil
