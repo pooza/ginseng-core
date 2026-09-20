@@ -37,6 +37,126 @@ module Ginseng
       assert_equal('/etc', @command.stdout.chomp)
     end
 
+    # 記録だけする logger。⚠ **伏せたかどうかは「出た行」でしか測れない**。
+    class Recorder
+      attr_reader :logs
+
+      def initialize
+        @logs = []
+      end
+
+      [:error, :warn, :info, :debug, :fatal].each do |severity|
+        define_method(severity) do |message = nil|
+          @logs.push([severity, message])
+          return true
+        end
+      end
+    end
+
+    # 🔴🔴 **引数そのものが資格情報になる (#642)。**
+    # ⚠⚠ `Masking#mask` はキー名で判定するので、`command:` の 1 つの文字列には効かない。
+    def test_exec_masks_secrets_in_the_command
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.secrets = ['s3cret']
+      @command.args = ['echo', 'https://example.com/api/push/s3cret']
+      @command.exec
+
+      assert_equal('echo https://example.com/api/push/[FILTERED]', logger.logs.last.last[:command])
+    end
+
+    # ⚠⚠ **shellescape した形も伏せる (#642)。** `to_s` はエスケープ済みの文字列を返すので、
+    # 🔴 生の形だけ見ていると**クォートされたときに黙って漏れる**。
+    def test_masked_covers_the_escaped_form
+      @command.secrets = ['a b']
+
+      assert_equal('[FILTERED]', @command.masked('a\ b'))
+      assert_equal('[FILTERED]', @command.masked('a b'))
+    end
+
+    # 🔴 **`env:` の値も伏せる (#642)。** ⚠⚠ 実測: キー名が `TOKEN` なら上流の
+    # `mask` が落とすが、`PUSH_URL` のような名前だと**パスのトークンがそのまま出る**。
+    def test_exec_masks_secrets_in_the_env
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.secrets = ['s3cret']
+      @command.env = {'PUSH_URL' => 'https://example.com/api/push/s3cret'}
+      @command.args = ['echo', 'hello']
+      @command.exec
+
+      assert_equal({'PUSH_URL' => 'https://example.com/api/push/[FILTERED]'},
+        logger.logs.last.last[:env])
+    end
+
+    # ⚠ **渡さなければ従来どおり (#642)。** 🔴 値の型（`nil` など）も変えない。
+    def test_exec_leaves_the_env_alone_without_secrets
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.env = {'EMPTY' => nil}
+      @command.args = ['echo', 'hello']
+      @command.exec
+
+      assert_equal({'EMPTY' => nil}, logger.logs.last.last[:env])
+    end
+
+    # 🔴🔴 **空文字・`nil` は落とす (#642)。**
+    # ⚠⚠ 空文字で `gsub` すると**全文字の隙間に `[FILTERED]` が入る**。
+    def test_secrets_ignores_blank_values
+      @command.secrets = ['', nil, '  ']
+
+      assert_empty(@command.secrets)
+      assert_equal('hello', @command.masked('hello'))
+    end
+
+    # ⚠⚠ **長いものから伏せる (#642)。** 🔴 短い秘密が長い秘密の一部だと、
+    # 先に短いほうを置換して `[FILTERED]def` のような中途半端な形になる。
+    def test_masked_prefers_the_longest_secret
+      @command.secrets = ['abc', 'abcdef']
+
+      assert_equal('[FILTERED]', @command.masked('abcdef'))
+    end
+
+    # 🔴🔴 **正規化を迴回させない (#642 Codex P1)。**
+    # ⚠⚠ `secrets << value` を許すと、空文字も順番の崩れも入り込む。
+    def test_secrets_cannot_be_mutated_in_place
+      @command.secrets = ['abc']
+
+      assert_raise(FrozenError) {@command.secrets << 'abcdef'}
+      assert_equal(['abc'], @command.secrets)
+    end
+
+    # 🔴 **渡された文字列を持ち回さない (#642 Codex P1)。**
+    # ⚠⚠ `to_s` は String に対して自分を返すので、呼び出し側の書き換えが届く。
+    def test_secrets_are_decoupled_from_the_caller
+      secret = +'s3cret'
+      @command.secrets = [secret]
+      secret << 'X'
+
+      assert_equal('[FILTERED]', @command.masked('s3cret'))
+    end
+
+    # 🔴🔴 **符号化が食い違っても落ちない (#642 Codex P2)。**
+    #
+    # ⚠⚠ UTF-8 の非 ASCII な秘密を Shift_JIS / BINARY の本文へそのまま当てると
+    # `Encoding::CompatibilityError` になり、🔴 **コマンドは成功しているのに
+    # `log_exec` が例外を上げる**。
+    def test_masked_handles_other_encodings
+      @command.secrets = ['秘密']
+
+      assert_equal('コマンド [FILTERED]'.encode('Windows-31J'),
+        @command.masked('コマンド 秘密'.encode('Windows-31J')))
+      assert_equal('コマンド [FILTERED]'.dup.force_encoding('ASCII-8BIT'),
+        @command.masked('コマンド 秘密'.dup.force_encoding('ASCII-8BIT')))
+    end
+
+    # ⚠ **その符号化で表せない秘密は、本文に現れようが無い (#642)。**
+    # 🔴 飛ばしても伏せ損ねにはならないし、落ちてもいけない。
+    def test_masked_skips_a_secret_that_cannot_appear
+      @command.secrets = ['秘密']
+
+      assert_equal('hello'.encode('US-ASCII'), @command.masked('hello'.encode('US-ASCII')))
+    end
+
     def test_exec
       @command.args = ['ls', '/']
       @command.exec
