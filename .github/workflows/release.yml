@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: pooza/ginseng-style/.github/actions/release-tag@ed862dcf9550d704ee670f65a30a333a694b883a # v1.1.12
+      - uses: pooza/ginseng-style/.github/actions/release-tag@05a9e5c997082bd75bd913190e0c947fdaff082d # v1.1.13
         with:
           mode: manual
           # ⚠⚠ 既定は無い。**このリポジトリが配る中身**を列挙する。
