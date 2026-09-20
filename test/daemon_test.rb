@@ -707,6 +707,140 @@ module Ginseng
       File.define_singleton_method(:open, original) if original
     end
 
+    # 🔴🔴 **ハードリンクされた pid ファイルを奪わない (#632)。**
+    #
+    # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` で
+    # **同じ結末**になる — victim が pid の数字で上書き＋ truncate される。
+    # 🔴 Linux の `fs.protected_hardlinks` は緩和だが、**FreeBSD の既定には無い**。
+    def test_write_pid_refuses_a_hard_linked_pid_file
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # 🔴 **握り潐さず理由を残す。** ⚠ stderr は `run_restart` の子で捨てられるので、
+    # **logger に出ないと消える**（#633 / #635 と同じ規則）。
+    def test_write_pid_logs_why_a_hard_linked_pid_file_is_refused
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file is hard linked')
+    end
+
+    # 🔴🔴 **`nlink` だけでは足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ 開いてから確かめるまでの間に **pid ファイルの側の名前を外されると**、
+    # victim の `nlink` は 2 → 1 に落ち、🔴 **検査を通ってしまう**（実測で確認）。
+    def test_reclaim_pid_file_refuses_when_the_path_was_unlinked
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        File.unlink(daemon.pid_file)
+
+        assert_equal(1, f.stat.nlink, '前提: 片方を外されると nlink は 1 に見える')
+        assert_false(daemon.send(:own_link?, f), '経路が同じ inode を指すことまで見ること')
+      end
+
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # ⚠ **素の pid ファイルは通す。** 🔴 同一性の検査を入れたことで
+    # **普通の奪取が拒まれていないこと**を固定する。
+    def test_reclaim_pid_file_accepts_a_plain_pid_file
+      daemon = create
+      File.write(daemon.pid_file, '123')
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        assert_true(daemon.send(:own_link?, f))
+      end
+    end
+
+    # 🔴🔴 **`tmp/pids` 自体が symlink なら起動しない (#632)。**
+    # ⚠⚠ `O_NOFOLLOW` が効くのは**パスの最終要素だけ**なので、置き場所を
+    # 差し替えられると**リンク先のファイルを掴まされる**。
+    def test_write_pid_refuses_when_the_pid_dir_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(elsewhere)
+      pids = File.join(@dir, 'tmp/pids')
+      FileUtils.remove_entry(pids)
+      File.symlink(elsewhere, pids)
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # 🔴🔴 **最終要素だけ見ても足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ `tmp` の側を symlink にすれば、`tmp/pids` は**本物のディレクトリ**なので
+    # 検査を通る — 🔴 実測で victim が pid の数字で上書きされた。
+    def test_write_pid_refuses_when_an_ancestor_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # ⚠ **拒むときは原因の段を名乗る。** 🔴 `tmp/pids` を出すと、運用者は
+    # 「ディレクトリはあるのに」となる（symlink なのは `tmp` の側）。
+    def test_write_pid_names_the_unusable_directory
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+
+      assert_match(/#{Regexp.escape(File.join(@dir, 'tmp'))}'/, output)
+    end
+
+    # ⚠⚠ **作業ディレクトリより上は見ない (#632)。** 🔴 Capistrano 式の `current` のように
+    # **上に symlink を置く運用は正当**で、そこを拒むと配置ごと壊す。
+    def test_write_pid_allows_a_symlinked_working_dir
+      real = File.join(@dir, 'releases/1')
+      FileUtils.mkdir_p(File.join(real, 'tmp/pids'))
+      link = File.join(@dir, 'current')
+      File.symlink(real, link)
+      daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: link})
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # ⚠ **素のディレクトリなら従来どおり取れる。** 🔴 置き場所の検査を入れたことで
+    # **普通の起動が拒まれていないこと**を固定する。
+    def test_write_pid_accepts_a_plain_pid_dir
+      daemon = create
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
     # 🔴🔴 **FIFO を置かれても止まらないこと (#633 Codex P1)。**
     #
     # pid ファイルの位置に FIFO があると、⚠⚠ **書き手が現れるまで `open` も `read` も
