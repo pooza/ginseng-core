@@ -110,6 +110,21 @@ module Ginseng
         return !@pid_file_error.nil?
       end
 
+      # pid ファイルの場所に**何かが在る**か (#637)。
+      #
+      # ⚠⚠ **中身が読めるかは見ない。** 🔴 `pid` は「無い」も「読めない」も
+      # 「読めたが pid ではない」も `nil` に畳むので、**第 3 の状態**（FIFO /
+      # ディレクトリ / dangling symlink / 空 / ゴミ）を言い分けるのに要る。
+      #
+      # ⚠ **`lstat` で見る** — 🔴 dangling symlink は `File.exist?` だと false になるが、
+      # **そこに置かれていること自体が知りたいこと**だ。
+      def pid_file_present?
+        File.lstat(pid_file)
+        return true
+      rescue SystemCallError
+        return false
+      end
+
       # ⚠ 読めない pid ファイルでは番号が分からないので、代わりに場所を出す。
       # ⚠ **読み直さない。** 呼ぶ側が持っている pid を渡す（🔴 ここで `pid` を呼ぶと
       # pid ファイルを読み直し、記録してあった errno を消す — #635 Codex P2）。
@@ -167,6 +182,14 @@ module Ginseng
           abort_if_running! if observed_pid
           return if reclaim_pid_file(observed)
         end
+        # 🔴 **取れなかった理由を出す (#637)。** ⚠⚠ FIFO / ディレクトリが置かれているとき、
+        # 従来は `Could not acquire PID file`（`error: nil`）だけで、**原因にたどり着けなかった**。
+        # ⚠ **番号として読めるならここへ来ない** — それは別の start との競合なので、
+        # 🔴 **「不正な pid ファイル」と言うと嫁になる**。
+        if pid_file_present? && pid.nil?
+          abort_start!("PID file '#{pid_file}' exists but is not a valid PID file.",
+            'pid file invalid')
+        end
         abort_start!("Could not acquire PID file '#{pid_file}'.", 'could not acquire pid file')
       end
 
@@ -214,6 +237,29 @@ module Ginseng
         @pid_file_error = nil
       end
 
+      # 開いた pid ファイルが**そもそも奪ってよい容れ物か**。⚠ 中身は見ない。
+      #
+      # ⚠⚠ **通常ファイルであることを開いてから確かめる。** 🔴 `File.file?` を
+      # 見てからここへ来るまでに FIFO へ差し替えられると、**`read` が返らない**
+      # （このファイルが `LOCK_NB` で避けているハングが、別の入口から入る）。
+      # 🔴 **通常ファイルでないことを黙って落とさない (#637)。** ⚠⚠ ここを無音で
+      # 返すと、最後に出るのは `Could not acquire PID file` だけで、
+      # **FIFO やディレクトリが置かれているという原因にたどり着けない**。
+      #
+      # 🔴🔴 **ハードリンクされた pid ファイルは奪わない (#632)。**
+      # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` なら
+      # **同じ結末**（victim が pid の数字で上書き＋truncate）になる。
+      # 🔴 Linux は `fs.protected_hardlinks=1` が緩和するが、**FreeBSD は
+      # `security.bsd.hardlink_check_uid` が既定 0**（本番の一部が FreeBSD）。
+      def reclaimable?(file)
+        unless file.stat.file?
+          @logger.warn(daemon: app_name, version: package_class.version,
+            message: 'pid file is not a regular file', pid_file:)
+          return false
+        end
+        return own_link?(file)
+      end
+
       # 死んだ pid ファイルを**消さずに**奪う。奪えたら true。
       #
       # 🔴🔴 **「消して作り直す」にしないこと (#622 Codex P1)。** `remove_pid` は
@@ -229,16 +275,7 @@ module Ginseng
       def reclaim_pid_file(observed)
         written = false
         File.open(pid_file, PID_FILE_OPEN_FLAGS) do |f|
-          # ⚠⚠ **通常ファイルであることを開いてから確かめる。** 🔴 `File.file?` を
-          # 見てからここへ来るまでに FIFO へ差し替えられると、**`read` が返らない**
-          # （このファイルが `LOCK_NB` で避けているハングが、別の入口から入る）。
-          return false unless f.stat.file?
-          # 🔴🔴 **ハードリンクされた pid ファイルは奪わない (#632)。**
-          # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` なら
-          # **同じ結末**（victim が pid の数字で上書き＋truncate）になる。
-          # 🔴 Linux は `fs.protected_hardlinks=1` が緩和するが、**FreeBSD は
-          # `security.bsd.hardlink_check_uid` が既定 0**（本番の一部が FreeBSD）。
-          return false unless own_link?(f)
+          return false unless reclaimable?(f)
           return false unless lock_pid_file(f)
           # ⚠⚠ **ロックを取ってから読み直す。** 自分が読んでからここへ来るまでに
           # 別の start が奪っていれば、**先頭 `PID_FILE_MAX_BYTES + 1` バイト**が
@@ -476,8 +513,25 @@ module Ginseng
       # プロセスへ寄せる必要があり、それは別の設計判断（#532 に記録）。
       def remove_pid(expected = nil)
         return FileUtils.rm_f(pid_file) if expected.nil?
-        return unless pid == expected
-        FileUtils.rm_f(pid_file)
+        found = pid
+        return FileUtils.rm_f(pid_file) if found == expected
+        # 🔴🔴 **読めなかったときにだけ残す (#637)。** ⚠ 別の番号が入っているのは
+        # **後継が取り直した正常な形**（#532）なので黙る — ⚠⚠ ここで警報を出すと
+        # **正常な交代のたびに鳴り、警報が誤報になる**。
+        # 🔴 読めない（`nil`）は別 — **stdout / stderr / ログすべて空で exit 0** になり、
+        # ⚠⚠ **「stop は成功」に見えて pid ファイルが残る**。その間に pid が再利用されると、
+        # `already running (PID N)` が無関係のプロセスを指す。
+        # 🔴🔴 **もう無いなら黙る (#637 Codex P2)。** ⚠⚠ 相手の trap が先に
+        # **自分の pid ファイルを消す**ので、止める側がここへ来たときには
+        # 無くなっていることがある — **これは正常な停止**。
+        # 🔴 ここで鳴ると、**警報が誤報になる**（上の「後継が取り直した形」と同じ理由）。
+        report_pid_file_left(expected) if !found && pid_file_present?
+        return nil
+      end
+
+      def report_pid_file_left(expected)
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'pid file left behind', expected:, pid_file:)
       end
     end
   end
