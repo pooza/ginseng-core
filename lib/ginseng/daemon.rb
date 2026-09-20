@@ -9,6 +9,14 @@ module Ginseng
     # 利用側の見え方（`write_pid` を override する、など）は同じ。
     include PidFile
 
+    # ⚠ `restart` が子の生存を見る猟予（秒） (#630)。🔴 **長くすると `restart` が
+    # 戻らなくなる**。⚠⚠ pid ファイルの取得は `exec` の前なのですぐに終わる —
+    # ここで見ているのは主に `exec` の成否。
+    PID_WAIT_SECONDS = 3
+
+    # ⚠ 見にいく間隔（秒）。
+    PID_POLL_SECONDS = 0.1
+
     attr_reader :pid_file, :working_dir, :app_name
 
     def initialize(opts = {})
@@ -203,6 +211,17 @@ module Ginseng
         exit
       end
       start(args)
+    rescue StandardError => e
+      # 🔴🔴 **`exec` が落ちても、成功と同じ 1 行しか出ていなかった (#637)。**
+      # `start` は `info` を出してから `exec` するので、⚠⚠ **コマンドのパスが
+      # 変わった・`bundle` が無いといった失敗でも、ログは成功時と同一**だった。
+      # 🔴 `run_restart` の子は stderr を `/dev/null` へ付け替えているので、
+      # **例外の backtrace も消える**。
+      #
+      # ⚠ **書いた pid ファイルは戻す。** 起動できていないのに残すと、次の `start` が
+      # ファイルを見て判断することになる（⚠⚠ **中身が自分のもののときだけ消す** — #532）。
+      remove_pid(Process.pid)
+      abort_start!("Could not start: #{e.message}", 'start failed', e)
     end
 
     # ⚠ **シグナルを送ってから pid ファイルを消すこと** (#509)。
@@ -220,6 +239,14 @@ module Ginseng
         if pid_file_unreadable?
           abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
         end
+        # 🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+        # ⚠⚠ #635 は「無い」と「読めない」を言い分けたが、**第 3 の状態**
+        # （FIFO / ディレクトリ / dangling symlink / 空 / ゴミ / 64B 超え）が
+        # 「無い」側へ落ちていた。🔴 **原因にたどり着けない。**
+        if pid_file_present?
+          abort_stop!("PID file '#{pid_file}' exists but is not a valid PID file.",
+            'pid file invalid')
+        end
         abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
       end
       send_signal('TERM', p)
@@ -229,11 +256,29 @@ module Ginseng
       # 既に居ないので pid ファイルは消してよい（⚠ ただし中身が p のときだけ）。
       remove_pid(p)
       warn 'PID file found, but process was not running.'
+      # 🔴 **ここだけ logger を通っていなかった (#637)。** ⚠⚠ **pid ファイルが在るのに
+      # 中のプロセスが消えている**は運用上いちばん知りたい状態で、他の出口
+      # （not found / unreadable / EPERM）は全部 `abort_stop!` を通るので、**ここだけ非対称**だった。
+      @logger.warn(daemon: app_name, version: package_class.version,
+        message: 'stop', reason: 'process was not running', pid_file:)
     rescue Errno::EPERM
       # ⚠ **pid ファイルは残す。**消すと生きたままのプロセスが辿れなくなる。
       abort_stop!("PID '#{p}' is not ours.", 'pid file is not ours')
     end
 
+    # 🔴🔴 **子の起動失敗を exit 0 で返さない (#630)。**
+    #
+    # ⚠⚠ 従来は fork して `Process.detach` するだけで、**終了ステータスを見ていなかった** —
+    # 子は stdout / stderr を `File::NULL` へ付け替えているので、🔴 **監視やデプロイの
+    # スクリプトからは「再起動は成功した」に見えていた**。
+    #
+    # ⚠ **「起動できた」の定義をここで決めている** — 子が `PID_WAIT_SECONDS` のあいだ
+    # 落ちずに残っていること。⚠⚠ **pid ファイルを取れただけでは足りない** —
+    # 🔴 `write_pid` は `exec` の**前**に走るので、コマンドが無いときでも一度は取れる
+    # （#637 で、そのあと `abort_start!` を通って exit 1 になる）。
+    #
+    # ⚠ **それでも完全ではない** — 猟予を過ぎてから落ちる形は拾えない。
+    # 🔴 **拾えないところを広げるために待ち続けない** — `restart` が戻らなくなる。
     def run_restart(args = [])
       # ⚠ **:unknown でも止めにいく** (#510)。ここを alive? で切ると、EPERM の
       # ときに停止を飛ばしたまま start へ進んで 2 本目が立つ。
@@ -245,7 +290,36 @@ module Ginseng
         $stderr.reopen(File::NULL, 'w')
         run_start(args)
       end
+      abort_restart!(child) unless await_child(child)
       Process.detach(child)
+    end
+
+    # 子が猟予のあいだ残っていたか (#630)。
+    #
+    # ⚠⚠ **落ちたことを見たら即座に戻る** — 猟予を使い切るのは「起動している」側だけ。
+    # ⚠ `WNOHANG` の `waitpid` は、まだ生きていれば nil を返す。
+    def await_child(child, seconds = PID_WAIT_SECONDS)
+      deadline = Time.now + seconds
+      while Time.now < deadline
+        return false if Process.waitpid(child, Process::WNOHANG)
+        sleep(PID_POLL_SECONDS)
+      end
+      # 🔴🔴 **最後にもう一度見る (#630 Codex P2)。** ⚠⚠ 最後の `sleep` のあいだに
+      # 落ちると、ループの条件が偽になって**見ないまま成功と答えてしまう** —
+      # 🔴 猟予の中で落ちているのに「起動した」と言うことになる。
+      return !Process.waitpid(child, Process::WNOHANG)
+    rescue Errno::ECHILD
+      # ⚠ 既に収穫されている（detach していないので通常は来ないが、
+      # 利用側が `SIGCHLD` を扱っているとありう）。**分からないので成功側に倒さない。**
+      return false
+    end
+
+    # 🔴 **stderr と logger の両方へ出して終わる (#630)。** ⚠⚠ 子の出力は
+    # `/dev/null` へ行っているので、**親が出さないと端末には何も残らない**。
+    # ⚠ 子の側の理由（`exec` が落ちたなど）は #637 で syslog に残る。
+    def abort_restart!(child)
+      abort_daemon!("#{app_name} did not stay up (PID #{child}). Check the log.",
+        'not restarted', 'child exited', nil)
     end
 
     # ⚠ **「触れなかった」を「動いていない」と表示しない** (#510)。運用者が
@@ -273,14 +347,29 @@ module Ginseng
       return puts "#{app_name}: PID file changed while checking (unknown)" if current != found
       # ⚠ 読めたのに番号が無い（2 つの読み取りの間にファイルが現れた）なら、分からない。
       state = :unknown if state == :alive && found.nil?
+      report_status(state, found)
+    end
+
+    # ⚠ **報告だけを切り出してある (#637)。** 判断（読み直して変わっていないか）は
+    # `run_status` に残す — 切り出すと、⚠⚠ **「変わったら決めない」が報告側に混ざる**。
+    def report_status(state, found)
       case state
       when :alive
-        puts "#{app_name} is running (PID #{found})"
+        return puts "#{app_name} is running (PID #{found})"
       when :unknown
-        puts "#{app_name}: #{pid_label(found)} exists but is not ours (unknown)"
-      else
-        puts "#{app_name} is not running"
+        # ⚠ **番号が無いときに "exists" と言わない (#637)。** 🔴 2 つの読み取りの
+        # 間に現れて消えた形もここへ来るので、**在ると断定できていない**。
+        return puts "#{app_name}: PID file '#{pid_file}' state is unknown" unless found
+        return puts "#{app_name}: #{pid_label(found)} exists but is not ours (unknown)"
       end
+      # 🔴🔴 **「番号は読めたが死んでいる」を「妥当でない」と言わない。** ⚠⚠ ふつうの
+      # 停止・異常終了のあとは**必ずこの形**なので、**いちばん多い状態が毎回異常に
+      # 見える**。🔴 `stop` 側は `unless (p = pid)` の内側なのでこの形が来ない。
+      return puts "#{app_name} is not running (stale PID file '#{pid_file}')" if found
+      # 🔴 **`stop` と同じ第 3 の状態を、`status` でも言い分ける (#637)。**
+      # ⚠⚠ 在るのに "is not running" と答えると、**置かれているゴミに気づけない**。
+      return puts "#{app_name} is not running" unless pid_file_present?
+      return puts "#{app_name}: PID file '#{pid_file}' exists but is not a valid PID file"
     end
   end
 end

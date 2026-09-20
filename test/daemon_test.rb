@@ -48,6 +48,14 @@ module Ginseng
       end
     end
 
+    # ⚠ **`exec` はプロセスを置き換えるので、テストからは呼べない。**
+    # 🔴 測りたいのは**失敗したときに何が残るか**なので、そちらだけ差し替える。
+    class FailingStub < Stub
+      def start(_args = [])
+        raise Errno::ENOENT, 'bundle'
+      end
+    end
+
     def setup
       @dir = Dir.mktmpdir
       FileUtils.mkdir_p(File.join(@dir, 'tmp/pids'))
@@ -152,6 +160,235 @@ module Ginseng
       daemon.define_singleton_method(:alive_state_of) {|_found| :dead}
 
       assert_nothing_raised(SystemExit) {daemon.send(:abort_if_running!)}
+    end
+
+    # 🔴🔴 **`exec` が落ちても成功と同じ 1 行しか出ていなかった (#637)。**
+    #
+    # ⚠⚠ `start` は `info` を出してから `exec` するので、**コマンドのパスが変わった**
+    # ときでもログは成功時と同一だった。🔴 `restart` の子は stderr が `/dev/null`。
+    def test_run_start_reports_a_failed_exec
+      daemon = FailingStub.new({application: 'GinsengDaemonTest', working_dir: @dir})
+      FileUtils.rm_f(daemon.pid_file)
+
+      output = capture_stdout do
+        capture_stderr do
+          assert_raise(SystemExit) {daemon.send(:run_start)}
+        end
+      end
+
+      assert_equal('start failed', daemon.logs.last.last[:reason])
+      assert_equal('Errno::ENOENT', daemon.logs.last.last[:error])
+      assert_not_empty(output)
+    end
+
+    # ⚠ **起動できていない pid ファイルを残さない (#637)。**
+    def test_run_start_removes_the_pid_file_after_a_failed_exec
+      daemon = FailingStub.new({application: 'GinsengDaemonTest', working_dir: @dir})
+      FileUtils.rm_f(daemon.pid_file)
+
+      capture_stdout do
+        capture_stderr do
+          assert_raise(SystemExit) {daemon.send(:run_start)}
+        end
+      end
+
+      assert_false(File.exist?(daemon.pid_file))
+    end
+
+    # 🔴 **`ESRCH` だけ logger を通っていなかった (#637)。**
+    # ⚠⚠ **pid ファイルが在るのに中のプロセスが消えている**は、運用上
+    # いちばん知りたい状態。
+    def test_run_stop_logs_a_missing_process
+      daemon = create(pid: Process.pid, error: Errno::ESRCH)
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_include(daemon.logs.map {|_severity, message| message[:reason]},
+        'process was not running')
+    end
+
+    # 🔴🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+    def test_run_stop_reports_an_invalid_pid_file
+      daemon = create
+      File.write(daemon.pid_file, "ごみ\n")
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:run_stop)}
+      end
+
+      assert_match(/is not a valid PID file/, output)
+      assert_not_match(/not found/, output, '在るのに「無い」と言わないこと')
+      assert_equal('pid file invalid', daemon.logs.last.last[:reason])
+    end
+
+    # ⚠ `status` も同じ第 3 の状態を言い分ける (#637)。
+    def test_run_status_reports_an_invalid_pid_file
+      daemon = create
+      File.write(daemon.pid_file, "ごみ\n")
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/is not a valid PID file/, output)
+      assert_not_match(/is not running/, output)
+    end
+
+    # 🔴🔴 **「番号は読めたが死んでいる」を「妥当でない」と言わない (#637 の回帰)。**
+    #
+    # ⚠⚠ ふつうの停止・異常終了のあとは**必ずこの形**（pid ファイルは在り、中の番号は
+    # 正しく、プロセスだけ居ない）になる。🔴 ここを `is not a valid PID file` と言うと
+    # **いちばん多い状態が毎回「壊れている」に見え**、本物のゴミと区別できなくなる。
+    def test_run_status_does_not_call_a_stale_pid_file_invalid
+      daemon = create(pid: unused_pid)
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/is not running/, output)
+      assert_not_match(/is not a valid PID file/, output, '古いだけのものを壊れていると言わないこと')
+      assert_match(/stale/, output, '置かれたままであることは伝えること')
+    end
+
+    # ⚠ `start` も同じ (#637)。🔴 従来は `Could not acquire`（`error: nil`）だけだった。
+    def test_write_pid_reports_an_invalid_pid_file
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+
+      Timeout.timeout(5) do
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+
+      assert_equal('pid file invalid', daemon.logs.last.last[:reason])
+    end
+
+    # 🔴🔴 **`remove_pid` の失敗が完全に無音だった (#637)。**
+    # ⚠⚠ stdout / stderr / ログすべて空で exit 0 — 「stop は成功」に見えて pid
+    # ファイルが残る。🔴 その間に pid が再利用されると、`already running (PID N)` が
+    # 無関係のプロセスを指す。
+    def test_run_stop_logs_a_pid_file_left_behind
+      daemon = create(pid: Process.pid)
+      original = stub_read_error(daemon, Errno::EIO, on: 2)
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+    ensure
+      File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **もう無いなら黙る (#637 Codex P2)。**
+    #
+    # ⚠⚠ 相手の trap が先に自分の pid ファイルを消すので、止める側が見るときには
+    # 無くなっていることがある — 🔴 **これは正常な停止なので、鳴ると誤報になる**。
+    def test_run_stop_is_quiet_when_the_pid_file_is_already_gone
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:send_signal) do |signal, pid|
+        FileUtils.rm_f(pid_file)
+        next super(signal, pid)
+      end
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_not_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+    end
+
+    # ⚠ **後継が取り直した形では黕る (#532 / #637)。**
+    # 🔴🔴 ここで警報を出すと、**正常な交代のたびに鳴る**。
+    def test_run_stop_is_quiet_when_a_successor_took_over
+      daemon = create(pid: Process.pid)
+      successor = Process.ppid
+      daemon.define_singleton_method(:send_signal) do |signal, pid|
+        File.write(pid_file, successor.to_s)
+        next super(signal, pid)
+      end
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_not_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file left behind')
+      assert_equal(successor, daemon.pid, '後継の pid ファイルを消さないこと')
+    end
+
+    # 🔴 **通常ファイルでないことを黙って落とさない (#637)。**
+    #
+    # ⚠⚠ **読んだあとに差し替えられた形**（`read_pid_file` は通常ファイルとして
+    # 読めていた）なので、継ぎ目を直に叩いて測る。🔴 無音だと、最後に出るのは
+    # `Could not acquire PID file` だけになる。
+    def test_reclaim_pid_file_refuses_a_non_regular_file
+      daemon = create
+      File.mkfifo(daemon.pid_file)
+
+      Timeout.timeout(5) do
+        assert_false(daemon.send(:reclaim_pid_file, '123'))
+      end
+
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file is not a regular file')
+    end
+
+    # ⚠ **番号が無いときに "exists" と言わない (#637)。**
+    # 🔴 2 つの読み取りの間に現れて消えた形もここへ来る。
+    def test_run_status_does_not_claim_a_missing_pid_file_exists
+      daemon = create
+      daemon.define_singleton_method(:alive_state) {:unknown}
+
+      output = capture_stdout {daemon.send(:run_status)}
+
+      assert_match(/state is unknown/, output)
+      assert_not_match(/exists/, output)
+    end
+
+    # 🔴🔴 **子の起動失敗を exit 0 で返さない (#630)。**
+    #
+    # ⚠⚠ 子は stdout / stderr を `/dev/null` へ付け替えているので、**親が見なければ
+    # 監視・デプロイのスクリプトからは「再起動は成功」に見える**。
+    # ⚠ `Stub#command` は `true` なので**すぐ終わる** — 常駐しないコマンドの形。
+    def test_run_restart_reports_a_child_that_did_not_stay_up
+      daemon = create
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:run_restart)}
+      end
+
+      assert_match(/did not stay up/, output)
+      assert_equal('not restarted', daemon.logs.last.last[:message])
+      assert_equal('child exited', daemon.logs.last.last[:reason])
+    end
+
+    # ⚠ **生きていれば猟予を使い切って真を返す (#630)。**
+    # 🔴 こちらを本番の猟予（3 秒）で測るとテストがその分止まるので、**短く渡す**。
+    def test_await_child_waits_out_the_grace_period
+      daemon = create
+      child = fork {sleep 5}
+
+      begin
+        assert_true(daemon.send(:await_child, child, 0.3))
+      ensure
+        Process.kill('TERM', child)
+        Process.waitpid(child)
+      end
+    end
+
+    # 🔴🔴 **猟予の終わり際に落ちた子を見落とさない (#630 Codex P2)。**
+    #
+    # ⚠⚠ 最後の `sleep` のあいだに落ちると、ループの条件が偽になって
+    # **見ないまま成功と答えてしまう**。⚠ 猟予 0 秒（ループを 1 回も回さない）で測る。
+    def test_await_child_checks_once_more_at_the_deadline
+      daemon = create
+      child = fork {exit 1}
+      sleep 0.5
+
+      assert_false(daemon.send(:await_child, child, 0), '締め切りでもう一度見ること')
+    end
+
+    # ⚠ **落ちたことを見たら即座に戻る**（猟予を使い切らない）。
+    def test_await_child_returns_false_as_soon_as_the_child_exits
+      daemon = create
+      child = fork {exit 1}
+      started = Time.now
+
+      assert_false(daemon.send(:await_child, child, 5))
+      assert_operator(Time.now - started, :<, 5, '猟予を使い切らないこと')
     end
 
     def test_run_stop_sends_term_and_removes_pid
@@ -729,6 +966,140 @@ module Ginseng
       assert_raise(SystemExit) {daemon.send(:abort_if_running!)}
     ensure
       File.define_singleton_method(:open, original) if original
+    end
+
+    # 🔴🔴 **ハードリンクされた pid ファイルを奪わない (#632)。**
+    #
+    # ⚠⚠ `O_NOFOLLOW` が見るのは symlink だけなので、`link(victim, pid_file)` で
+    # **同じ結末**になる — victim が pid の数字で上書き＋ truncate される。
+    # 🔴 Linux の `fs.protected_hardlinks` は緩和だが、**FreeBSD の既定には無い**。
+    def test_write_pid_refuses_a_hard_linked_pid_file
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # 🔴 **握り潐さず理由を残す。** ⚠ stderr は `run_restart` の子で捨てられるので、
+    # **logger に出ないと消える**（#633 / #635 と同じ規則）。
+    def test_write_pid_logs_why_a_hard_linked_pid_file_is_refused
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'pid file is hard linked')
+    end
+
+    # 🔴🔴 **`nlink` だけでは足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ 開いてから確かめるまでの間に **pid ファイルの側の名前を外されると**、
+    # victim の `nlink` は 2 → 1 に落ち、🔴 **検査を通ってしまう**（実測で確認）。
+    def test_reclaim_pid_file_refuses_when_the_path_was_unlinked
+      daemon = create
+      victim = File.join(@dir, 'victim')
+      File.write(victim, 'secret')
+      FileUtils.rm_f(daemon.pid_file)
+      File.link(victim, daemon.pid_file)
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        File.unlink(daemon.pid_file)
+
+        assert_equal(1, f.stat.nlink, '前提: 片方を外されると nlink は 1 に見える')
+        assert_false(daemon.send(:own_link?, f), '経路が同じ inode を指すことまで見ること')
+      end
+
+      assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
+    end
+
+    # ⚠ **素の pid ファイルは通す。** 🔴 同一性の検査を入れたことで
+    # **普通の奪取が拒まれていないこと**を固定する。
+    def test_reclaim_pid_file_accepts_a_plain_pid_file
+      daemon = create
+      File.write(daemon.pid_file, '123')
+
+      File.open(daemon.pid_file, File::RDWR) do |f|
+        assert_true(daemon.send(:own_link?, f))
+      end
+    end
+
+    # 🔴🔴 **`tmp/pids` 自体が symlink なら起動しない (#632)。**
+    # ⚠⚠ `O_NOFOLLOW` が効くのは**パスの最終要素だけ**なので、置き場所を
+    # 差し替えられると**リンク先のファイルを掴まされる**。
+    def test_write_pid_refuses_when_the_pid_dir_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(elsewhere)
+      pids = File.join(@dir, 'tmp/pids')
+      FileUtils.remove_entry(pids)
+      File.symlink(elsewhere, pids)
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # 🔴🔴 **最終要素だけ見ても足りない (#632 Codex P1)。**
+    #
+    # ⚠⚠ `tmp` の側を symlink にすれば、`tmp/pids` は**本物のディレクトリ**なので
+    # 検査を通る — 🔴 実測で victim が pid の数字で上書きされた。
+    def test_write_pid_refuses_when_an_ancestor_is_a_symlink
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+      victim = daemon.pid_file
+      File.write(victim, 'secret')
+
+      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      assert_equal('secret', File.read(victim), 'リンク先のファイルを壊さないこと')
+    end
+
+    # ⚠ **拒むときは原因の段を名乗る。** 🔴 `tmp/pids` を出すと、運用者は
+    # 「ディレクトリはあるのに」となる（symlink なのは `tmp` の側）。
+    def test_write_pid_names_the_unusable_directory
+      elsewhere = File.join(@dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'pids'))
+      FileUtils.remove_entry(File.join(@dir, 'tmp'))
+      File.symlink(elsewhere, File.join(@dir, 'tmp'))
+      daemon = create
+
+      output = capture_stderr do
+        assert_raise(SystemExit) {daemon.send(:write_pid)}
+      end
+
+      assert_match(/#{Regexp.escape(File.join(@dir, 'tmp'))}'/, output)
+    end
+
+    # ⚠⚠ **作業ディレクトリより上は見ない (#632)。** 🔴 Capistrano 式の `current` のように
+    # **上に symlink を置く運用は正当**で、そこを拒むと配置ごと壊す。
+    def test_write_pid_allows_a_symlinked_working_dir
+      real = File.join(@dir, 'releases/1')
+      FileUtils.mkdir_p(File.join(real, 'tmp/pids'))
+      link = File.join(@dir, 'current')
+      File.symlink(real, link)
+      daemon = Stub.new({application: 'GinsengDaemonTest', working_dir: link})
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+    end
+
+    # ⚠ **素のディレクトリなら従来どおり取れる。** 🔴 置き場所の検査を入れたことで
+    # **普通の起動が拒まれていないこと**を固定する。
+    def test_write_pid_accepts_a_plain_pid_dir
+      daemon = create
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
     end
 
     # 🔴🔴 **FIFO を置かれても止まらないこと (#633 Codex P1)。**
