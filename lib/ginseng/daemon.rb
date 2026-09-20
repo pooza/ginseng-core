@@ -9,7 +9,7 @@ module Ginseng
     # 利用側の見え方（`write_pid` を override する、など）は同じ。
     include PidFile
 
-    # ⚠ `restart` が子の生存を見る猟予（秒） (#630)。🔴 **長くすると `restart` が
+    # ⚠ `restart` が子の生存を見る猶予（秒） (#630)。🔴 **長くすると `restart` が
     # 戻らなくなる**。⚠⚠ pid ファイルの取得は `exec` の前なのですぐに終わる —
     # ここで見ているのは主に `exec` の成否。
     PID_WAIT_SECONDS = 3
@@ -70,9 +70,11 @@ module Ginseng
     # ⚠ **:unknown を :dead と同じに扱わないこと。** `EPERM` は「プロセスは
     # 存在するが触れない」なので、:dead と混ぜると **start が 2 本目を立て、
     # 1 本目がどの pid ファイルからも辿れない孤児になる**。
-    # ⚠⚠ **pid ファイルを読むのはここだけ。読んだ番号は `alive_state_of` へ渡す
+    # ⚠⚠ **この中では pid ファイルを 1 回だけ読み、その番号を `alive_state_of` へ渡す
     # (#638)。** 🔴 利用側が身元を足すために読み直すと、**2 回の読みの間に書き換わった
     # とき「A の生死」に「B の身元」を掛けた答え**になる。
+    # ⚠ **「上流は 1 回しか読まない」ではない** — 判断の入口（`abort_if_running!` /
+    # `run_status`）は**前後で読み直して、変わったら決めない**ために別途読む。
     def alive_state
       reset_pid_file_error
       found = pid
@@ -277,7 +279,7 @@ module Ginseng
     # 🔴 `write_pid` は `exec` の**前**に走るので、コマンドが無いときでも一度は取れる
     # （#637 で、そのあと `abort_start!` を通って exit 1 になる）。
     #
-    # ⚠ **それでも完全ではない** — 猟予を過ぎてから落ちる形は拾えない。
+    # ⚠ **それでも完全ではない** — 猶予を過ぎてから落ちる形は拾えない。
     # 🔴 **拾えないところを広げるために待ち続けない** — `restart` が戻らなくなる。
     def run_restart(args = [])
       # ⚠ **:unknown でも止めにいく** (#510)。ここを alive? で切ると、EPERM の
@@ -294,9 +296,9 @@ module Ginseng
       Process.detach(child)
     end
 
-    # 子が猟予のあいだ残っていたか (#630)。
+    # 子が猶予のあいだ残っていたか (#630)。
     #
-    # ⚠⚠ **落ちたことを見たら即座に戻る** — 猟予を使い切るのは「起動している」側だけ。
+    # ⚠⚠ **落ちたことを見たら即座に戻る** — 猶予を使い切るのは「起動している」側だけ。
     # ⚠ `WNOHANG` の `waitpid` は、まだ生きていれば nil を返す。
     def await_child(child, seconds = PID_WAIT_SECONDS)
       deadline = Time.now + seconds
@@ -306,11 +308,11 @@ module Ginseng
       end
       # 🔴🔴 **最後にもう一度見る (#630 Codex P2)。** ⚠⚠ 最後の `sleep` のあいだに
       # 落ちると、ループの条件が偽になって**見ないまま成功と答えてしまう** —
-      # 🔴 猟予の中で落ちているのに「起動した」と言うことになる。
+      # 🔴 猶予の中で落ちているのに「起動した」と言うことになる。
       return !Process.waitpid(child, Process::WNOHANG)
     rescue Errno::ECHILD
       # ⚠ 既に収穫されている（detach していないので通常は来ないが、
-      # 利用側が `SIGCHLD` を扱っているとありう）。**分からないので成功側に倒さない。**
+      # 利用側が `SIGCHLD` を扱っているとありうる）。**分からないので成功側に倒さない。**
       return false
     end
 

@@ -89,6 +89,21 @@ module Ginseng
     end
 
     # ⚠ **渡さなければ従来どおり (#642)。** 🔴 値の型（`nil` など）も変えない。
+    # 🔴🔴 **secrets を渡しても String 以外の値の型を変えない（リリース前レビューの黄）。**
+    # ⚠⚠ `child_env` は **`nil` を「その環境変数を外す」の意味で使う**ので、空文字に
+    # 化けるとログが「空を渡した」に見える。
+    def test_masked_env_keeps_non_string_values
+      command = Ginseng::CommandLine.new(['true'])
+      command.secrets = ['s3cret']
+      command.env = {'A' => nil, 'B' => 42, 'C' => 'x s3cret'}
+
+      env = command.send(:masked_env)
+
+      assert_nil(env['A'], 'nil を空文字にしないこと')
+      assert_equal(42, env['B'], '数値を文字列にしないこと')
+      assert_equal("x #{Ginseng::Masking::FILTERED}", env['C'])
+    end
+
     def test_exec_leaves_the_env_alone_without_secrets
       logger = Recorder.new
       @command.instance_variable_set(:@logger, logger)
@@ -116,7 +131,7 @@ module Ginseng
       assert_equal('[FILTERED]', @command.masked('abcdef'))
     end
 
-    # 🔴🔴 **正規化を迴回させない (#642 Codex P1)。**
+    # 🔴🔴 **正規化を迂回させない (#642 Codex P1)。**
     # ⚠⚠ `secrets << value` を許すと、空文字も順番の崩れも入り込む。
     def test_secrets_cannot_be_mutated_in_place
       @command.secrets = ['abc']

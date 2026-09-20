@@ -41,7 +41,7 @@ module Ginseng
     # 🔴🔴 **渡された値は複写して凍らせる (#642 Codex P1)。**
     #
     # ⚠⚠ `attr_reader` で配列をそのまま渡すと、**`secrets << value` でここの正規化を
-    # 迴回できる** — 🔴 空文字を足されれば全文字の隙間に印が入り、順番が崩れれば
+    # 迂回できる** — 🔴 空文字を足されれば全文字の隙間に印が入り、順番が崩れれば
     # `[FILTERED]def` のように**資格情報の一部が残る**。凍らせておけば `FrozenError` で止まる。
     #
     # ⚠ **文字列も複写する** — 🔴 `to_s` は String に対して**自分を返す**ので、
@@ -180,10 +180,14 @@ module Ginseng
     # 実測: キー名が `TOKEN` なら上流の `mask` が落とすが、🔴 `PUSH_URL` のような
     # 名前だと**パスに埋まったトークンがそのまま出る**。
     #
-    # ⚠ **`secrets` が空なら触らない** — 値の型（`nil` などを含む）を変えないため。
+    # 🔴🔴 **String 以外は触らない（リリース前レビューの黄）。** ⚠⚠ `masked` は
+    # `text.to_s` から始まるので、そのまま通すと **`nil` が `""` に、数値が文字列に
+    # 変わる** — 🔴 `child_env` は **`nil` を「その環境変数を外す」の意味で使う**
+    # （`UNSET_ENV_KEYS`）ので、`secrets` を渡した日だけログの意味が変わる。
+    # ⚠ 「`secrets` が空なら触らない」だけでは、**この機能を使った瞬間に型が変わる**。
     def masked_env
       return @env if secrets.empty?
-      return @env.transform_values {|value| masked(value)}
+      return @env.transform_values {|value| value.is_a?(String) ? masked(value) : value}
     end
 
     def sudo_command

@@ -292,7 +292,7 @@ module Ginseng
         'pid file left behind')
     end
 
-    # ⚠ **後継が取り直した形では黕る (#532 / #637)。**
+    # ⚠ **後継が取り直した形では黙る (#532 / #637)。**
     # 🔴🔴 ここで警報を出すと、**正常な交代のたびに鳴る**。
     def test_run_stop_is_quiet_when_a_successor_took_over
       daemon = create(pid: Process.pid)
@@ -342,7 +342,12 @@ module Ginseng
     #
     # ⚠⚠ 子は stdout / stderr を `/dev/null` へ付け替えているので、**親が見なければ
     # 監視・デプロイのスクリプトからは「再起動は成功」に見える**。
-    # ⚠ `Stub#command` は `true` なので**すぐ終わる** — 常駐しないコマンドの形。
+    #
+    # 🔴🔴 **このテストが通っているのは `run_start` まで届いたからではない
+    # （リリース前レビューの黄）。** ⚠⚠ `capture_stderr` が `$stderr` を `StringIO` へ
+    # 差し替えるので、子の `$stderr.reopen(File::NULL, 'w')` が `Errno::EACCES` で落ちる。
+    # ⚠ **固定しているのは「子が非ゼロで終われば親が `not restarted` を出して exit 1
+    # する」だけ** — `write_pid` / `exec` / 失敗時の後始末は restart 経路では通らない。
     def test_run_restart_reports_a_child_that_did_not_stay_up
       daemon = create
 
@@ -355,8 +360,8 @@ module Ginseng
       assert_equal('child exited', daemon.logs.last.last[:reason])
     end
 
-    # ⚠ **生きていれば猟予を使い切って真を返す (#630)。**
-    # 🔴 こちらを本番の猟予（3 秒）で測るとテストがその分止まるので、**短く渡す**。
+    # ⚠ **生きていれば猶予を使い切って真を返す (#630)。**
+    # 🔴 こちらを本番の猶予（3 秒）で測るとテストがその分止まるので、**短く渡す**。
     def test_await_child_waits_out_the_grace_period
       daemon = create
       child = fork {sleep 5}
@@ -369,10 +374,10 @@ module Ginseng
       end
     end
 
-    # 🔴🔴 **猟予の終わり際に落ちた子を見落とさない (#630 Codex P2)。**
+    # 🔴🔴 **猶予の終わり際に落ちた子を見落とさない (#630 Codex P2)。**
     #
     # ⚠⚠ 最後の `sleep` のあいだに落ちると、ループの条件が偽になって
-    # **見ないまま成功と答えてしまう**。⚠ 猟予 0 秒（ループを 1 回も回さない）で測る。
+    # **見ないまま成功と答えてしまう**。⚠ 猶予 0 秒（ループを 1 回も回さない）で測る。
     def test_await_child_checks_once_more_at_the_deadline
       daemon = create
       child = fork {exit 1}
@@ -381,14 +386,14 @@ module Ginseng
       assert_false(daemon.send(:await_child, child, 0), '締め切りでもう一度見ること')
     end
 
-    # ⚠ **落ちたことを見たら即座に戻る**（猟予を使い切らない）。
+    # ⚠ **落ちたことを見たら即座に戻る**（猶予を使い切らない）。
     def test_await_child_returns_false_as_soon_as_the_child_exits
       daemon = create
       child = fork {exit 1}
       started = Time.now
 
       assert_false(daemon.send(:await_child, child, 5))
-      assert_operator(Time.now - started, :<, 5, '猟予を使い切らないこと')
+      assert_operator(Time.now - started, :<, 5, '猶予を使い切らないこと')
     end
 
     def test_run_stop_sends_term_and_removes_pid
@@ -984,7 +989,7 @@ module Ginseng
       assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
     end
 
-    # 🔴 **握り潐さず理由を残す。** ⚠ stderr は `run_restart` の子で捨てられるので、
+    # 🔴 **握り潰さず理由を残す。** ⚠ stderr は `run_restart` の子で捨てられるので、
     # **logger に出ないと消える**（#633 / #635 と同じ規則）。
     def test_write_pid_logs_why_a_hard_linked_pid_file_is_refused
       daemon = create
