@@ -1090,15 +1090,47 @@ module Ginseng
     # ロックを読めるだけの相手でも `flock` を握り続けて起動を止められる。pid ファイルが
     # グループに書けると、`stop` が別のプロセスへ `TERM` を送る。
     # ⚠ umask に左右されないことを測るので、あえて緩い umask で作る。
+    # 🔴 **厳しい umask でも pid ファイルは `0644`** (#643 Codex P2)。作るときの引数は
+    # umask で削られるので、`077` だと `0600` になり、監視から読めなくなっていた。
     def test_write_pid_fixes_the_modes
-      daemon = create
-      original = File.umask(0o000)
-      daemon.send(:write_pid)
+      [0o000, 0o077].each do |mask|
+        daemon = create
+        FileUtils.rm_f(daemon.pid_lock_file)
+        original = File.umask(mask)
+        begin
+          daemon.send(:write_pid)
+        ensure
+          File.umask(original)
+        end
 
-      assert_equal(0o600, File.stat(daemon.pid_lock_file).mode & 0o777)
-      assert_equal(0o644, File.stat(daemon.pid_file).mode & 0o777)
-    ensure
-      File.umask(original) if original
+        assert_equal(0o600, File.stat(daemon.pid_lock_file).mode & 0o777, "umask #{mask.to_s(8)}")
+        assert_equal(0o644, File.stat(daemon.pid_file).mode & 0o777, "umask #{mask.to_s(8)}")
+      end
+    end
+
+    # 🔴🔴 **移行期の旧版（1.24.0 まで）の start と排他を合わせる (#643 Codex P1)。**
+    #
+    # 旧版は `O_EXCL` で pid ファイルを作り、その inode に `flock` を取ってから pid を書く。
+    # ⚠⚠ その途中（空のまま）を新版が「変わっていない」と読んで置き換えると、旧版は
+    # 消えた inode に書いて「取れた」と読み、2 本とも起動する。
+    # ⚠ 旧版が異常終了で残った pid ファイルを奪うとき（`reclaim_pid_file`）も同じ形。
+    def test_write_pid_waits_for_an_old_starter_holding_the_pid_file
+      daemon = create
+      File.open(daemon.pid_file, File::RDWR | File::CREAT | File::EXCL) do |old|
+        old.flock(File::LOCK_EX)
+        inode = old.stat.ino
+
+        output = capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+
+        assert_match(/the PID file kept changing/, output)
+        assert_equal(inode, File.stat(daemon.pid_file).ino, '旧版が握っている pid ファイルを置き換えないこと')
+        # 旧版が書き終えて放すと、新版はその pid を読んで止まる。
+        old.write(Process.ppid.to_s)
+        old.flush
+      end
+
+      capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+      assert_equal(Process.ppid, daemon.pid)
     end
 
     # ⚠⚠ **ロック専用ファイルは消さない (#643)。** 🔴 消すと、消す前の inode を
@@ -1354,8 +1386,11 @@ module Ginseng
       File.write(victim, 'do not touch')
       File.symlink(victim, daemon.pid_file)
 
-      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      output = capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+
       assert_equal('do not touch', File.read(victim), 'リンク先を書き替えないこと')
+      # ⚠ 後ろの `O_NOFOLLOW` の open も止めるが、それだと理由が「lock failed」になって原因が読めない。
+      assert_match(/is not a valid PID file \(link\)/, output)
     end
 
     # ⚠⚠ **上限の内側は通ること。** 🔴 外側だけを測ると、`<` と `<=` の取り違えを
