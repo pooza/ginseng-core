@@ -1090,6 +1090,45 @@ module Ginseng
     # ロックを読めるだけの相手でも `flock` を握り続けて起動を止められる。pid ファイルが
     # グループに書けると、`stop` が別のプロセスへ `TERM` を送る。
     # ⚠ umask に左右されないことを測るので、あえて緩い umask で作る。
+    # 🔴🔴 **置き換えた古い inode のロックを放さない (#643 Codex P1・2 巡目)。**
+    #
+    # 旧版が open と `flock` の間でスケジュールから外れた形。置き換えが済んでから
+    # 消えた inode の `flock` を取れてしまうと、旧版はそこへ書いて「取れた」と読む。
+    def test_write_pid_keeps_the_old_inode_locked_for_a_paused_old_starter
+      daemon = create(pid: unused_pid)
+      File.open(daemon.pid_file, File::RDWR) do |old|
+        assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+        assert_equal(Process.pid, daemon.pid)
+
+        assert_false(old.flock(File::LOCK_EX | File::LOCK_NB), '旧版が消えた inode を取れないこと')
+      end
+    end
+
+    # 🔴 **`exec` をまたいでも握り続ける。** 常駐は `write_pid` のあとに `exec` するので、
+    # close-on-exec のままだと、そこでロックが外れる。
+    def test_write_pid_keeps_the_old_inode_locked_across_exec
+      daemon = create(pid: unused_pid)
+      File.open(daemon.pid_file, File::RDWR) do |old|
+        child = fork do
+          $stderr.reopen(File::NULL)
+          daemon.send(:write_pid)
+          exec('sleep', '10')
+        end
+        begin
+          Timeout.timeout(10) {sleep(0.05) until File.read(daemon.pid_file) == child.to_s}
+          sleep(0.3)
+
+          assert_false(old.flock(File::LOCK_EX | File::LOCK_NB), 'exec のあとも握っていること')
+        ensure
+          Process.kill('KILL', child)
+          Process.waitpid(child)
+        end
+
+        # 前提: 常駐が終われば外れる（このテストが「握っていること」を測っている）。
+        assert_equal(0, old.flock(File::LOCK_EX | File::LOCK_NB))
+      end
+    end
+
     # 🔴 **厳しい umask でも pid ファイルは `0644`** (#643 Codex P2)。作るときの引数は
     # umask で削られるので、`077` だと `0600` になり、監視から読めなくなっていた。
     def test_write_pid_fixes_the_modes

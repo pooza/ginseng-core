@@ -58,24 +58,37 @@ module Ginseng
       # ⚠⚠ ロック専用ファイルしか見ないと、旧版が `O_EXCL` で作ってから書くまでの空の
       # pid ファイルを「変わっていない」と読んで置き換え、旧版は**消えた inode に書いて
       # 「取れた」と読む** — 2 本とも起動し、辿れるのは新版だけになる。
-      # 旧版は `LOCK_NB` で取れなければ引き下がるので、置き換えるあいだ同じ inode を
-      # 握っていれば、旧版は次の周回で新版の pid を読んで止まる。
+      # 旧版は `LOCK_NB` で取れなければ引き下がるので、同じ inode を握っていれば、旧版は
+      # 次の周回で新版の pid を読んで止まる。
+      # 🔴🔴 **置き換えたあとも放さない (#643 Codex P1・2 巡目)。** 旧版が open と `flock` の
+      # 間でスケジュールから外れると、置き換えが済んでから消えた inode の `flock` を取り、
+      # 空のまま（または奪う前の中身のまま）だと読んで書く。⚠⚠ **新版の常駐が生きている
+      # あいだ握り続ける** — `exec` をまたぐので close-on-exec を外す。消えた inode の fd
+      # なので、子プロセスに引き継がれても害は無い。
       # ⚠ **このファイルには書かない**（`flock` を取るだけ）。開いたものがいまの経路と
       # 同じ inode かも確かめる。
-      # ⚠ 旧版が `O_EXCL` の open から `flock` までの数 µs の間に、新版が判断から
-      # 置き換えまでを終えた場合だけは排他が効かない。
       def with_old_pid_lock(stat)
         return yield unless stat
         File.open(pid_file, PID_FILE_OPEN_FLAGS) do |file|
           current = file.stat
           return :changed unless current.dev == stat.dev && current.ino == stat.ino
           return :changed unless lock_pid_file(file)
-          return yield
+          result = yield
+          hold_old_pid_lock(file) if result == :acquired
+          return result
         end
       rescue Errno::ENOENT
         return :changed
       rescue SystemCallError => e
         abort_start!("Could not lock PID file '#{pid_file}'.", 'pid file lock failed', e)
+      end
+
+      # ⚠ **`dup` して持つ。** 同じ open file description を共有するので、元の fd を閉じても
+      # `flock` は外れない。ivar に持つのは GC に閉じさせないため。
+      def hold_old_pid_lock(file)
+        held = file.dup
+        held.close_on_exec = false
+        @old_pid_lock = held
       end
 
       # ロック専用ファイルの `flock` の中でブロックを走らせ、その結果を返す (#643)。
