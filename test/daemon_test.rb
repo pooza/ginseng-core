@@ -322,9 +322,10 @@ module Ginseng
         Timeout.timeout(5) {assert_raise(SystemExit) {daemon.send(:write_pid)}}
       end
 
-      assert_match(/exists but is not a valid PID file/, output)
-      assert_include(daemon.logs.map {|_severity, message| message[:message]},
-        'pid file is not a regular file')
+      assert_match(/exists but is not a valid PID file \(fifo\)/, output)
+      # ⚠ **1 行だけ残す**（warn と error の二重にしない。種類は本文に入れる）。
+      assert_equal([[:error, 'pid file invalid']],
+        daemon.logs.map {|severity, message| [severity, message[:reason]]})
       assert_equal('fifo', File.lstat(daemon.pid_file).ftype, '置き換えないこと')
 
       File.unlink(daemon.pid_file)
@@ -502,9 +503,9 @@ module Ginseng
       assert_equal(stale, daemon.pid, 'pid ファイルを奪わないこと')
     end
 
-    # ⚠⚠ **異常終了で残った pid ファイルは奪って起動する (#622)。**
-    # `O_EXCL` だけで済ませると、**そのファイルが起動を永久に阻む**。⚠ 奪うのは
-    # **中身の差し替え**で、消しはしない（→ `test_write_pid_never_unlinks`）。
+    # ⚠⚠ **異常終了で残った pid ファイルは置き換えて起動する (#622 / #643)。**
+    # 死んでいると断定できた pid ファイルは、一時ファイルの `rename` で置き換える。
+    # unlink してから作り直す形は取らない（→ `test_write_pid_never_unlinks`）。
     def test_write_pid_reclaims_dead_pid_file
       daemon = create(pid: unused_pid)
 
@@ -515,8 +516,8 @@ module Ginseng
     end
 
     # ⚠⚠ **自分が既に取っている pid ファイルで自分を殺さないこと。**
-    # 🔴 `O_EXCL` にした以上、2 度目の呼び出しは必ず作成に失敗する — そこで
-    # `alive_state` を見ると**自分の pid が :alive** なので「already running」になる。
+    # 2 度目の呼び出しは自分の pid を読む。`observed_pid == Process.pid` の早期 return が
+    # 無いと、`abort_if_running!` が自分を :alive と見て「already running」で終わる。
     def test_write_pid_is_idempotent_for_the_owner
       daemon = create
       daemon.send(:write_pid)
@@ -590,12 +591,12 @@ module Ginseng
 
     # 🔴🔴 **見捨てられた空の pid ファイルから復帰できること (#622 Codex P1)。**
     #
-    # `O_EXCL` に勝った 1 本が pid を書く前に死ぬと、**中身の無い pid ファイル**が
-    # 残る。⚠⚠ **ここを「取得の途中かもしれない」と読んで拒むと、失敗した 1 回の
+    # 1.25.0 からは `rename` で置くので自分では空を作らないが、旧版（`O_EXCL` で作って
+    # から書いていた）や外部の書き手が残しうる。⚠⚠ **ここを拒むと、失敗した 1 回の
     # 起動が恒久的な起動不能に化ける**（手で消すまで直らない）。
     #
-    # ⚠ 奪ってよいのは、**奪われた側が書き戻さない**から
-    # （→ `test_create_pid_file_backs_off_when_taken_before_the_lock`）。
+    # ⚠ 置き換えてよいのは、判断と置き換えをロックの中で行い、置き換える直前に中身が
+    # 変わっていないことを確かめているから（→ `test_write_pid_keeps_a_pid_file_written_while_deciding`）。
     def test_write_pid_reclaims_an_abandoned_empty_pid_file
       daemon = create
       File.write(daemon.pid_file, '')
@@ -620,8 +621,9 @@ module Ginseng
 
       capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
       assert_equal(stale, daemon.pid, 'pid ファイルは元のまま')
-      assert_include(daemon.logs.map {|_severity, message| message[:reason]},
-        'pid file write failed')
+      # ⚠ **errno まで残ること**（理由だけだと、権限か満杯かを切り分けられない）。
+      assert_equal([[:error, 'pid file write failed', 'Errno::EACCES']],
+        daemon.logs.map {|severity, message| [severity, message[:reason], message[:error]]})
     ensure
       File.define_singleton_method(:open, original) if original
     end
@@ -768,7 +770,7 @@ module Ginseng
     # ⚠⚠ **stderr は当てにできない** — `run_restart` は fork した子の stderr を
     # `File::NULL` へ付け替え、利用側の起動スクリプトも非 tty では捨てる。
     # 🔴 リリース前レビューは**同じ形の赤を 2 回**出している（1 回目は
-    # `create_pid_file`、2 回目は `run_stop`）。**出口ごとに測る。**
+    # 当時の `create_pid_file`（#643 で廃止）、2 回目は `run_stop`）。**出口ごとに測る。**
     def test_every_refusal_is_logged
       # ⚠ 状態はケースごとに作る（`create` は同じ working_dir を使うので持ち越す）。
       refusals = {
@@ -981,10 +983,10 @@ module Ginseng
 
     # 🔴🔴 **ハードリンクされた pid ファイルでリンク先を壊さない (#632 / #643)。**
     #
-    # ⚠⚠ 旧版は pid ファイルの inode に書いていたので、`link(victim, pid_file)` で
+    # 旧版は pid ファイルの inode に書いていたので、`link(victim, pid_file)` で
     # victim が pid の数字で上書き＋ truncate された（#632 では拒んで塞いだ）。
-    # ⚠ いまは新しい inode を `rename` するので、**置き換わるのは名前だけ**。
-    # 🔴 Linux の `fs.protected_hardlinks` は緩和だが、**FreeBSD の既定には無い**。
+    # いまは新しい inode を `rename` するので、置き換わるのは名前だけ。
+    # Linux の `fs.protected_hardlinks` は緩和だが、FreeBSD の既定には無い。
     def test_write_pid_replaces_a_hard_linked_pid_file_without_touching_the_target
       daemon = create
       victim = File.join(@dir, 'victim')
@@ -998,7 +1000,7 @@ module Ginseng
       assert_equal(Process.pid, daemon.pid)
     end
 
-    # 🔴 **置き換えても跡は残す。** ⚠ `rsync --link-dest` 系のバックアップでなければ、
+    # ⚠ **置き換えても跡は残す。** `cp -al` のようなスナップショットでなければ、
     # 誰かが仕掛けている。
     def test_write_pid_logs_a_hard_linked_pid_file
       daemon = create
@@ -1015,23 +1017,88 @@ module Ginseng
 
     # 🔴🔴 **検査のあとに経路をすり替えられても、リンク先を壊さない (#643 の芯)。**
     #
-    # ⚠⚠ 旧版は `nlink` と `lstat` の同一性で確かめていたが、**確かめたあとに
-    # 張り直される形**は閉じられなかった（検査と書き込みが原子的でないため）。
-    # 🔴 **いまは検査の結果に頼っていない** — 書くのは自分が作った inode だけ。
+    # 旧版は `nlink` と `lstat` の同一性で確かめていたが、確かめたあとに張り直される形は
+    # 閉じられなかった（検査と書き込みが原子的でないため）。いまは検査の結果に頼って
+    # いない — 書くのは自分が作った inode だけ。
+    # 🔴 **すり替えが起きたことまで assert する。** 割り込み先（`pid_file_stat`）の名前が
+    # 変わると、このテストは何もせずに緑になる（実際に一度そうなっていた — リリース前
+    # レビューの直しで割り込み先を消したとき）。
     def test_write_pid_survives_a_link_swapped_in_after_the_check
       daemon = create(pid: unused_pid)
       victim = File.join(@dir, 'victim')
       File.write(victim, 'secret')
-      daemon.define_singleton_method(:replaceable_pid_file?) do
+      swapped = false
+      daemon.define_singleton_method(:pid_file_stat) do
         found = super()
         FileUtils.rm_f(pid_file)
         File.link(victim, pid_file)
+        swapped = true
         next found
       end
 
       assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_true(swapped, '前提: 検査のあとですり替えたこと')
       assert_equal('secret', File.read(victim), 'リンク先を壊さないこと')
       assert_equal(Process.pid, daemon.pid)
+    end
+
+    # 🔴🔴 **読み直しが読めなかったとき、「無いまま」と読んで置き換えない**（リリース前レビュー）。
+    #
+    # `read_pid_file` は「無い」も「読めない」も nil なので、1 回目が「無い」だと
+    # 比べるだけでは同じに見える。⚠⚠ その間に現れた pid ファイル（ロックを取らない
+    # 旧版の start が書いたもの）を上書きし、その 1 本を孤児にしていた。
+    def test_write_pid_does_not_replace_after_a_failed_reread
+      daemon = create
+      successor = Process.ppid
+      reads = 0
+      daemon.define_singleton_method(:read_pid_file) do
+        reads += 1
+        next super() unless reads == 2
+        File.write(pid_file, successor.to_s)
+        @pid_file_error = Errno::EACCES.new(pid_file)
+        next nil
+      end
+
+      capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+      assert_equal(successor, File.read(daemon.pid_file).to_i, '後から書かれた pid を残すこと')
+    end
+
+    # ⚠⚠ **ロックを取ったあとで、そのパスがまだ同じ inode か確かめる**（リリース前レビュー）。
+    # 判断の最中にロック専用ファイルを消されると、次の start は新しい inode でロックを
+    # 取れてしまい、2 本とも起動しうる。消された inode を握ったままの周回では判断しない。
+    def test_write_pid_does_not_decide_under_a_removed_lock
+      daemon = create
+      locks = 0
+      daemon.define_singleton_method(:lock_pid_file) do |file|
+        locked = super(file)
+        locks += 1
+        File.unlink(pid_lock_file) if locks == 1
+        next locked
+      end
+      held = []
+      daemon.define_singleton_method(:try_acquire_pid_file) do
+        held.push(File.exist?(pid_lock_file))
+        next super()
+      end
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(2, locks, '消された周回は捨てて取り直すこと')
+      assert_equal([true], held, '消されたロックの下では判断しないこと')
+    end
+
+    # ⚠ **ロックは `0600`、pid ファイルは `0644` で作る**（リリース前レビュー）。
+    # ロックを読めるだけの相手でも `flock` を握り続けて起動を止められる。pid ファイルが
+    # グループに書けると、`stop` が別のプロセスへ `TERM` を送る。
+    # ⚠ umask に左右されないことを測るので、あえて緩い umask で作る。
+    def test_write_pid_fixes_the_modes
+      daemon = create
+      original = File.umask(0o000)
+      daemon.send(:write_pid)
+
+      assert_equal(0o600, File.stat(daemon.pid_lock_file).mode & 0o777)
+      assert_equal(0o644, File.stat(daemon.pid_file).mode & 0o777)
+    ensure
+      File.umask(original) if original
     end
 
     # ⚠⚠ **ロック専用ファイルは消さない (#643)。** 🔴 消すと、消す前の inode を
@@ -1238,34 +1305,50 @@ module Ginseng
       end
 
       capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+      assert_equal([[:error, 'pid lock file unusable', 'Errno::EMLINK']],
+        daemon.logs.map {|severity, message| [severity, message[:reason], message[:error]]})
     ensure
       File.define_singleton_method(:open, original) if original
     end
 
-    # 🔴🔴 **作れないときも「取れなかった」で終わること（リリース前レビューの赤）。**
+    # ⚠⚠ **ロック専用ファイルを作れないときも、例外のまま抜けないこと。**
     #
-    # `create_pid_file` が `EEXIST` しか握らないと、⚠ `tmp/pids` が書けない・ro・
-    # 満杯・fd 枯渇のときに例外のまま抜ける。⚠⚠ **`run_restart` の子では backtrace も
-    # 消え、親は exit 0 で返る** — 落ちているのにログが 1 行も増えない。
-    def test_write_pid_gives_up_cleanly_when_the_pid_file_cannot_be_created
+    # `tmp/pids` が書けない・ro・満杯・fd 枯渇のとき、⚠⚠ **`run_restart` の子では
+    # backtrace も消え、親は exit 0 で返る** — 落ちているのにログが 1 行も増えない
+    # （旧版の `create_pid_file` で出た赤と同じ形）。
+    def test_write_pid_gives_up_cleanly_when_the_lock_file_cannot_be_created
       daemon = create
-      target = daemon.pid_file
       original = File.method(:open)
       File.define_singleton_method(:open) do |path, *args, &block|
-        raise Errno::EACCES, path if path == target
+        raise Errno::EACCES, path if args.first == Daemon::PidFile::PID_LOCK_OPEN_FLAGS
         next original.call(path, *args, &block)
       end
 
-      assert_raise(SystemExit) {daemon.send(:write_pid)}
+      capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+      assert_equal([[:error, 'pid lock file unusable', 'Errno::EACCES']],
+        daemon.logs.map {|severity, message| [severity, message[:reason], message[:error]]})
     ensure
       File.define_singleton_method(:open, original) if original
     end
 
-    # 🔴🔴 **symlink を辿らないこと (#629)。**
+    # ⚠ **ロック操作そのものの失敗も理由を名乗る**（リリース前レビュー）。
+    # 例外のまま抜けると `run_start` の rescue が `Could not start` と言うだけで、
+    # 理由がロックだと読めない。
+    def test_write_pid_names_a_failed_lock
+      daemon = create
+      daemon.define_singleton_method(:lock_pid_file) {|_file| raise Errno::ENOLCK, 'flock'}
+
+      capture_stderr {assert_raise(SystemExit) {daemon.send(:write_pid)}}
+      assert_equal([[:error, 'pid lock failed', 'Errno::ENOLCK']],
+        daemon.logs.map {|severity, message| [severity, message[:reason], message[:error]]})
+    end
+
+    # 🔴 **pid ファイルの位置の symlink は置き換えない (#629 / #643)。**
     #
-    # 辿ると、pid ファイルを置き換えられる立場の相手に、⚠⚠ **デーモンのユーザーが
-    # 書ける任意のファイルを壊させる**（中身が pid の数字で上書き＋ truncate される）。
-    def test_write_pid_does_not_follow_a_symlink
+    # ⚠ `rename` なら symlink の先には書かないので壊れはしないが、この位置に symlink が
+    # 置かれる正当な形が無いので、止めて知らせる（旧方式では、辿ると中身が pid の数字で
+    # 上書き＋ truncate された）。
+    def test_write_pid_refuses_a_symlinked_pid_file
       daemon = create
       victim = File.join(@dir, 'victim')
       File.write(victim, 'do not touch')
@@ -1341,13 +1424,13 @@ module Ginseng
           [gate.last, hold.last, results.first].each(&:close)
           $stderr.reopen(File::NULL)
           gate.first.read(1)
-          won = begin
+          outcome = begin
             daemon.send(:write_pid)
-            true
+            'W'
           rescue SystemExit
-            false
+            daemon.logs.last&.last&.dig(:reason) == 'already running' ? 'A' : 'C'
           end
-          results.last.write(won ? 'W' : 'L')
+          results.last.write(outcome)
           results.last.close
           hold.first.read(1)
           exit!(0)
@@ -1362,6 +1445,10 @@ module Ginseng
 
       assert_equal(4, outcome.size)
       assert_equal(1, outcome.count('W'), '勝てるのは 1 本だけ')
+      # 🔴 **負けた側は「already running」で終わること**（リリース前レビュー）。周回の間で
+      # 待たないと、勝ち側がロックを握っている数 ms で周回を使い切り、原因の読めない
+      # 「Could not acquire」になる。
+      assert_equal(3, outcome.count('A'), "負け方: #{outcome}")
       assert_path_exist(daemon.pid_file)
     end
 

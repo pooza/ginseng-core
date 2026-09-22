@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+
 module Ginseng
   class Daemon
     # pid ファイルの取得・保持・後始末の一式 (#622 / #627)。⚠ `Daemon` から切り出して
@@ -14,16 +16,19 @@ module Ginseng
     #
     # ⚠⚠ **排他は pid ファイルではなく、消さないロック専用ファイルの `flock` で取る**
     # (#643)。pid ファイルそのものは、自分が作った一時ファイルを `rename` して置き換える。
-    # 🔴 **既存の inode に書かない**ので、経路をすり替えられても別のファイルは壊れない
+    # 既存の inode に書かないので、経路をすり替えられても別のファイルは壊れない
     # （→ `replace_pid_file`）。
     module PidFile
-      # pid ファイルの取得を試みる回数 (#622)。⚠ 負け方は 2 通り —
+      # pid ファイルの取得を試みる回数と、周回の間の待ち（秒） (#622 / #643)。負け方は 2 通り —
       # ①ロック専用ファイルの `flock` が取れない（別の start が判断している最中）
       # ②判断しているあいだに pid ファイルの中身が変わった（ロックを取らない書き手が居る）。
-      # どちらも「読み直せば決着がつく」ので少しだけ回す。
-      # ⚠⚠ **無制限にはしない** — 回り続けるより起動しないほうが安全（こちらが待って
-      # いる間に 2 本目が立つ形を作らない）。
-      PID_ACQUIRE_ATTEMPTS = 3
+      # どちらも読み直せば決着がつくので、合計 1 秒ほど回す。
+      # 🔴 **待ちを外さないこと**（リリース前レビュー）。待たずに回すと、同時に start した
+      # 負け側は勝ち側がロックを握っている数 ms で周回を使い切り、「already running」ではなく
+      # 原因の読めない「Could not acquire」で終わる（6 本同時で 4 本がそうなった）。
+      # ⚠⚠ **無制限にはしない** — 回り続けるより起動しないほうが安全。
+      PID_ACQUIRE_ATTEMPTS = 10
+      PID_ACQUIRE_WAIT_SECONDS = 0.1
 
       # ⚠ 以下の 3 つは `parse_pid` が**この順で**当てる（量 → 形 → 番号）。
 
@@ -57,20 +62,24 @@ module Ginseng
 
       # ロック専用ファイル（`pid_lock_file`）を開くときの旗 (#643)。
       #
-      # ⚠ **このファイルには書かない**（`flock` を取るだけ）ので、ハードリンクで
-      # 別のファイルを指されても中身は壊れない。
-      # 🔴 **`O_NOFOLLOW` は外さない** — 辿ると、`O_CREAT` が**リンク先にファイルを作る**。
-      # ⚠ **`O_NONBLOCK` も要る** — FIFO を置かれると開くところで止まる。型は開いてから
-      # `fstat` で確かめる。
-      # 🔴🔴 **symlink / FIFO / ディレクトリが在る限り起動しない（手で消すまで直らない）。**
-      # この位置にそれらが置かれる正当な形が無いため。
-      PID_LOCK_OPEN_FLAGS = File::RDONLY | File::CREAT | NOFOLLOW_FLAG |
+      # ⚠⚠ このファイルには書かない（`flock` を取るだけ）ので、ハードリンクで別のファイルを
+      # 指されても中身は壊れない。`O_NOFOLLOW` は外さない — 辿ると、`O_CREAT` がリンク先に
+      # ファイルを作る。`O_NONBLOCK` も要る — FIFO を置かれると開くところで止まる
+      # （型は開いてから `fstat` で確かめる）。symlink / FIFO / ディレクトリが在る限り起動しない
+      # （この位置にそれらが置かれる正当な形が無いため。手で消すまで直らない）。
+      # ⚠ **書かないのに `RDWR` で開く** — Linux の NFS は `flock` を POSIX ロックで代用するので、
+      # 書き込み用に開いていない fd の排他ロックは `EBADF` になる。
+      # 🔴 **`O_NONBLOCK` はテストで固定できていない。** Linux は FIFO を `O_RDWR` で開くと
+      # 止まらずに返す（POSIX では未定義の拡張）ので、Linux の CI では外しても緑のまま。
+      # FreeBSD では保証が無いので外さないこと。
+      PID_LOCK_OPEN_FLAGS = File::RDWR | File::CREAT | NOFOLLOW_FLAG |
         (defined?(File::NONBLOCK) ? File::NONBLOCK : 0)
 
       # pid を書く一時ファイルを作るときの旗 (#643)。
       #
-      # 🔴🔴 **`O_EXCL` がこの設計の芯。** 書くのは、いま自分が作った inode だけになる。
-      # ⚠ `O_CREAT | O_EXCL` は最終要素の symlink も `EEXIST` で拒む。
+      # ⚠⚠ **`O_EXCL` がこの設計の芯。** 書くのは、いま自分が作った inode だけになる。
+      # `O_CREAT | O_EXCL` は最終要素の symlink も `EEXIST` で拒むが、`O_NOFOLLOW` も重ねておく
+      # （`O_EXCL` を外す変更が入っても、symlink の先には書かない）。
       PID_TEMP_OPEN_FLAGS = File::WRONLY | File::CREAT | File::EXCL | NOFOLLOW_FLAG
 
       # 読むときの open の旗。⚠⚠ **`O_NONBLOCK` が要る** — pid ファイルの位置に FIFO が
@@ -155,18 +164,19 @@ module Ginseng
       #
       # 🔴 **`abort_if_running!` → `write_pid` の 2 段では閉じない。** pid ファイルが
       # 書かれるのはプロセスの起動から数秒後（`bundle exec` のブート）なので、
-      # ⚠⚠ **その窓に入った 2 本目も「未起動」と判断してすり抜ける**。両方が起動し、
+      # その窓に入った 2 本目も「未起動」と判断してすり抜ける。両方が起動し、
       # 後から書いた方だけが pid ファイルに残るので、**先の 1 本はどの pid ファイル
       # からも辿れない孤児になる** — #509 / #510 / #532 で潰したのと同じ結末の、
-      # **start 同士のレース**。⚠ 実例は pooza/mulukhiya-toot-proxy#4675（sidekiq が
+      # start 同士のレース。実例は pooza/mulukhiya-toot-proxy#4675（sidekiq が
       # 2 本立ち、スケジュール登録された全ワーカーが毎サイクル二重投入された）。
       #
       # ⚠⚠ **判断と置き換えを、ロック専用ファイルの `flock` の中で行う** (#643)。
-      # ロックを取れるのは 1 本だけなので、2 本目は 1 本目が書いた pid を読んで
-      # 「already running」になる。
-      # ⚠ 異常終了で残った pid ファイルは、**死んでいると断定できたときに限って**
-      # 置き換える（🔴 **:unknown では奪わない**。触れないだけで生きている可能性が
-      # ある — #510）。pid として読めない中身（空・壊れている）は、生死を訊かずに置き換える。
+      # ロックを取れるのは 1 本だけで、2 本目は周回の間で少し待つ。1 本目が書き終えた
+      # あとに読めば「already running」、待ち切れなければ「Could not acquire」で終わる
+      # （どちらも起動しない）。
+      # 異常終了で残った pid ファイルは、死んでいると断定できたときに限って置き換える
+      # （:unknown では奪わない。触れないだけで生きている可能性がある — #510）。
+      # pid として読めない中身（空・壊れている）は、生死を訊かずに置き換える。
       #
       # ⚠ **ここは利用側の override 点でもある**（pid が外から見えるより前に trap を
       # 張る、など）。**`super` を呼ぶ形は保つこと。**
@@ -174,98 +184,124 @@ module Ginseng
         if (unusable = unusable_pid_dir)
           abort_unusable_pid_dir!(unusable)
         end
-        PID_ACQUIRE_ATTEMPTS.times do
-          return if with_pid_lock {pid_file_acquired?}
+        outcome = nil
+        PID_ACQUIRE_ATTEMPTS.times do |attempt|
+          sleep(PID_ACQUIRE_WAIT_SECONDS) if attempt.positive?
+          outcome = with_pid_lock {try_acquire_pid_file}
+          break if outcome == :acquired
         end
-        abort_start!("Could not acquire PID file '#{pid_file}'.", 'could not acquire pid file')
+        return if outcome == :acquired
+        cause = outcome == :busy ? 'the lock stayed busy' : 'the PID file kept changing'
+        abort_start!("Could not acquire PID file '#{pid_file}' (#{cause}).",
+          'could not acquire pid file', nil)
       end
 
-      # ロックの中で呼ぶ。pid ファイルを取れたら true、読み直しが要るなら false (#643)。
+      # ロックの中で呼ぶ (#643)。取れたら `:acquired`、読み直しが要るなら `:changed`。
       # 起動してはいけないと分かったら、その場で終わる。
-      def pid_file_acquired?
+      def try_acquire_pid_file
         reset_pid_file_error
         # ⚠ **解釈する前の中身を覚える。** 判断のあとに同じものか確かめるので、
-        # `to_i` した結果では足りない（🔴 空と `'0'` と `'abc'` が同じ `0` になる）。
+        # `to_i` した結果では足りない（空と `'0'` と `'abc'` が同じ `0` になる）。
         observed = read_pid_file
         abort_unreadable_pid_file!(pid_file_error) if pid_file_unreadable?
         observed_pid = parse_pid(observed)
-        # ⚠⚠ **自分が既に取っているなら取得済み。** ここを通さないと、同じプロセスから
-        # 2 度呼ばれたときに**自分の pid を見て「already running」で終了する**。
-        return true if observed_pid == Process.pid
-        # 🔴 **pid として読めない中身に生死を訊かない。** 訊く相手が居ない —
+        # ⚠ **自分が既に取っているなら取得済み。** ここを通さないと、同じプロセスから
+        # 2 度呼ばれたときに自分の pid を見て「already running」で終了する。
+        return :acquired if observed_pid == Process.pid
+        # ⚠ **pid として読めない中身に生死を訊かない。** 訊く相手が居ない —
         # 既定では `Process.kill(0, 0)` が成功して :alive、`alive_state` を上書き
-        # している利用側では :dead と、**答えが実装で割れる** (#627)。
+        # している利用側では :dead と、答えが実装で割れる (#627)。
         abort_if_running! if observed_pid
-        # 🔴🔴 **判断のあいだに中身が変わっていたら置き換えない。** ロックを取らない
-        # 書き手が居る — 移行期の旧版の start と、`remove_pid`。⚠⚠ 置き換えると、
-        # その 1 本を孤児にする。次の周回で読み直す。
-        return false unless read_pid_file == observed
-        abort_invalid_pid_file! unless replaceable_pid_file?
+        # ⚠⚠ **判断のあいだに中身が変わっていたら置き換えない。** ロックを取らない
+        # 書き手が居る — 移行期の旧版の start と、`remove_pid`。置き換えると、
+        # その 1 本を孤児にする。
+        # 🔴 **読み直しが読めなかったときも「変わった」に数える**（リリース前レビュー）。
+        # `read_pid_file` は「無い」も「読めない」も nil なので、比べるだけだと
+        # 「無いまま」に見えて置き換えていた。次の周回の最初の読みで止まる。
+        return :changed unless read_pid_file == observed && !pid_file_unreadable?
+        if (stat = pid_file_stat)
+          abort_invalid_pid_file!(stat) unless stat.file?
+          report_hard_linked_pid_file(stat) if stat.nlink > 1
+        end
         replace_pid_file
-        return true
+        return :acquired
       end
 
-      # ロック専用ファイルの `flock` の中でブロックを走らせる。ロックが取れなければ false (#643)。
+      # ロック専用ファイルの `flock` の中でブロックを走らせ、その結果を返す (#643)。
+      # ロックが取れなければ `:busy`。
       #
       # ⚠ 放すのは fd を閉じたとき。`abort_start!` の `exit` でも `ensure` で閉じる。
       def with_pid_lock
         lock = open_pid_lock_file
         begin
-          abort_invalid_pid_lock_file! unless lock.stat.file?
-          return false unless lock_pid_file(lock)
+          return :busy unless acquire_pid_lock(lock)
           return yield
         ensure
           lock.close
         end
       end
 
-      # 🔴 **開けないことを例外のまま抜けさせない。** `run_restart` の子は stderr を
-      # `File::NULL` へ付け替えているので、backtrace すら残らない（#633）。
-      # ⚠⚠ **errno を列挙しない** — `O_NOFOLLOW` が symlink に当たったときの errno は
-      # プラットフォームで違う（Linux / macOS は `ELOOP`、**FreeBSD は `EMLINK`**）。
-      def open_pid_lock_file
-        return File.open(pid_lock_file, PID_LOCK_OPEN_FLAGS)
+      # ⚠⚠ **ロックを取れたあとで、そのパスがまだ同じ inode を指しているか確かめる**
+      # （リリース前レビュー）。判断の最中にロック専用ファイルを消されると、次の start は
+      # 新しい inode を作ってロックを取れてしまい、2 本とも起動しうる。
+      # 🔴 **ロック操作の失敗を例外のまま抜けさせない。** 抜けると `run_start` の rescue が
+      # `Could not start` と言うだけで、理由がロックだと読めない。
+      def acquire_pid_lock(lock)
+        stat = lock.stat
+        abort_invalid_pid_lock_file!(stat) unless stat.file?
+        return false unless lock_pid_file(lock)
+        return same_pid_lock_file?(stat)
       rescue SystemCallError => e
-        report_unusable_pid_file(e)
+        abort_start!("Could not lock PID lock file '#{pid_lock_file}'.", 'pid lock failed', e)
+      end
+
+      def same_pid_lock_file?(stat)
+        current = File.lstat(pid_lock_file)
+        return current.dev == stat.dev && current.ino == stat.ino
+      rescue SystemCallError
+        return false
+      end
+
+      # ⚠ **`0600` で作る**（リリース前レビュー）。`flock` は開けさえすれば誰でも取れるので、
+      # 読めるだけの相手でもロックを握り続けて起動を止められる。
+      # ⚠ **開けないことを例外のまま抜けさせない。** `run_restart` の子は stderr を
+      # `File::NULL` へ付け替えているので、backtrace すら残らない（#633）。
+      # errno は列挙しない — `O_NOFOLLOW` が symlink に当たったときの errno は
+      # プラットフォームで違う（Linux / macOS は `ELOOP`、FreeBSD は `EMLINK`）。
+      def open_pid_lock_file
+        return File.open(pid_lock_file, PID_LOCK_OPEN_FLAGS, 0o600)
+      rescue SystemCallError => e
         abort_start!("Could not open PID lock file '#{pid_lock_file}'.", 'pid lock file unusable',
           e)
       end
 
-      def abort_invalid_pid_lock_file!
-        abort_start!("PID lock file '#{pid_lock_file}' is not a regular file.",
+      def abort_invalid_pid_lock_file!(stat)
+        abort_start!("PID lock file '#{pid_lock_file}' is not a regular file (#{stat.ftype}).",
           'pid lock file invalid', nil)
       end
 
-      def abort_invalid_pid_file!
-        abort_start!("PID file '#{pid_file}' exists but is not a valid PID file.",
+      # ⚠ symlink / FIFO / ディレクトリは置き換えない。`rename` は名前を差し替える
+      # だけなので壊れはしないが、この位置にそれらが置かれる正当な形が無いので、
+      # 黙って消さずに起動を止めて知らせる（#629 / #637）。
+      def abort_invalid_pid_file!(stat)
+        abort_start!("PID file '#{pid_file}' exists but is not a valid PID file (#{stat.ftype}).",
           'pid file invalid', nil)
       end
 
-      # pid ファイルの位置にあるものを置き換えてよいか (#643)。
-      #
-      # ⚠ 無いか、通常ファイルなら置き換える。
-      # 🔴 **symlink / FIFO / ディレクトリは置き換えない。** `rename` は名前を差し替える
-      # だけなので壊れはしないが、この位置にそれらが置かれる正当な形が無いので、
-      # 黙って消さずに起動を止めて知らせる（#629 / #637）。
-      # ⚠ **ハードリンクは通す** (#643)。書くのは新しい inode なので、リンク先には届かない。
-      # ⚠ 跡だけ残す — バックアップ（`rsync --link-dest` 系）でなければ、誰かが仕掛けている。
-      def replaceable_pid_file?
-        stat = File.lstat(pid_file)
-        unless stat.file?
-          @logger.warn(daemon: app_name, version: package_class.version,
-            message: 'pid file is not a regular file', pid_file:)
-          return false
-        end
-        if stat.nlink > 1
-          @logger.warn(daemon: app_name, version: package_class.version,
-            message: 'pid file is hard linked', nlink: stat.nlink, pid_file:)
-        end
-        return true
+      # pid ファイルの位置にあるもの。無ければ nil (#643)。
+      def pid_file_stat
+        return File.lstat(pid_file)
       rescue Errno::ENOENT
-        return true
+        return nil
       rescue SystemCallError => e
-        report_unusable_pid_file(e)
         abort_start!("Could not inspect PID file '#{pid_file}'.", 'pid file unusable', e)
+      end
+
+      # ⚠ **ハードリンクは置き換えて通す** (#643)。書くのは新しい inode なので、リンク先には
+      # 届かない。跡だけ残す — `cp -al` のようなスナップショットでなければ、誰かが仕掛けている。
+      def report_hard_linked_pid_file(stat)
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'pid file is hard linked', nlink: stat.nlink, pid_file:)
       end
 
       # 自分の pid を書いた一時ファイルで、pid ファイルを置き換える (#643)。
@@ -274,22 +310,23 @@ module Ginseng
       # 差し替えていたので、開いてから書くまでに経路を別のファイル（ハードリンク）へ
       # すり替えられると、**そのファイルが pid の数字で上書きされた**。`nlink` や
       # `lstat` で確かめても、確かめたあとに張り直される形は閉じられなかった。
-      # ⚠ `rename` は名前を差し替えるだけで、置き換えられた側の中身には触れない。
+      # `rename` は名前を差し替えるだけで、置き換えられた側の中身には触れない。
       # 読む側に見えるのは旧か新のどちらかで、書きかけは見えない。
+      # ⚠ mode は `0644` に固定する（umask が `002` だとグループが pid を書き換えられ、
+      # `stop` が別のプロセスへ `TERM` を送る）。
       def replace_pid_file
         temp = "#{pid_file}.#{SecureRandom.hex(8)}.tmp"
         created = false
-        File.open(temp, PID_TEMP_OPEN_FLAGS) do |f|
+        File.open(temp, PID_TEMP_OPEN_FLAGS, 0o644) do |f|
           created = true
           f.write(Process.pid.to_s)
         end
         File.rename(temp, pid_file)
       rescue SystemCallError => e
-        # ⚠ **自分が作った一時ファイルだけを消す。** 🔴 名前の形で掃除すると、同じ
+        # ⚠ **自分が作った一時ファイルだけを消す。** 名前の形で掃除すると、同じ
         # ディレクトリの他人のファイルを消しうる。
         FileUtils.rm_f(temp) if created
-        report_unusable_pid_file(e)
-        # ⚠ `rename` まで届かなければ、pid ファイルは元のまま（自分のものになっていない）。
+        # `rename` まで届かなければ、pid ファイルは元のまま（自分のものになっていない）。
         abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed', e)
       end
 
@@ -351,7 +388,7 @@ module Ginseng
       #
       # 🔴🔴 **最終要素だけ見ても足りない (#632 Codex P1)。** ⚠⚠ `tmp` の側を symlink にされると、
       # `tmp/pids` は本物のディレクトリなので検査を通り、**同じ破壊ができる**
-      # （実測した: victim が pid の数字で上書きされた）。**下から 1 段ずつ見る。**
+      # （旧方式で実測した: victim が pid の数字で上書きされた）。**下から 1 段ずつ見る。**
       #
       # ⚠⚠ **作業ディレクトリより上は見ない。** 🔴 リリース単位のディレクトリを
       # `current` のような symlink で切り替える運用は正当で、そこを拒むと配置ごと壊す。
@@ -401,16 +438,6 @@ module Ginseng
 
       def abort_unusable_pid_dir!(dir)
         abort_start!("PID directory '#{dir}' is not a usable directory.", 'pid dir unusable', nil)
-      end
-
-      # 🔴 **握り潰す前に理由を残す（リリース前レビューの赤）。** stderr は
-      # `run_restart` の子で捨てられるので、**syslog に出ないと消える**。
-      # ⚠ `ENOENT` は #561 の正常な競合（次の周回で作り直せる）なので黙る —
-      # ⚠⚠ **起動が成功する経路で warn を出すと、警報が誤報になる。**
-      def report_unusable_pid_file(error)
-        return if error.is_a?(Errno::ENOENT)
-        @logger.warn(daemon: app_name, version: package_class.version,
-          message: 'pid file is not usable', error: error.class.to_s, pid_file:)
       end
 
       # ロック専用ファイルの `flock` を取る。⚠ **テストのための継ぎ目**でもある（別の start が

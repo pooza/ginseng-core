@@ -197,7 +197,7 @@ module Ginseng
     end
 
     def run_start(args = [])
-      # ⚠ 早期に理由を出すためのもの。**取得そのものは write_pid が原子的に行う** (#622)。
+      # ⚠ 早期に理由を出すためのもの。**取得そのものは write_pid がロックの中で行う** (#622 / #643)。
       abort_if_running!
       puts motd
       write_pid
