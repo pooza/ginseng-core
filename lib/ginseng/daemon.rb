@@ -156,7 +156,7 @@ module Ginseng
     # 1 本目が孤児になる。
     #
     # ⚠⚠ **これは早期の診断であって、start 同士のレースは閉じない (#622)。**
-    # 閉じているのは `write_pid` の `O_EXCL`。🔴 **ここを通ったことを「取れた」と
+    # 閉じているのは `write_pid` のロック（#643）。🔴 **ここを通ったことを「取れた」と
     # 読まないこと。**
     def abort_unreadable_pid_file!(error)
       abort_start!("PID file '#{pid_file}' exists but could not be read.",
@@ -197,7 +197,7 @@ module Ginseng
     end
 
     def run_start(args = [])
-      # ⚠ 早期に理由を出すためのもの。**取得そのものは write_pid が原子的に行う** (#622)。
+      # ⚠ 早期に理由を出すためのもの。**取得そのものは write_pid がロックの中で行う** (#622 / #643)。
       abort_if_running!
       puts motd
       write_pid
