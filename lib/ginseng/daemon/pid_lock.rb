@@ -101,6 +101,10 @@ module Ginseng
       # 「無ければ置く」を中身ごと原子的に行える。失敗したら次の周回で旧版のファイルを見る。
       # ⚠ **在ったときは、`rename` の直前にパスがまだ握った inode を指すか確かめる**
       # （`remove_pid` に消されたあとに旧版が作り直した形を上書きしない）。
+      # 🔴 **確かめてから `rename` までの 2 つの syscall の間は閉じていない**（Codex P1・4 巡目）。
+      # 「その inode のときだけ置き換える」には `renameat2(RENAME_EXCHANGE)` が要り、Ruby の
+      # 標準では扱えない。成立には、移行期に `stop` がその古い pid ファイルを消し、旧版の start が
+      # この間に `O_EXCL` で作る、の 3 つが同時に要る（→ #652）。
       def install_pid_file(temp, stat)
         if stat
           return discard_temp_pid_file(temp) unless same_pid_file_inode?(stat)
