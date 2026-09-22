@@ -1104,6 +1104,48 @@ module Ginseng
       end
     end
 
+    # 🔴🔴 **無かった pid ファイルを、読み直しのあとで旧版に作られた形 (#643 Codex P1・3 巡目)。**
+    #
+    # 無いときは握る古い inode が無いので、旧版が `O_EXCL` で作って `flock` の手前で止まると、
+    # `rename` がそれを上書きしていた。`link` で置けば `EEXIST` で気づき、次の周回で
+    # 旧版のファイルを握ってから置き換える。
+    def test_write_pid_does_not_overwrite_a_pid_file_created_by_an_old_starter
+      daemon = create
+      legacy = nil
+      daemon.define_singleton_method(:install_pid_file) do |temp, stat|
+        legacy ||= File.new(pid_file, File::RDWR | File::CREAT | File::EXCL)
+        next super(temp, stat)
+      end
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+      assert_false(legacy.flock(File::LOCK_EX | File::LOCK_NB), '旧版が消えた inode を取れないこと')
+      assert_equal([], Dir.glob("#{daemon.pid_file}.*.tmp"), '一時ファイルを残さないこと')
+    ensure
+      legacy&.close
+    end
+
+    # ⚠ **在ったときも、置く直前にパスが握った inode を指すか確かめる。** 消されたあとに
+    # 旧版が作り直した形を上書きしない。
+    def test_write_pid_does_not_overwrite_a_pid_file_recreated_by_an_old_starter
+      daemon = create(pid: unused_pid)
+      legacy = nil
+      daemon.define_singleton_method(:install_pid_file) do |temp, stat|
+        unless legacy
+          File.unlink(pid_file)
+          legacy = File.new(pid_file, File::RDWR | File::CREAT | File::EXCL)
+        end
+        next super(temp, stat)
+      end
+
+      assert_nothing_raised(SystemExit) {daemon.send(:write_pid)}
+      assert_equal(Process.pid, daemon.pid)
+      assert_false(legacy.flock(File::LOCK_EX | File::LOCK_NB), '旧版が作り直した inode を取れないこと')
+      assert_equal([], Dir.glob("#{daemon.pid_file}.*.tmp"), '一時ファイルを残さないこと')
+    ensure
+      legacy&.close
+    end
+
     # 🔴 **`exec` をまたいでも握り続ける。** 常駐は `write_pid` のあとに `exec` するので、
     # close-on-exec のままだと、そこでロックが外れる。
     def test_write_pid_keeps_the_old_inode_locked_across_exec

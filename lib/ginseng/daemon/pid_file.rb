@@ -192,8 +192,7 @@ module Ginseng
           # 「無いまま」に見えて置き換えていた。次の周回の最初の読みで止まる。
           next :changed unless read_pid_file == observed && !pid_file_unreadable?
           report_hard_linked_pid_file(stat) if stat&.nlink.to_i > 1
-          replace_pid_file
-          next :acquired
+          next replace_pid_file(stat)
         end
       end
 
@@ -221,7 +220,8 @@ module Ginseng
           message: 'pid file is hard linked', nlink: stat.nlink, pid_file:)
       end
 
-      # 自分の pid を書いた一時ファイルで、pid ファイルを置き換える (#643)。
+      # 自分の pid を書いた一時ファイルで、pid ファイルを置き換える (#643)。置けたら `:acquired`、
+      # 置く前に別の書き手が現れたら `:changed`（→ `install_pid_file`）。
       #
       # 🔴🔴 **既存の inode に書かないこと。** 旧版は pid ファイルを開いて中身を
       # 差し替えていたので、開いてから書くまでに経路を別のファイル（ハードリンク）へ
@@ -233,7 +233,7 @@ module Ginseng
       # `stop` が別のプロセスへ `TERM` を送る）。🔴 **作るときの引数だけでは足りない**
       # (#643 Codex P2) — umask で削られるので、`077` だと `0600` になり、監視から読めない。
       # 自分が作った inode なので `chmod` してよい。
-      def replace_pid_file
+      def replace_pid_file(stat)
         temp = "#{pid_file}.#{SecureRandom.hex(8)}.tmp"
         created = false
         File.open(temp, PID_TEMP_OPEN_FLAGS, 0o644) do |f|
@@ -241,12 +241,12 @@ module Ginseng
           f.chmod(0o644)
           f.write(Process.pid.to_s)
         end
-        File.rename(temp, pid_file)
+        return install_pid_file(temp, stat)
       rescue SystemCallError => e
         # ⚠ **自分が作った一時ファイルだけを消す。** 名前の形で掃除すると、同じ
         # ディレクトリの他人のファイルを消しうる。
         FileUtils.rm_f(temp) if created
-        # `rename` まで届かなければ、pid ファイルは元のまま（自分のものになっていない）。
+        # 置くところまで届かなければ、pid ファイルは元のまま（自分のものになっていない）。
         abort_start!("Could not write PID file '#{pid_file}'.", 'pid file write failed', e)
       end
 

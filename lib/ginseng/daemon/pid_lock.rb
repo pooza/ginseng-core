@@ -91,6 +91,44 @@ module Ginseng
         @old_pid_lock = held
       end
 
+      # 一時ファイルを pid ファイルの位置に置く。置けたら `:acquired`、別の書き手が先に居たら
+      # `:changed` (#643)。
+      #
+      # 🔴🔴 **無かったときは `rename` ではなく `link` で置く (#643 Codex P1・3 巡目)。**
+      # 無いときは握る古い inode が無いので、読み直しから置くまでの間に旧版が `O_EXCL` で
+      # 作って `flock` の手前で止まると、`rename` がそれを上書きし、旧版は消えた inode に
+      # 書いて「取れた」と読む。`link` は名前が在れば `EEXIST` で失敗するので、
+      # 「無ければ置く」を中身ごと原子的に行える。失敗したら次の周回で旧版のファイルを見る。
+      # ⚠ **在ったときは、`rename` の直前にパスがまだ握った inode を指すか確かめる**
+      # （`remove_pid` に消されたあとに旧版が作り直した形を上書きしない）。
+      def install_pid_file(temp, stat)
+        if stat
+          return discard_temp_pid_file(temp) unless same_pid_file_inode?(stat)
+          File.rename(temp, pid_file)
+          return :acquired
+        end
+        begin
+          File.link(temp, pid_file)
+        rescue Errno::EEXIST
+          return discard_temp_pid_file(temp)
+        end
+        # ⚠ 置けたあとの後始末なので、失敗しても起動は止めない（残るのは一時ファイルだけ）。
+        FileUtils.rm_f(temp)
+        return :acquired
+      end
+
+      def same_pid_file_inode?(stat)
+        current = File.lstat(pid_file)
+        return current.dev == stat.dev && current.ino == stat.ino
+      rescue SystemCallError
+        return false
+      end
+
+      def discard_temp_pid_file(temp)
+        File.unlink(temp)
+        return :changed
+      end
+
       # ロック専用ファイルの `flock` の中でブロックを走らせ、その結果を返す (#643)。
       # ロックが取れなければ `:busy`。
       #
