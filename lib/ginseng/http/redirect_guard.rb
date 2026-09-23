@@ -107,9 +107,19 @@ module Ginseng
       # まま 2 段目へ再送された**（別ホストなら上流が落とす）。
       # ⚠ `base_uri` 経由では入らない（`create_uri` は scheme / host / port だけ写す）
       # ので、踏むのは絶対 URI を直に渡す口だけ。
+      # ⚠⚠ **字面ではなく解析して見る (#653 Codex P1・3 巡目)。** 🔴 初版は
+      # `scheme://...@` の**文字列パターン**で見ていたので、**スキーム相対の
+      # `//user:pass@host/api` が素通り**した — `create_uri` は `base_uri` から
+      # scheme / host / port を補うだけで **userinfo を落とさない**ので、HTTParty は
+      # そのまま Basic にする（実測で、同一ホストの `http://` へ 302 を返されると
+      # 平文で再送された）。
       def userinfo?(uri)
         return false if uri.nil?
-        return USERINFO_PATTERN.match?(uri.to_s)
+        return uri.userinfo.present? if uri.respond_to?(:userinfo)
+        return Ginseng::URI.parse(uri.to_s).userinfo.present?
+      rescue StandardError
+        # 🔴 読めない URI は安全側（資格情報あり）へ倒す。要求そのものも通らない。
+        return true
       end
 
       # ⚠⚠ **クエリに載った資格情報も「資格情報あり」に数える (#653 Codex P1)。**

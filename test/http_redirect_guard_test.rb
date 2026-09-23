@@ -303,6 +303,19 @@ module Ginseng
       assert_not_requested(:get, 'http://example.com/moved')
     end
 
+    # 🔴🔴 **スキーム相対の userinfo も見る (#653 Codex P1・3 巡目)。**
+    # ⚠⚠ `create_uri` は `base_uri` から scheme / host / port を補うだけで
+    # **userinfo を落とさない**ので、`//user:pass@host/api` はそのまま Basic になる。
+    # 🔴 字面で `scheme://...@` を探していた間、ここが素通りしていた。
+    def test_scheme_relative_userinfo_is_detected
+      stub_request(:get, @url).with(basic_auth: ['user', 'pass'])
+        .to_return(status: 302, headers: {'Location' => 'http://example.com/moved'})
+      stub_request(:get, 'http://example.com/moved').to_return(status: 200)
+
+      assert_raise(GatewayError) {@http.get('//user:pass@example.com/api')}
+      assert_not_requested(:get, 'http://example.com/moved')
+    end
+
     # ⚠ `default_params` も HTTParty が正式に受けるクエリ。
     def test_default_params_credentials_are_detected
       stub_request(:get, @url).with(query: {'access_token' => 'secret'})

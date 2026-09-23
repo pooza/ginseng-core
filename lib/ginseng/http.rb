@@ -57,13 +57,6 @@ module Ginseng
       return CREDENTIAL_HEADER_PATTERN.match?(key)
     end
 
-    # 🔴🔴 **`https://user:pass@host/` は options に現れない (#653)。** HTTParty は
-    # `Request#initialize` の最後で userinfo を `basic_auth` へ移すので、**ガードが
-    # options を見る時点では存在しない**。⚠ 実測で、**同じホストの `http://` へ 302 を
-    # 返されると Basic が平文のまま 2 段目へ再送された**（別ホストへの 302 では上流の
-    # `send_authorization_header?` が落とす）。
-    USERINFO_PATTERN = %r{\A[a-z][a-z0-9+.-]*://[^/?\#@]*@}i
-
     # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
     # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
     # ヘッダを見ているだけでは落としきれない。
