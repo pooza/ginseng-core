@@ -11,6 +11,7 @@ module Ginseng
   class HTTPRedirectGuardTest < TestCase
     ORIGIN = 'https://example.com'
     ELSEWHERE = 'https://elsewhere.example.com/moved'
+    MASK_QUERY_KEY = '/logger/mask_query_params'
 
     # ⚠ 利用側を模した HTTP と Package。**ガードを知らない**（`Ginseng::HTTP` の子）。
     class ForeignHTTP < Ginseng::HTTP; end
@@ -31,6 +32,13 @@ module Ginseng
       include ForeignPackage
     end
 
+    # ⚠ `mask_query_params` をシンボルで返す logger。正規化の有無を測るためだけの double。
+    class SymbolMaskLogger < Ginseng::Logger
+      def mask_query_params
+        return [:access_token, :token]
+      end
+    end
+
     def disable?
       return true if environment_class.win?
       return false
@@ -47,6 +55,15 @@ module Ginseng
     def teardown
       WebMock.reset!
       WebMock.allow_net_connect!
+      # 🔴🔴 **`Config#reload` は書いたキーを消さない**（`load` は `@raw` を見て
+      # merge するだけ）。⚠⚠ シングルトンなので、消さないと**他のテストの前提を
+      # 壊す** — 実測で `/slack/hooks` を書いたら `SlackTest#disable?` が false に
+      # なり、本物の Slack へ送ろうとして 2 件 error になった。
+      config_class.instance.delete(MASK_QUERY_KEY)
+    end
+
+    def image
+      return File.join(Environment.dir, 'images/pooza.png')
     end
 
     def redirect(method, status, location = ELSEWHERE)
@@ -330,6 +347,61 @@ module Ginseng
       stub_request(:mkcol, @url).to_return(status: 301, headers: {'Location' => ELSEWHERE})
 
       assert_raise(GatewayError) {@http.mkcol('/api')}
+    end
+
+    # 🔴🔴 **`upload` の継ぎ目を測る (#653・リリース前レビュー観点②)。**
+    # ⚠⚠ **この 2 つの override を消すと、483 tests が全部緑のまま**、添付の本文と
+    # `Authorization` が別ホストの 2 段目へ届く（実測で確認した）。⚠ `upload` に
+    # `follow_redirects` を混ぜても黙って捨てられるので、効いているのは
+    # `upload_options` 側 — コメントが「いちばん間違えやすい継ぎ目」と書いている場所。
+    def test_credentialed_upload_never_reaches_the_second_hop
+      stub_request(:post, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
+      stub_request(:post, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) do
+        @http.upload('/api', image, {headers: {'Authorization' => 'Bearer secret'}})
+      end
+      assert_not_requested(:post, ELSEWHERE)
+    end
+
+    # 🔴 **ガードが無ければ添付ごと 2 段目へ届くことを測る。**
+    def test_without_the_guard_the_upload_reaches_the_second_hop
+      stub_request(:post, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
+      stub_request(:post, ELSEWHERE).to_return(status: 200)
+      bare = HTTP.new
+      bare.base_uri = ORIGIN
+      bare.upload('/api', image, {headers: {'Authorization' => 'Bearer secret'}})
+
+      assert_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
+    end
+
+    # 🔴🔴 **利用側が `/logger/mask_query_params` に足した名前でも効くこと
+    # (#653・リリース前レビュー観点②)。** ⚠⚠ これが無いと、`Masking` と一覧を共有した
+    # という主張そのものが未測定になる（`public :mask_query_params` の 1 行を消しても
+    # 定数へフォールバックするので、既定の名前しか使わないテストでは差が出ない）。
+    def test_consumer_configured_query_names_are_honored
+      config_class.instance[MASK_QUERY_KEY] = ['my_private_ticket']
+      stub_request(:get, @url).with(query: {'my_private_ticket' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {HTTP.new.guard_redirects!.get("#{@url}?my_private_ticket=secret")}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ **シンボルで返す logger を差されても効くこと。** 🔴 正規化を片方の枝でしか
+    # していなかった間は、クエリの検出が丸ごと無効になっていた。
+    def test_symbol_query_names_are_normalized
+      logger = SymbolMaskLogger.new
+      http = HTTP.new.guard_redirects!
+      http.instance_variable_set(:@logger, logger)
+      http.base_uri = ORIGIN
+      stub_request(:get, @url).with(query: {'access_token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {http.get('/api', {query: {access_token: 'secret'}})}
+      assert_not_requested(:get, ELSEWHERE)
     end
 
     # ⚠ 同じインスタンスへ何度挟んでも 1 個のまま。

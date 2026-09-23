@@ -139,9 +139,12 @@ module Ginseng
         return false
       end
 
+      # ⚠⚠ **どちらの枝も同じ形に正規化する。** 🔴 `@logger` の返り値をそのまま使うと、
+      # `mask_query_params` を**シンボルで返す** logger を差されたときに 1 つも一致せず、
+      # **クエリの検出が丸ごと無効になる**（リリース前レビューの観点②で実測）。
       def credential_query_names
-        return @logger.mask_query_params if @logger.respond_to?(:mask_query_params)
-        return Masking::MASK_QUERY_PARAMS.to_set {|name| name.to_s.downcase}
+        names = @logger.respond_to?(:mask_query_params) ? @logger.mask_query_params : Masking::MASK_QUERY_PARAMS
+        return names.to_set {|name| name.to_s.downcase}
       end
 
       # ⚠ **`uri` は文字列でも `URI` でも来る。** 相対パスに付いたクエリ
@@ -188,13 +191,26 @@ module Ginseng
       # ⚠ **「追従しているから 3xx は返らない」ではない。** 🔴 HTTParty が追うのは
       # `Location` を持つ 3xx だけなので、**`Location` の無い 3xx（300 など）は
       # 追従したままでもここへ来る**。⚠⚠ どちらも「宛先が違う」の合図なので落とす。
+      # ⚠ **落とすときは `error` を 1 行残す (#653・リリース前レビュー観点②)。**
+      # 🔴 4xx は `repeat` の rescue が `error` を出すが、ここは `repeat` の外なので
+      # **`info` の「status 307」1 行しか残らない** — ログだけ見ている運用者には
+      # 通常の応答と区別が付かない。
       def guard_response(response)
         code = response.respond_to?(:code) ? response.code : nil
         code = code.to_i if code.is_a?(String)
         return response unless code.is_a?(Integer)
         return response unless code.between?(300, 399)
         return response if code == NOT_MODIFIED
+        @logger.error(error: 'redirect refused', status: code, location: redirect_target(response))
         return bad_response!(response)
+      end
+
+      # ⚠ `Location` の無い 3xx（300 など）もここへ来るので、無ければ `nil`。
+      def redirect_target(response)
+        return nil unless response.respond_to?(:headers)
+        return response.headers['location']
+      rescue StandardError
+        return nil
       end
     end
   end
