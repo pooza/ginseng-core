@@ -20,6 +20,41 @@ module Ginseng
     # ⚠ 呼び出し側が `options[:timeout]` を明示したときは、そちらを優先する。
     attr_accessor :timeout
 
+    # ⚠⚠ **資格情報の経路は、この 3 つをここで 1 度だけ持つ (#653)。**
+    # 🔴 `HostValidationMethods`（落として追う）と `RedirectGuard`（追わない）は
+    # 判断が違うが、**「何が資格情報か」は同じ**。一覧を 2 つ持つと、次に 1 つ
+    # 足したときに片方だけ増えて穴になる（`Masking#mask_query_params` を公開した
+    # のと同じ理由）。⚠ どちらの module も `class HTTP` の中に居るので、素の名前で
+    # ここへ解決される。
+    # ⚠⚠ **オリジンをまたいで持ち出してはいけないヘッダ (#527)。**いずれも
+    # 「どのオリジンに対する資格情報か」が値の側に書かれていないので、
+    # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
+    CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
+
+    # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
+    # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
+    # ヘッダを見ているだけでは落としきれない。
+    #
+    # 🔴 **上流の抑止は、この経路では効かない。** HTTParty は自分でホップを
+    # 追ったときだけ `@changed_hosts` を立てて Basic 認証を止めるが、ここは
+    # `follow_redirects: false` で**ホップごとに Request を作り直す**ので、
+    # 毎回 `@changed_hosts = false` の新品になる。⚠ `digest_auth` に至っては
+    # 上流にその抑止すら無い。
+    #
+    # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
+    # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
+    # 落としても防げるものが無く相互 TLS が壊れるだけ。
+    #
+    # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
+    # `CREDENTIAL_HEADERS` で落ちるが、HTTParty の `process_cookies` は
+    # **呼び出しごとに options[:cookies] を headers['cookie'] へ移す**ので、
+    # こちらが持ち回る options には `cookies:` が残ったままになり、
+    # **ヘッダを見る判定に一度も掛からない**（実測でホップ 2 まで届いていた）。
+    CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
+
+    # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
+    NOT_MODIFIED = 304
+
     # 4xx のうち、時間をおけば結果が変わりうるもの。
     RETRYABLE_STATUSES = [408, 425, 429].freeze
 
@@ -77,7 +112,7 @@ module Ginseng
       return uri
     end
 
-    # 資格情報を運ぶ要求のガードを、この個体へ挟む (#653)。
+    # 資格情報を運ぶ要求のガードを、このインスタンスへ挟む (#653)。
     #
     # ⚠⚠ **`Ginseng::HTTP` の既定にはしない** — `RedirectGuard` は本文を伴う要求の
     # リダイレクトを資格情報の有無を問わず切るので、**相手が正規に 3xx を返す POST の
@@ -86,7 +121,7 @@ module Ginseng
     #
     # ⚠ **挿し先をここへ寄せる。** 呼び出し側が `singleton_class.prepend` を直に
     # 書くと、クラスへ挿す形と混ざったときに二重に走る（実害は無いが読めなくなる）。
-    # ⚠⚠ **同じ個体へ何度呼んでも 1 個のまま**（Ruby の `prepend` は同じ特異クラスに
+    # ⚠⚠ **同じインスタンスへ何度呼んでも 1 個のまま**（Ruby の `prepend` は同じ特異クラスに
     # 同じ module を 2 回挿さない。実測で確認）。
     def guard_redirects!
       singleton_class.prepend(RedirectGuard)

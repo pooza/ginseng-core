@@ -25,20 +25,14 @@ module Ginseng
     # ⚠⚠ **口ごとに `follow_redirects: false` を書く形にしない。** 資格情報付きの
     # 口は 50 以上あり、**足すたびに忘れる**。持っているかどうかで決める。
     #
-    # ⚠ **資格情報を持たない要求は従来どおり追う。** 🔴 一律に切ると、nodeinfo の探索や
-    # Google Apps Script のように**相手が正規にリダイレクトを返す経路**が壊れる。
+    # ⚠ **資格情報を持たない要求は従来どおり追う。** 🔴 一律に切ると、Google Apps Script
+    # のように**相手が正規に 302 を返す経路**が壊れる（`HTTP#get` のコメント参照）。
     #
     # ⚠⚠ **`host_validator` を渡した経路とは別物。** あちらは「オリジンをまたいだら
-    # 資格情報を落として追う」（#527 / #568 / #576）。こちらは**投稿先が 1 つに
+    # 資格情報を落として追う」（#527 / #568 / #576）。こちらは**宛先が 1 つに
     # 決まっている Service** 向けなので、**落として追う**より**追わない**ほうが合う。
     # ⚠ だから `Ginseng::HTTP` の既定にはしない（pooza/ginseng-style#111 の A を採らない）。
     module RedirectGuard
-      # ⚠ どのオリジンに対する資格情報かが値の側に書かれていないヘッダ。
-      CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
-
-      # ⚠ HTTParty が options で受ける資格情報。**ヘッダを見るだけでは落としきれない。**
-      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
-
       # 🔴🔴 **本文を伴うメソッドは、資格情報の有無を問わず追わない（#280 Codex P1）。**
       #
       # ⚠⚠ **本文のキーを列挙しない。** 🔴 列挙すると「口ごとに書く」と同じ失敗に戻る —
@@ -48,25 +42,22 @@ module Ginseng
       # 来るのはそれ自体が異常**。
       UNSAFE_METHODS = [:post, :put, :delete].freeze
 
-      # ⚠ 3xx に居るがリダイレクトではない。
-      NOT_MODIFIED = 304
-
       [:head, :get].each do |method|
         define_method(method) do |uri, options = {}|
-          return guard_response(super(uri, guard_redirects(options, uri:)))
+          return guard_response(super(uri, guarded_options(options, uri:)))
         end
       end
 
       UNSAFE_METHODS.each do |method|
         define_method(method) do |uri, options = {}|
-          return guard_response(super(uri, guard_redirects(options, safe: false)))
+          return guard_response(super(uri, guarded_options(options, safe: false)))
         end
       end
 
       # ⚠⚠ **`upload` も同じ扱い。** 🔴 添付の口は `Authorization` を持ち、
       # multipart の本文ごと撃ち直されうる。
       #
-      # ⚠⚠ **ここで `guard_redirects` を挟んでも効かない** — `upload` が multipart 用の
+      # ⚠⚠ **ここで `guarded_options` を挟んでも効かない** — `upload` が multipart 用の
       # hash を組み直すので黙って捨てられる。効いているのは下の `upload_options`。
       # 🔴 したがって **`upload` だけは呼び出し側の明示が通らない**（常に追わない）。
       def upload(uri, file, options = {})
@@ -88,14 +79,14 @@ module Ginseng
       # **組み直す**ので、`upload` に `follow_redirects` を混ぜても**黙って捨てられる**。
       # 組み立てた**あと**の hash を見て決める。
       def upload_options(file, options)
-        return guard_redirects(super, safe: false)
+        return guarded_options(super, safe: false)
       end
 
       # ⚠ **呼び出し側が明示していたら、そちらを優先する。** 口の側で意図して
       # 追わせている（追わせない）場合に、ここで上書きしない。
       # ⚠ `safe:` はこの要求が**本文を伴わない（GET / HEAD）**か。
       # 本文を伴う側は無条件で切る（上の `UNSAFE_METHODS`）。
-      def guard_redirects(options, safe: true, uri: nil)
+      def guarded_options(options, safe: true, uri: nil)
         return options if options.key?(:follow_redirects)
         return options if safe && !credentials?(options, uri)
         return options.merge(follow_redirects: false)
@@ -154,7 +145,8 @@ module Ginseng
       # ⚠⚠ **3xx を黙って返さない（#282）。** 追わないと決めた以上、3xx は「宛先が違う」
       # の合図。🔴 `Ginseng::HTTP` が例外にするのは 400 以上で、3xx のログも 2xx と
       # 同じ `info` 1 行なので、**応答を検査しない利用側では「送れていないのに成功」
-      # と数えられる**（`tomato-shrieker` の `MastodonShrieker` は `return toot(body)`）。
+      # と数えられる** — 実例: `tomato-shrieker` の `WebhookShrieker`（`Ginseng::Slack`
+      # の子）は `def exec(body); return post(body); end` で、**応答を一度も見ない**。
       #
       # ⚠ **「追従しているから 3xx は返らない」ではない。** 🔴 HTTParty が追うのは
       # `Location` を持つ 3xx だけなので、**`Location` の無い 3xx（300 など）は

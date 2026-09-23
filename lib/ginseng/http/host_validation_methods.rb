@@ -10,32 +10,6 @@ module Ginseng
     # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割で、
     # 中身は一切変えていない。
     module HostValidationMethods
-      # ⚠⚠ **オリジンをまたいで持ち出してはいけないヘッダ (#527)。**いずれも
-      # 「どのオリジンに対する資格情報か」が値の側に書かれていないので、
-      # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
-      CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
-
-      # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
-      # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
-      # ヘッダを見ているだけでは落としきれない。
-      #
-      # 🔴 **上流の抑止は、この経路では効かない。** HTTParty は自分でホップを
-      # 追ったときだけ `@changed_hosts` を立てて Basic 認証を止めるが、ここは
-      # `follow_redirects: false` で**ホップごとに Request を作り直す**ので、
-      # 毎回 `@changed_hosts = false` の新品になる。⚠ `digest_auth` に至っては
-      # 上流にその抑止すら無い。
-      #
-      # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
-      # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
-      # 落としても防げるものが無く相互 TLS が壊れるだけ。
-      #
-      # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
-      # `CREDENTIAL_HEADERS` で落ちるが、HTTParty の `process_cookies` は
-      # **呼び出しごとに options[:cookies] を headers['cookie'] へ移す**ので、
-      # こちらが持ち回る options には `cookies:` が残ったままになり、
-      # **ヘッダを見る判定に一度も掛からない**（実測でホップ 2 まで届いていた）。
-      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
-
       # ⚠⚠ **メソッドと body を保つリダイレクト (#569)。** それ以外は GET に
       # 化ける（303 は仕様、301 / 302 は歴史的経緯）。⚠ body 付きメソッドに
       # ついては **HTTParty 自身の `handle_redirection` と同じ規則**にしてある
@@ -52,9 +26,6 @@ module Ginseng
       # 安全かつ本文を持たない HEAD には当てはまらない（curl -I -L も HEAD のまま）。
       SAFE_METHODS = [:get, :head].freeze
 
-      # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
-      NOT_MODIFIED = 304
-
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -70,10 +41,6 @@ module Ginseng
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
         origin = origin_of(uri)
         (limit + 1).times do
-          # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
-          # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
-          # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
-          # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
           response = request_hop(method, uri, options, validator, max_bytes)
           location = redirect_location(response)
           # ⚠ **追わないと言われていたら 3xx をそのまま返す。** validator を渡さない

@@ -12,6 +12,25 @@ module Ginseng
     ORIGIN = 'https://example.com'
     ELSEWHERE = 'https://elsewhere.example.com/moved'
 
+    # ⚠ 利用側を模した HTTP と Package。**ガードを知らない**（`Ginseng::HTTP` の子）。
+    class ForeignHTTP < Ginseng::HTTP; end
+
+    module ForeignPackage
+      include Package
+
+      def http_class
+        return ForeignHTTP
+      end
+    end
+
+    class ForeignSlack < Slack
+      include ForeignPackage
+    end
+
+    class ForeignLineService < LineService
+      include ForeignPackage
+    end
+
     def disable?
       return true if environment_class.win?
       return false
@@ -33,6 +52,10 @@ module Ginseng
     def redirect(method, status, location = ELSEWHERE)
       stub_request(method, @url).to_return(status:, headers: {'Location' => location})
       return stub_request(method, location).to_return(status: 200, body: '2 段目')
+    end
+
+    def allow_hosts(*hosts)
+      return ->(host) {hosts.include?(host)}
     end
 
     # 🔴🔴 **本件の芯。** 307 / 308 は本文ごと別ホストへ撃ち直されるので、資格情報を
@@ -130,10 +153,6 @@ module Ginseng
       assert_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
     end
 
-    def allow_hosts(*hosts)
-      return ->(host) {hosts.include?(host)}
-    end
-
     # 🔴🔴 **`host_validator` を渡した経路でも効くこと (#653 Codex P1)。**
     # ⚠⚠ あの経路は `follow_redirects: false` を HTTParty へ渡したうえで**自前で
     # ホップを追う**ので、ガードが同じキーを立てただけでは追従が止まらなかった。
@@ -216,31 +235,12 @@ module Ginseng
       assert_raise(GatewayError) {@http.mkcol('/api')}
     end
 
-    # ⚠ 同じ個体へ何度挟んでも 1 個のまま。
+    # ⚠ 同じインスタンスへ何度挟んでも 1 個のまま。
     def test_guard_is_idempotent
       @http.guard_redirects!
       @http.guard_redirects!
 
       assert_equal(1, @http.singleton_class.ancestors.count(HTTP::RedirectGuard))
-    end
-
-    # ⚠ 利用側を模した HTTP と Package。**ガードを知らない**（`Ginseng::HTTP` の子）。
-    class ForeignHTTP < Ginseng::HTTP; end
-
-    module ForeignPackage
-      include Package
-
-      def http_class
-        return ForeignHTTP
-      end
-    end
-
-    class ForeignSlack < Slack
-      include ForeignPackage
-    end
-
-    class ForeignLineService < LineService
-      include ForeignPackage
     end
 
     # 🔴🔴 **利用側が `http_class` を差し替えていても届くこと。** ⚠⚠ ガードを
