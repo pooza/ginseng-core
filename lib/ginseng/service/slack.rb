@@ -9,6 +9,10 @@ module Ginseng
     def initialize(uri)
       @uri = URI.parse(uri)
       @http = http_class.new
+      # 🔴🔴 **資格情報を運ぶので、リダイレクトを追わせない (#653)。**
+      # ⚠⚠ `http_class` のサブクラスとして足す形では届かない — **利用側は全員
+      # `http_class` を自前の HTTP へ差し替えている**ので、継承経路に現れない。
+      @http.guard_redirects!
     end
 
     alias url uri

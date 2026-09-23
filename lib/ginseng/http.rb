@@ -77,6 +77,22 @@ module Ginseng
       return uri
     end
 
+    # 資格情報を運ぶ要求のガードを、この個体へ挟む (#653)。
+    #
+    # ⚠⚠ **`Ginseng::HTTP` の既定にはしない** — `RedirectGuard` は本文を伴う要求の
+    # リダイレクトを資格情報の有無を問わず切るので、**相手が正規に 3xx を返す POST の
+    # 口まで一律に落ちる**（pooza/ginseng-style#111 の A を採らなかった理由）。
+    # ⚠ 宛先が 1 つに決まっている Service（`LineService` / `Slack` ほか）が自分で挟む。
+    #
+    # ⚠ **挿し先をここへ寄せる。** 呼び出し側が `singleton_class.prepend` を直に
+    # 書くと、クラスへ挿す形と混ざったときに二重に走る（実害は無いが読めなくなる）。
+    # ⚠⚠ **同じ個体へ何度呼んでも 1 個のまま**（Ruby の `prepend` は同じ特異クラスに
+    # 同じ module を 2 回挿さない。実測で確認）。
+    def guard_redirects!
+      singleton_class.prepend(RedirectGuard)
+      return self
+    end
+
     # サイズのプリフライト等で GET の前に HEAD を撃つ呼び出し側があり、GET だけを
     # 検証しても HEAD が素通りするなら SSRF 対策として意味を成さないので、head も
     # get と同じく options[:host_validator] を受ける (mulukhiya-toot-proxy#4523)。
