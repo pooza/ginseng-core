@@ -58,6 +58,14 @@ module Ginseng
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
+        # 🔴🔴 **呼び出し側の「追わない」を、merge で消す前に読む (#653 Codex P1)。**
+        # ⚠⚠ この経路は `follow_redirects: false` を **HTTParty へ**渡したうえで
+        # **自前でホップを追う**ので、`RedirectGuard` が同じキーを立てても
+        # **追従は止まらなかった**。🔴 307 / 308 は `redirect_options` が body を
+        # 持ち越すため、**`client_secret` のような本文の資格情報が、validator の
+        # 通る別ホストへそのまま渡っていた**（オリジンが変われば落とすのは
+        # ヘッダと資格情報オプションだけ）。
+        follow = options[:follow_redirects] != false
         options = options.merge(follow_redirects: false)
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
         origin = origin_of(uri)
@@ -66,20 +74,12 @@ module Ginseng
           # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
           # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
           # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
-          hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
-          response = repeat(method, uri, start = Time.now) do
-            r = execute(method, uri, hop_options, max_bytes)
-            # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
-            # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
-            # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
-            # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
-            # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
-            log(method:, **hop_options.slice(:multipart), url: uri, status: r.code, start:)
-            bad_response!(r) unless r.code < 400
-            r
-          end
+          response = request_hop(method, uri, options, validator, max_bytes)
           location = redirect_location(response)
-          return response unless location
+          # ⚠ **追わないと言われていたら 3xx をそのまま返す。** validator を渡さない
+          # 経路（HTTParty に任せる側）と同じ形にする — 3xx を落とすかどうかは
+          # 呼び出し側（`RedirectGuard#guard_response`）が決める。
+          return response unless follow && location
           uri = create_uri(::URI.join(uri.to_s, location).to_s)
           # ⚠ **メソッドはホップごとに変わりうる (#569)。** GET / HEAD しか
           # 通っていなかった頃は `method` が不変だったが、body 付きメソッドを
@@ -91,6 +91,25 @@ module Ginseng
           options = redirect_options(options, origin, uri, keep_body:)
         end
         raise GatewayError, "Too many redirects (#{limit})"
+      end
+
+      # ホップ 1 回ぶん。⚠ 検証は `repeat` の外で行う — 中に置くと、拒否した相手を
+      # retry_limit 回叩き直すうえ、`GatewayError` の再送判定にも巻き込まれる。
+      # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
+      # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
+      def request_hop(method, uri, options, validator, max_bytes)
+        hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
+        return repeat(method, uri, start = Time.now) do
+          response = execute(method, uri, hop_options, max_bytes)
+          # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
+          # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
+          # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
+          # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
+          # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
+          log(method:, **hop_options.slice(:multipart), url: uri, status: response.code, start:)
+          bad_response!(response) unless response.code < 400
+          next response
+        end
       end
 
       # リダイレクト先へ持ち越す options を作る (#527)。

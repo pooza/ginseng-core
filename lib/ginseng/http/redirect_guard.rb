@@ -53,7 +53,7 @@ module Ginseng
 
       [:head, :get].each do |method|
         define_method(method) do |uri, options = {}|
-          return guard_response(super(uri, guard_redirects(options)))
+          return guard_response(super(uri, guard_redirects(options, uri:)))
         end
       end
 
@@ -95,17 +95,53 @@ module Ginseng
       # 追わせている（追わせない）場合に、ここで上書きしない。
       # ⚠ `safe:` はこの要求が**本文を伴わない（GET / HEAD）**か。
       # 本文を伴う側は無条件で切る（上の `UNSAFE_METHODS`）。
-      def guard_redirects(options, safe: true)
+      def guard_redirects(options, safe: true, uri: nil)
         return options if options.key?(:follow_redirects)
-        return options if safe && !credentials?(options)
+        return options if safe && !credentials?(options, uri)
         return options.merge(follow_redirects: false)
       end
 
       # ⚠ GET / HEAD ではこれを見る。🔴 `cookies:` は HTTParty があとからヘッダへ移すので、
       # **ヘッダだけ見ていては落とせない**。
-      def credentials?(options)
+      def credentials?(options, uri = nil)
         return true if CREDENTIAL_OPTIONS.any? {|key| options[key].present?}
-        return credential_headers?(options[:headers])
+        return true if credential_headers?(options[:headers])
+        return credential_query?(options, uri)
+      end
+
+      # 🔴🔴 **クエリに載った資格情報も見る (#653 Codex P1)。** `?access_token=` の形は
+      # ヘッダにも `CREDENTIAL_OPTIONS` にも現れないので、**ここを見ないと「資格情報
+      # なし」と分類され、追従が有効なまま次のホストへ渡る**。⚠ `host_validator` の
+      # 経路が初段のクエリを撃ち直さないようにしているのと同じ懸念。
+      #
+      # ⚠⚠ **名前の一覧は `Masking` と共有する。** 「マスクの対象か」と「資格情報か」は
+      # 同じ判断なので、🔴 2 つ持つと**片方だけ増えて穴になる**。⚠ 利用側が
+      # `/logger/mask_query_params` に足した分もそのまま効く。
+      def credential_query?(options, uri = nil)
+        names = credential_query_names
+        return true if query_keys(options[:query]).any? {|key| names.include?(key)}
+        return query_keys(uri_query(uri)).any? {|key| names.include?(key)}
+      end
+
+      def credential_query_names
+        return @logger.mask_query_params if @logger.respond_to?(:mask_query_params)
+        return Masking::MASK_QUERY_PARAMS.to_set {|name| name.to_s.downcase}
+      end
+
+      # ⚠ **`uri` は文字列でも `URI` でも来る。** 相対パスに付いたクエリ
+      # （`/api?access_token=x`）も拾う。
+      def uri_query(uri)
+        return nil if uri.nil?
+        return uri.query if uri.respond_to?(:query)
+        src = uri.to_s
+        return nil unless src.include?('?')
+        return src.split('?', 2).last.split('#', 2).first
+      end
+
+      def query_keys(query)
+        return query.keys.map {|key| key.to_s.downcase} if query.is_a?(Hash)
+        return [] unless query.is_a?(String)
+        return query.split('&').map {|pair| pair.split('=').first.to_s.downcase}
       end
 
       def credential_headers?(headers)

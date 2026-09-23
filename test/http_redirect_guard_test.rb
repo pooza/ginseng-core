@@ -130,6 +130,83 @@ module Ginseng
       assert_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
     end
 
+    def allow_hosts(*hosts)
+      return ->(host) {hosts.include?(host)}
+    end
+
+    # 🔴🔴 **`host_validator` を渡した経路でも効くこと (#653 Codex P1)。**
+    # ⚠⚠ あの経路は `follow_redirects: false` を HTTParty へ渡したうえで**自前で
+    # ホップを追う**ので、ガードが同じキーを立てただけでは追従が止まらなかった。
+    # 🔴 307 / 308 は body を持ち越すので、**validator が通る別ホストへ本文の
+    # 資格情報がそのまま渡る**。
+    def test_credentialed_post_with_host_validator_never_reaches_the_second_hop
+      redirect(:post, 307)
+
+      assert_raise(GatewayError) do
+        @http.post('/api', {
+          body: {'client_secret' => 'secret'},
+          host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+        })
+      end
+      assert_not_requested(:post, ELSEWHERE)
+    end
+
+    # 🔴🔴 **ガードが無ければ、validator を通る別ホストへ本文が届くことを測る。**
+    def test_without_the_guard_the_validator_path_forwards_the_body
+      redirect(:post, 307)
+      bare = HTTP.new
+      bare.base_uri = ORIGIN
+      bare.post('/api', {
+        body: {'client_secret' => 'secret'},
+        host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+      })
+
+      assert_requested(:post, ELSEWHERE, body: {'client_secret' => 'secret'})
+    end
+
+    # ⚠ validator を渡した GET は、資格情報が無ければ従来どおり追う。
+    def test_plain_get_with_host_validator_still_follows
+      redirect(:get, 302)
+
+      assert_equal(200, @http.get('/api', {
+        host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+      }).code)
+      assert_requested(:get, ELSEWHERE)
+    end
+
+    # 🔴🔴 **クエリに載った資格情報も資格情報 (#653 Codex P1)。**
+    # ⚠⚠ ヘッダにも `CREDENTIAL_OPTIONS` にも現れないので、見落とすと**追従が
+    # 有効なまま次のホストへ渡る**。
+    def test_query_credentials_are_detected
+      stub_request(:get, @url).with(query: {'access_token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {@http.get('/api', {query: {access_token: 'secret'}})}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ `options[:query]` ではなく **URI に直に書いた**場合も拾う。
+    def test_query_credentials_in_the_uri_are_detected
+      stub_request(:get, @url).with(query: {'api_key' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {@http.get('/api?api_key=secret')}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ **資格情報でないクエリは従来どおり追う。** 🔴 一律に切ると、相手が正規に
+    # リダイレクトを返す GET（検索・ページング）が壊れる。
+    def test_benign_query_still_follows
+      stub_request(:get, @url).with(query: {'page' => '2'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_equal(200, @http.get('/api', {query: {page: 2}}).code)
+      assert_requested(:get, ELSEWHERE)
+    end
+
     # ⚠ **`mkcol` は `Net::HTTP` を直に使うので追従の概念が無い**が、応答は見る。
     # 🔴 `Net::HTTPResponse#code` は **String** を返すので、Integer だけを見ていると
     # ここだけ黙って素通りする。
