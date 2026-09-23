@@ -303,6 +303,35 @@ module Ginseng
       assert_not_requested(:get, 'http://example.com/moved')
     end
 
+    # 🔴🔴 **本文を載せた GET も追わない (#653 Codex P1・4 巡目)。**
+    # ⚠⚠ `host_validator` を渡した経路は 307 / 308 で `keep_body` を立て、**GET は
+    # SAFE_METHODS なのでメソッドも変えない**ので、`redirect_options` が本文を
+    # オリジンをまたいで持ち越す。
+    def test_get_with_a_body_does_not_follow
+      redirect(:get, 307)
+
+      assert_raise(GatewayError) do
+        @http.get('/api', {
+          body: {'client_secret' => 'secret'},
+          host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+        })
+      end
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # 🔴 **ガードが無ければ 2 段目へ本文が届くことを測る。**
+    def test_without_the_guard_the_get_body_reaches_the_second_hop
+      redirect(:get, 307)
+      bare = HTTP.new
+      bare.base_uri = ORIGIN
+      bare.get('/api', {
+        body: {'client_secret' => 'secret'},
+        host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+      })
+
+      assert_requested(:get, ELSEWHERE, body: 'client_secret=secret')
+    end
+
     # 🔴🔴 **スキーム相対の userinfo も見る (#653 Codex P1・3 巡目)。**
     # ⚠⚠ `create_uri` は `base_uri` から scheme / host / port を補うだけで
     # **userinfo を落とさない**ので、`//user:pass@host/api` はそのまま Basic になる。

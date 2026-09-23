@@ -84,11 +84,18 @@ module Ginseng
 
       # ⚠ **呼び出し側が明示していたら、そちらを優先する。** 口の側で意図して
       # 追わせている（追わせない）場合に、ここで上書きしない。
-      # ⚠ `safe:` はこの要求が**本文を伴わない（GET / HEAD）**か。
-      # 本文を伴う側は無条件で切る（上の `UNSAFE_METHODS`）。
+      # ⚠ `safe:` はメソッドが GET / HEAD か。本文を伴うメソッドは無条件で切る
+      # （上の `UNSAFE_METHODS`）。
+      #
+      # 🔴🔴 **GET / HEAD でも `body` があれば切る (#653 Codex P1・4 巡目)。**
+      # ⚠⚠ **本文のキーは列挙しない**（`UNSAFE_METHODS` と同じ理由）。実測で、
+      # `host_validator` を渡した GET に 307 を返すと、**`redirect_options` が
+      # `keep_body` で本文を持ち越し、メソッドも GET のまま**なので
+      # **`client_secret` が別ホストの 2 段目へ届いた**（validator を渡さない経路では
+      # HTTParty が GET の本文を撃ち直さないので届かない）。
       def guarded_options(options, safe: true, uri: nil)
         return options if options.key?(:follow_redirects)
-        return options if safe && !credentials?(options, uri)
+        return options if safe && !credentials?(options, uri) && options[:body].blank?
         return options.merge(follow_redirects: false)
       end
 
