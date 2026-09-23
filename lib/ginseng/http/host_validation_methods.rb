@@ -36,7 +36,12 @@ module Ginseng
         # 持ち越すため、**`client_secret` のような本文の資格情報が、validator の
         # 通る別ホストへそのまま渡っていた**（オリジンが変われば落とすのは
         # ヘッダと資格情報オプションだけ）。
-        follow = options[:follow_redirects] != false
+        # ⚠⚠ **`nil` は「追う」ではない。** HTTParty は `follow_redirects` を素の
+        # 真偽で見るので `nil` なら追わない。🔴 ここだけ `!= false` で見ていると
+        # **`follow_redirects: config['...']` のようにキーが在って値が `nil` の形で、
+        # この経路だけ追ってしまう**（`RedirectGuard` は `key?` で判定するため、
+        # 呼び出し側の明示として素通りする）。
+        follow = !options.key?(:follow_redirects) || options[:follow_redirects].present?
         options = options.merge(follow_redirects: false)
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
         origin = origin_of(uri)
@@ -108,7 +113,7 @@ module Ginseng
         headers = options[:headers]
         return options if headers.blank?
         return options.merge(
-          headers: headers.reject {|k, _v| CREDENTIAL_HEADERS.include?(k.to_s.downcase)},
+          headers: headers.reject {|k, _v| HTTP.credential_header?(k)},
         )
       end
 

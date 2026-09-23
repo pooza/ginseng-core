@@ -215,6 +215,27 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE)
     end
 
+    # 🔴🔴 **突き合わせる前に復号する (#653 Codex P1・2 巡目)。** `access%5Ftoken` は
+    # サーバー側では `access_token` として読まれるので、生の字面で比べると一致せず
+    # **「資格情報なし」に落ちて黙って追従する**。
+    def test_percent_encoded_query_credentials_are_detected
+      stub_request(:get, @url).with(query: {'access_token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {@http.get('/api', {query: 'access%5Ftoken=secret'})}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠⚠ **壊れたエスケープは安全側（資格情報あり）へ倒す。**
+    # 🔴 **初版のテストは空振りしていた** — `query: '%zz=1'` は `Addressable` が
+    # 要求を出す前に弾くので（`GatewayError: invalid percent escape`・要求 0 件）、
+    # ガードを外しても緑だった。⚠ 公開の口からは踏めないので、判定そのものを見る。
+    def test_malformed_escape_is_classified_as_a_credential
+      assert_nil(@http.send(:query_keys, '%zz=1'))
+      assert_true(@http.send(:credential_query?, {query: '%zz=1'}))
+    end
+
     # ⚠ **資格情報でないクエリは従来どおり追う。** 🔴 一律に切ると、相手が正規に
     # リダイレクトを返す GET（検索・ページング）が壊れる。
     def test_benign_query_still_follows
@@ -224,6 +245,82 @@ module Ginseng
 
       assert_equal(200, @http.get('/api', {query: {page: 2}}).code)
       assert_requested(:get, ELSEWHERE)
+    end
+
+    # 🔴🔴 **慣習的な名前の資格情報ヘッダも止める (#653・リリース前レビュー観点①)。**
+    # ⚠⚠ **こちらは実際に 2 段目へ届く** — 上流の `send_authorization_header?` が
+    # 落とすのは `basic_auth` から作った `Authorization` だけで、素の headers は
+    # 別ホストへもそのまま撃ち直される（実測）。
+    def test_custom_credential_headers_are_detected
+      ['X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token'].each do |name|
+        WebMock.reset!
+        redirect(:get, 302)
+
+        assert_raise(GatewayError, "#{name} が素通りした") do
+          @http.get('/api', {headers: {name => 'secret'}})
+        end
+        assert_not_requested(:get, ELSEWHERE)
+      end
+    end
+
+    # ⚠ **資格情報でない custom ヘッダは従来どおり追う。** 🔴 名前の形で見る以上、
+    # 巻き込みすぎていないことを固定する（利用側の実例は `X-Mulukhiya` / `X-Trace`）。
+    def test_benign_custom_headers_still_follow
+      redirect(:get, 302)
+
+      assert_equal(200, @http.get('/api', {headers: {'X-Trace' => 'abc', 'X-Mulukhiya' => '1'}}).code)
+      assert_requested(:get, ELSEWHERE)
+    end
+
+    # 🔴🔴 **userinfo は options に現れない (#653・リリース前レビュー観点①)。**
+    # ⚠ 実測で、同じホストの `http://` へ 302 を返されると **Basic が平文のまま
+    # 2 段目へ再送された**。
+    def test_userinfo_is_detected
+      # ⚠ HTTParty は要求を出す前に userinfo を `Authorization: Basic` へ移すので、
+      # stub は**移したあとの形**で書く（実測で確認）。
+      stub_request(:get, 'https://example.com/api').with(basic_auth: ['user', 'pass'])
+        .to_return(status: 302, headers: {'Location' => 'http://example.com/moved'})
+      stub_request(:get, 'http://example.com/moved').to_return(status: 200)
+
+      assert_raise(GatewayError) {HTTP.new.guard_redirects!.get('https://user:pass@example.com/api')}
+      assert_not_requested(:get, 'http://example.com/moved')
+    end
+
+    # ⚠ `default_params` も HTTParty が正式に受けるクエリ。
+    def test_default_params_credentials_are_detected
+      stub_request(:get, @url).with(query: {'access_token' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {@http.get('/api', {default_params: {access_token: 'secret'}})}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ Array 形の query も見る。🔴 **HTTParty は先頭の Array を潰す** ので
+    # `[['api_key', 'secret']]` は `?api_key&secret` になる（実測）＝ 値を伴わない
+    # パラメータ名の列。⚠⚠ そのため**要求としては資格情報を運べない**が、判定を
+    # Hash / String だけにしておくと中途半端なので、ここも見る。
+    def test_array_query_is_classified
+      assert_equal(['api_key'], @http.send(:query_keys, [['api_key', 'secret']]))
+      assert_true(@http.send(:credential_query?, {query: [['api_key', 'secret']]}))
+      assert_true(@http.send(:credential_query?, {query: ['access_token', 'x']}))
+    end
+
+    # 🔴🔴 **`follow_redirects: nil` は「追う」ではない (#653・リリース前レビュー観点①)。**
+    # ⚠⚠ `guarded_options` は `key?` で「呼び出し側の明示」と読むので素通りする。
+    # 🔴 validator 経路だけ `!= false` で見ていると、**Codex P1 の穴がそのまま再開する**
+    # （`follow_redirects: config['...']` でキーが在って値が `nil` の形）。
+    def test_nil_follow_redirects_does_not_follow_in_the_validator_path
+      redirect(:post, 307)
+
+      assert_raise(GatewayError) do
+        @http.post('/api', {
+          body: {'client_secret' => 'secret'},
+          follow_redirects: nil,
+          host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
+        })
+      end
+      assert_not_requested(:post, ELSEWHERE)
     end
 
     # ⚠ **`mkcol` は `Net::HTTP` を直に使うので追従の概念が無い**が、応答は見る。

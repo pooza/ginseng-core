@@ -97,21 +97,46 @@ module Ginseng
       def credentials?(options, uri = nil)
         return true if CREDENTIAL_OPTIONS.any? {|key| options[key].present?}
         return true if credential_headers?(options[:headers])
+        return true if userinfo?(uri)
         return credential_query?(options, uri)
       end
 
-      # 🔴🔴 **クエリに載った資格情報も見る (#653 Codex P1)。** `?access_token=` の形は
-      # ヘッダにも `CREDENTIAL_OPTIONS` にも現れないので、**ここを見ないと「資格情報
-      # なし」と分類され、追従が有効なまま次のホストへ渡る**。⚠ `host_validator` の
-      # 経路が初段のクエリを撃ち直さないようにしているのと同じ懸念。
+      # 🔴🔴 **`https://user:pass@host/` は options に現れない (#653)。** HTTParty が
+      # userinfo を `basic_auth` へ移すのは `Request#initialize` の最後なので、ここでは
+      # まだ無い。⚠ 実測で、**同じホストの `http://` へ 302 を返されると Basic が平文の
+      # まま 2 段目へ再送された**（別ホストなら上流が落とす）。
+      # ⚠ `base_uri` 経由では入らない（`create_uri` は scheme / host / port だけ写す）
+      # ので、踏むのは絶対 URI を直に渡す口だけ。
+      def userinfo?(uri)
+        return false if uri.nil?
+        return USERINFO_PATTERN.match?(uri.to_s)
+      end
+
+      # ⚠⚠ **クエリに載った資格情報も「資格情報あり」に数える (#653 Codex P1)。**
+      # `?access_token=` の形はヘッダにも `CREDENTIAL_OPTIONS` にも現れないので、
+      # 見なければ「資格情報なし」に落ちて**黙って追従する**。
+      #
+      # ⚠ **ここで止めているのは「別のホストの応答を正しいものとして扱うこと」**で、
+      # 🔴🔴 **クエリの値が次のホストへ渡ることではない** — 実測で、`options[:query]`
+      # は**リダイレクト先へ再送されない**（GET / POST × 302 / 307 / 308 ×
+      # `host_validator` の有無の 8 通りで、2 段目の URI にクエリが付かないことを確認。
+      # validator の経路は `redirect_options` が明示的に `except(:query)` している）。
+      # ⚠⚠ **ヘッダは渡る**ので、そちらとは危険の質が違う。
       #
       # ⚠⚠ **名前の一覧は `Masking` と共有する。** 「マスクの対象か」と「資格情報か」は
       # 同じ判断なので、🔴 2 つ持つと**片方だけ増えて穴になる**。⚠ 利用側が
       # `/logger/mask_query_params` に足した分もそのまま効く。
       def credential_query?(options, uri = nil)
         names = credential_query_names
-        return true if query_keys(options[:query]).any? {|key| names.include?(key)}
-        return query_keys(uri_query(uri)).any? {|key| names.include?(key)}
+        # ⚠ **`default_params` も HTTParty が正式に受けるクエリ**（`query_string` で
+        # merge される）。⚠⚠ Array 形（`[[key, value], ...]`）も受ける。
+        [options[:query], options[:default_params], uri_query(uri)].each do |query|
+          keys = query_keys(query)
+          # 🔴 復号できないクエリは安全側（資格情報あり）へ倒す。
+          return true if keys.nil?
+          return true if keys.any? {|key| names.include?(key)}
+        end
+        return false
       end
 
       def credential_query_names
@@ -129,17 +154,29 @@ module Ginseng
         return src.split('?', 2).last.split('#', 2).first
       end
 
+      # ⚠⚠ **突き合わせる前に復号する (#653 Codex P1・2 巡目)。** 🔴 `access%5Ftoken`
+      # はサーバー側では `access_token` として読まれるので、生の字面で比べると
+      # **一致せず「資格情報なし」に落ちる**。
+      # ⚠ 壊れたエスケープ（`%zz`）は `nil` を返して、呼び出し側で安全側へ倒す。
       def query_keys(query)
-        return query.keys.map {|key| key.to_s.downcase} if query.is_a?(Hash)
+        return query.keys.map {|key| decode_query_key(key)} if query.is_a?(Hash)
+        return query.map {|pair| decode_query_key(Array(pair).first)} if query.is_a?(Array)
         return [] unless query.is_a?(String)
-        return query.split('&').map {|pair| pair.split('=').first.to_s.downcase}
+        return query.split('&').map {|pair| decode_query_key(pair.split('=').first)}
+      rescue ArgumentError
+        return nil
       end
 
+      # ⚠ `::URI` と書く。素の `URI` はこの gem の `Ginseng::URI` に解決される。
+      def decode_query_key(key)
+        return ::URI.decode_www_form_component(key.to_s).strip.downcase
+      end
+
+      # ⚠ 判断は `HTTP.credential_header?` に寄せる — `host_validator` の経路
+      # （オリジンをまたいだら落として追う）と同じ基準で見る。
       def credential_headers?(headers)
         return false unless headers.is_a?(Hash)
-        return headers.any? do |key, value|
-          CREDENTIAL_HEADERS.include?(key.to_s.downcase) && value.present?
-        end
+        return headers.any? {|key, value| HTTP.credential_header?(key) && value.present?}
       end
 
       # ⚠⚠ **3xx を黙って返さない（#282）。** 追わないと決めた以上、3xx は「宛先が違う」
