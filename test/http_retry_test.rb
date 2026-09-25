@@ -136,6 +136,57 @@ module Ginseng
       assert_equal([2] * (@http.retry_limit - 1), @slept)
     end
 
+    # ⚠⚠ **Mastodon は 429 に `Retry-After` を付けず、`X-RateLimit-Reset`（ISO 8601）だけを
+    # 返す**（`config/initializers/rack_attack.rb` の `throttled_responder` と
+    # `Api::RateLimitHeaders`）。`Retry-After` が無いときはこちらを読む
+    # (pooza/makoto2#425)。
+    def test_ratelimit_reset_is_honored_without_retry_after
+      at = (Time.now + 4).utc.iso8601(6)
+      stub_request(:get, @url).to_return(status: 429, headers: {'X-RateLimit-Reset' => at})
+
+      assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}
+      assert_operator(@slept.first, :<=, 5)
+      assert_operator(@slept.first, :>=, 3)
+    end
+
+    # ⚠ **`Retry-After` があればそちらが勝つ**（RFC 9110 のヘッダが正本）。
+    def test_retry_after_wins_over_ratelimit_reset
+      at = (Time.now + 30).utc.iso8601(6)
+      stub_request(:get, @url).to_return(
+        status: 429, headers: {'Retry-After' => '3', 'X-RateLimit-Reset' => at},
+      )
+
+      assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}
+      assert_equal([3] * (@http.retry_limit - 1), @slept)
+    end
+
+    # 🔴 **投稿の制限（300 本 / 3 時間）の窓は上限を超えるので、待たずに諦める。**
+    # ⚠⚠ **いままでは 1 秒間隔で `retry_limit` 回叩き直し、窓が明ける前に使い切っていた**
+    # （規制の最中に連打する形そのもの）。
+    def test_gives_up_when_ratelimit_reset_exceeds_limit
+      at = (Time.now + 3600).utc.iso8601(6)
+      stub_request(:get, @url).to_return(status: 429, headers: {'X-RateLimit-Reset' => at})
+
+      assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}
+      assert_empty(@slept, '待たないこと')
+      assert_requested(:get, @url, times: 1)
+    end
+
+    # ⚠ 過去の時刻は 0、読めない値は固定値へ倒す（`Retry-After` と同じ扱い）。
+    def test_ratelimit_reset_past_or_unparsable
+      at = (Time.now - 60).utc.iso8601(6)
+      stub_request(:get, @url).to_return(status: 429, headers: {'X-RateLimit-Reset' => at})
+
+      assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}
+      assert_equal([0] * (@http.retry_limit - 1), @slept)
+
+      Config.instance['/http/retry/seconds'] = 2
+      stub_request(:get, @url).to_return(status: 429, headers: {'X-RateLimit-Reset' => 'soon'})
+
+      assert_raise(GatewayError) {capture_sleep {HTTP.new.get(@url)}}
+      assert_equal([2] * (@http.retry_limit - 1), @slept)
+    end
+
     # ⚠ **429 以外では見ない。** 408 / 425 は「相手が意図的に断っている」
     # わけではないので、従来どおり固定値のまま。
     def test_retry_after_is_ignored_for_other_statuses
