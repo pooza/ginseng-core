@@ -44,9 +44,10 @@ module Ginseng
       # ⚠ **`tmp/cache` と `tmp` は `lstat` で見る**（`O_NOFOLLOW` も `rename` も最終要素しか
       # 見ない — #632 と同じ理由）。🔴 `tmp/cache` を他所へのリンクにされると、書いた設定を
       # そのまま読まれる。
-      # ⚠ mode は作るときの `0600` だけで足りる。umask はビットを削るだけなので、
-      # これより広くはならない（pid ファイルが `chmod` するのは、削られて監視から
-      # 読めなくなるのを戻すため — #643 Codex P2。こちらは狭くなって困る相手がいない）。
+      # ⚠ mode は umask に関係なく `0600`。作るときの引数は umask で**削られる**ので
+      # `chmod` もする。umask は削るだけなので広がる心配は無いが、🔴 **狭くなると読み戻す
+      # 本人が読めない**（umask `0477` だと `0200` になり、`YAML.load_file` が落ちる —
+      # #659 Codex P2）。⚠ pid ファイル（#643 Codex P2）と同じ理由。
       # ⚠ **失敗は例外で返す**（`abort` しない）。`save_config` は常駐の起動の外
       # （利用側の puma など）からも呼ばれる。`run_start` の中では `start` の rescue が拾う。
       def write_config_cache(body)
@@ -58,6 +59,7 @@ module Ginseng
         created = false
         File.open(temp, CONFIG_CACHE_OPEN_FLAGS, CONFIG_CACHE_MODE) do |f|
           created = true
+          f.chmod(CONFIG_CACHE_MODE)
           f.write(body)
         end
         File.rename(temp, path)

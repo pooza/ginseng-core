@@ -48,6 +48,20 @@ module Ginseng
       assert_equal(0o600, File.stat(@daemon.config_cache_path).mode & 0o777)
     end
 
+    # 🔴 **umask で削られても `0600` に戻す (#659 Codex P2)。** 読み戻すのは本人なので、
+    # 所有者の読み取りが落ちると `YAML.load_file` が失敗する。⚠ root で走る CI では
+    # 読めてしまうので、読めるかではなく mode で測る。
+    def test_mode_is_not_narrowed_by_umask
+      old = File.umask(0o477)
+      begin
+        write('a: 1')
+      ensure
+        File.umask(old)
+      end
+
+      assert_equal(0o600, File.stat(@daemon.config_cache_path).mode & 0o777)
+    end
+
     # ⚠ 既にある（旧版が `0644` で書いた）ファイルも、置き換えれば `0600` になる。
     def test_replaces_an_existing_world_readable_file
       path = @daemon.config_cache_path
