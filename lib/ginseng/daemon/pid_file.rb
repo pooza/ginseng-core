@@ -326,7 +326,13 @@ module Ginseng
       # 出さないと、運用者は `tmp/pids` を見て「ディレクトリはあるのに」となる
       # （実際に symlink なのは `tmp` の側）。
       def unusable_pid_dir
-        guarded_dirs.each do |dir|
+        return unusable_dir(guarded_dirs)
+      end
+
+      # 並べたディレクトリのうち、**`lstat` で本物のディレクトリでない最初の段**を返す。
+      # ⚠ pid ファイルと設定のキャッシュ（`ConfigCache`・#651）で共有する。
+      def unusable_dir(dirs)
+        dirs.each do |dir|
           return dir unless File.lstat(dir).directory?
         rescue SystemCallError
           return dir
@@ -342,8 +348,8 @@ module Ginseng
       # ⚠⚠ **親が作業ディレクトリそのものなら空を返す**（`pid_file` を `tmp/pids` の
       # 外へ向けた利用側）。🔴 **そこは「上は見ない」の側なので検査は 1 段も走らない** —
       # 既定（`tmp/pids`）から動かした利用側では、この守りは効いていない。
-      def guarded_dirs
-        parent = File.expand_path(File.dirname(pid_file))
+      def guarded_dirs(path = pid_file)
+        parent = File.expand_path(File.dirname(path))
         base = respond_to?(:working_dir) ? File.expand_path(working_dir.to_s) : nil
         return [parent] unless base
         dirs = []
