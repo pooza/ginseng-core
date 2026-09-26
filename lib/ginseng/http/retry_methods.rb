@@ -81,11 +81,17 @@ module Ginseng
       #
       # ⚠ **秒数と HTTP-date の両方の形がある** (RFC 9110)。⚠ 過去の日付や負の値は
       # 0 に倒す（`sleep` に負数を渡すと ArgumentError になる）。
+      #
+      # ⚠⚠ **`Retry-After` が無ければ `X-RateLimit-Reset`（ISO 8601）を読む**
+      # (pooza/makoto2#425)。🔴 **Mastodon は 429 に `Retry-After` を付けない**
+      # （`rack_attack.rb` の `throttled_responder` も `Api::RateLimitHeaders` も
+      # `X-RateLimit-Reset` だけ）ので、**Mastodon 相手では #525 の「従う」が効いて
+      # いなかった。**⚠ **`Retry-After` があればそちらが勝つ**（RFC のヘッダが正本）。
       def retry_after(error)
         return nil unless error.is_a?(GatewayError)
         return nil unless error.source_status == 429
-        value = retry_after_header(error.response).to_s.strip
-        return nil if value.empty?
+        value = response_header(error.response, 'retry-after').to_s.strip
+        return ratelimit_reset(error.response) if value.empty?
         return [value.to_i, 0].max if value.match?(/\A[[:digit:]]+\z/)
         return [(Time.httpdate(value) - Time.now).ceil, 0].max
       rescue ArgumentError
@@ -94,15 +100,25 @@ module Ginseng
         return nil
       end
 
-      # 応答から `Retry-After` を取り出す。
+      # `X-RateLimit-Reset`（ISO 8601 の時刻）を、いまからの秒数として読む。
+      # ⚠ **無い・読めなければ nil**（固定値へ倒す → `retry_after`）。
+      def ratelimit_reset(response)
+        value = response_header(response, 'x-ratelimit-reset').to_s.strip
+        return nil if value.empty?
+        return [(Time.iso8601(value) - Time.now).ceil, 0].max
+      rescue ArgumentError
+        return nil
+      end
+
+      # 応答からヘッダを取り出す。
       #
       # ⚠⚠ **応答の型が 2 つある (#549)。** `HTTParty::Response` は `headers` を
       # 持つが、`#mkcol` が添える `Net::HTTPResponse` は持たず `response[name]`
       # で読む。⚠ **`HTTParty::Response#[]` は body（パース結果）を引く**ので、
       # `headers` を先に見ること。
-      def retry_after_header(response)
-        return response.headers['retry-after'] if response.respond_to?(:headers)
-        return response['retry-after'] if response.respond_to?(:[])
+      def response_header(response, name)
+        return response.headers[name] if response.respond_to?(:headers)
+        return response[name] if response.respond_to?(:[])
         return nil
       end
 
