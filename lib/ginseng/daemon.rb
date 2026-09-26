@@ -9,6 +9,9 @@ module Ginseng
     # 利用側の見え方（`write_pid` を override する、など）は同じ。
     include PidFile
 
+    # ⚠ 設定の書き出し（`save_config` / `config_cache_path`）も別ファイル (#651)。
+    include ConfigCache
+
     # ⚠ `restart` が子の生存を見る猶予（秒） (#630)。🔴 **長くすると `restart` が
     # 戻らなくなる**。⚠⚠ pid ファイルの取得は `exec` の前なのですぐに終わる —
     # ここで見ているのは主に `exec` の成否。
@@ -111,18 +114,6 @@ module Ginseng
     # 「起動していいか」「止めていいか」の判断には alive_state を使うこと。
     def alive?
       return alive_state == :alive
-    end
-
-    def save_config
-      config = @config.raw['application'][name]
-      if values = @config.raw['local']&.dig(name)
-        config.deep_merge!(values)
-      end
-      File.write(config_cache_path, config.to_yaml)
-    end
-
-    def config_cache_path
-      return File.join(environment_class.dir, "tmp/cache/#{name}.yaml")
     end
 
     def self.spawn!(opts = {}, args = ARGV)
