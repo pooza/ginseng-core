@@ -157,7 +157,9 @@ module Ginseng
 
       assert_equal(1, logged.size)
       assert_equal("#{ORIGIN}/api/?access_token=TOKEN", logged.first[:location])
-      message = Ginseng::Logger.new.create_message(logged.first)
+      # ⚠⚠ `create_message` は Hash を返す。`include?` を Hash に掛けるとキーしか見ない
+      # ので、文字列にしてから見る。
+      message = Ginseng::Logger.new.create_message(logged.first).to_s
 
       assert_not_include(message, 'TOKEN')
       assert_not_include(message, 'FRAG')
@@ -172,7 +174,25 @@ module Ginseng
       logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
 
       assert_equal('https://elsewhere.example.com/cb?access_token=TOKEN', logged.first[:location])
-      assert_not_include(Ginseng::Logger.new.create_message(logged.first), 'TOKEN')
+      assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'TOKEN')
+    end
+
+    # 🔴 **`scheme://` の形にならない `Location` はクエリを落とす**（Codex P1）。マスクは
+    # `scheme://` の形しか伏せないので、OAuth の callback（`myapp:/callback?code=…`）や
+    # `mailto:` のクエリが素通りしていた。
+    def test_refused_line_strips_query_of_opaque_location
+      ['myapp:/callback?code=SECRET', 'myapp:callback?code=SECRET',
+        'mailto:user@example.com?access_token=SECRET'].each do |location|
+        WebMock.reset!
+        stub_request(:get, "#{@url}?access_token=TOKEN").to_return(status: 302, headers: {'Location' => location})
+
+        logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+        assert_equal('redirect refused', logged.first[:error])
+
+        assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'SECRET', location)
+        assert_equal(location.sub(/\?.*/, ''), logged.first[:location])
+      end
     end
 
     # ⚠ 並行して動く利用側では直前の `info` 行と対応が付かないので、`method` / `url` を添える。
