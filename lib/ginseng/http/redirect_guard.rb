@@ -4,7 +4,8 @@ module Ginseng
   class HTTP
     # 資格情報を運ぶ要求のガード（#653。実装は `ginseng-fediverse` の
     # `Ginseng::Fediverse::RedirectGuard` から移設した。由来は
-    # pooza/ginseng-fediverse#280 / #282）。
+    # pooza/ginseng-fediverse#280 / #282。⚠ fediverse 側の撤去は
+    # pooza/ginseng-fediverse#289 で、それまでは旧版が並んで残る）。
     #
     # 🔴🔴 **クラスではなく module にして、インスタンスへ prepend する。**
     # ⚠⚠ 初版（fediverse）は `Ginseng::HTTP` のサブクラスだったが、**利用側は全員
@@ -33,7 +34,7 @@ module Ginseng
     # 決まっている Service** 向けなので、**落として追う**より**追わない**ほうが合う。
     # ⚠ だから `Ginseng::HTTP` の既定にはしない（pooza/ginseng-style#111 の A を採らない）。
     module RedirectGuard
-      # 🔴🔴 **本文を伴うメソッドは、資格情報の有無を問わず追わない（#280 Codex P1）。**
+      # 🔴🔴 **本文を伴うメソッドは、資格情報の有無を問わず追わない（pooza/ginseng-fediverse#280 Codex P1）。**
       #
       # ⚠⚠ **本文のキーを列挙しない。** 🔴 列挙すると「口ごとに書く」と同じ失敗に戻る —
       # 実際、`i`（Misskey）だけを見ていた初版は **`appSecret` / `client_secret` /
@@ -44,13 +45,13 @@ module Ginseng
 
       [:head, :get].each do |method|
         define_method(method) do |uri, options = {}|
-          return guard_response(super(uri, guarded_options(options, uri:)))
+          return guard_response(super(uri, guarded_options(options, uri:)), method, uri)
         end
       end
 
       UNSAFE_METHODS.each do |method|
         define_method(method) do |uri, options = {}|
-          return guard_response(super(uri, guarded_options(options, safe: false)))
+          return guard_response(super(uri, guarded_options(options, safe: false)), method, uri)
         end
       end
 
@@ -61,16 +62,17 @@ module Ginseng
       # hash を組み直すので黙って捨てられる。効いているのは下の `upload_options`。
       # 🔴 したがって **`upload` だけは呼び出し側の明示が通らない**（常に追わない）。
       def upload(uri, file, options = {})
-        return guard_response(super)
+        # ⚠ 行の `method` は実際に送った動詞（`HTTP#upload` と同じ決め方。Codex P2）。
+        return guard_response(super, options[:method] || :post, uri)
       end
 
       # ⚠ **`mkcol` は `Net::HTTP` を直に使うので、そもそもリダイレクトを追わない。**
       # ⚠⚠ **それでも応答は見る** — 3xx を黙って返すと「作れていないのに成功」に
-      # なる（#282 が投稿の口で塞いだのと同じ形）。
+      # なる（pooza/ginseng-fediverse#282 が投稿の口で塞いだのと同じ形）。
       # ⚠ この gem の利用側に `mkcol` の呼び出しは実測でゼロ（`ginseng-*` 7 本と
       # アプリ側 4 本を走査）。
       def mkcol(uri, options = {})
-        return guard_response(super)
+        return guard_response(super, :mkcol, uri)
       end
 
       private
@@ -199,7 +201,7 @@ module Ginseng
         return headers.any? {|key, value| HTTP.credential_header?(key) && value.present?}
       end
 
-      # ⚠⚠ **3xx を黙って返さない（#282）。** 追わないと決めた以上、3xx は「宛先が違う」
+      # ⚠⚠ **3xx を黙って返さない（pooza/ginseng-fediverse#282）。** 追わないと決めた以上、3xx は「宛先が違う」
       # の合図。🔴 `Ginseng::HTTP` が例外にするのは 400 以上で、3xx のログも 2xx と
       # 同じ `info` 1 行なので、**応答を検査しない利用側では「送れていないのに成功」
       # と数えられる** — 実例: `tomato-shrieker` の `WebhookShrieker`（`Ginseng::Slack`
@@ -212,22 +214,57 @@ module Ginseng
       # 🔴 4xx は `repeat` の rescue が `error` を出すが、ここは `repeat` の外なので
       # **`info` の「status 307」1 行しか残らない** — ログだけ見ている運用者には
       # 通常の応答と区別が付かない。
-      def guard_response(response)
+      # ⚠ **行には `method` / `url` を添える**（2.0.0 のリリース前レビュー）。並行して
+      # 動く利用側では、直前の `info` 行と対応が付かない。
+      def guard_response(response, method, uri)
         code = response.respond_to?(:code) ? response.code : nil
         code = code.to_i if code.is_a?(String)
         return response unless code.is_a?(Integer)
         return response unless code.between?(300, 399)
         return response if code == NOT_MODIFIED
-        @logger.error(error: 'redirect refused', status: code, location: redirect_target(response))
+        url = request_url(uri)
+        @logger.error(
+          error: 'redirect refused',
+          method: method.upcase.to_sym,
+          url:,
+          status: code,
+          location: redirect_target(response, url),
+        )
         return bad_response!(response)
       end
 
-      # ⚠ `Location` の無い 3xx（300 など）もここへ来るので、無ければ `nil`。
-      def redirect_target(response)
-        return nil unless response.respond_to?(:headers)
-        return response.headers['location']
+      # 要求の URL（絶対形）。組み立てられなければ nil。
+      def request_url(uri)
+        return create_uri(uri).to_s
       rescue StandardError
         return nil
+      end
+
+      # ⚠ `Location` の無い 3xx（300 など）もここへ来るので、無ければ `nil`。
+      #
+      # 🔴🔴 **要求の URL に対して絶対形にしてから返す**（2.0.0 のリリース前レビュー）。
+      # ログのマスクは `scheme://` で始まる URL しか伏せないので、**相対の `Location`
+      # （`/api/?access_token=…`・`//host/…`）はクエリの資格情報が平文で出ていた** —
+      # 末尾スラッシュの補完などで、相手はこちらのクエリを付けたまま返してくる。
+      # ⚠ fragment も落とす（マスクの対象外で、`#access_token=…` の形がある）。
+      # 🔴 **`scheme://` の形にならなければ、クエリも落とす**（Codex P1）。
+      # `myapp:/callback?code=…`（OAuth の callback）や `mailto:…?access_token=…` は
+      # `URI.join` を通るが、マスクが伏せるのは `scheme://` の形だけなので素通りする。
+      # ⚠ 絶対形にできないときも同じく、クエリと fragment を落とす。
+      # ⚠ `mkcol` の応答（`Net::HTTPResponse`）は `headers` を持たない（`response_header`）。
+      def redirect_target(response, base)
+        location = response_header(response, 'location').to_s.strip
+        return nil if location.empty?
+        target = ::URI.join(base.to_s, location)
+        target.fragment = nil
+        return target.to_s if target.to_s.match?(Masking::URL_PATTERN)
+        return strip_query(target.to_s)
+      rescue StandardError
+        return strip_query(location)
+      end
+
+      def strip_query(value)
+        return value.to_s.sub(/[?#].*/m, '').presence
       end
     end
   end

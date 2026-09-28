@@ -145,6 +145,81 @@ module Ginseng
       assert_raise(GatewayError) {@http.get('/api')}
     end
 
+    # 🔴🔴 **拒んだ行の `Location` は、絶対形にしてからログへ渡す**（2.0.0 のリリース前
+    # レビュー）。ログのマスクは `scheme://` で始まる URL しか伏せないので、相対の
+    # `Location` にこちらのクエリが付いて返ると、**トークンが平文で出ていた**。
+    def test_refused_line_absolutizes_relative_location
+      stub_request(:get, "#{@url}?access_token=TOKEN").to_return(
+        status: 301, headers: {'Location' => '/api/?access_token=TOKEN#access_token=FRAG'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+      assert_equal(1, logged.size)
+      assert_equal("#{ORIGIN}/api/?access_token=TOKEN", logged.first[:location])
+      # ⚠⚠ `create_message` は Hash を返す。`include?` を Hash に掛けるとキーしか見ない
+      # ので、文字列にしてから見る。
+      message = Ginseng::Logger.new.create_message(logged.first).to_s
+
+      assert_not_include(message, 'TOKEN')
+      assert_not_include(message, 'FRAG')
+    end
+
+    # ⚠ スキーム相対（`//host/…`）も同じ。
+    def test_refused_line_absolutizes_scheme_relative_location
+      stub_request(:get, "#{@url}?access_token=TOKEN").to_return(
+        status: 302, headers: {'Location' => '//elsewhere.example.com/cb?access_token=TOKEN'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+      assert_equal('https://elsewhere.example.com/cb?access_token=TOKEN', logged.first[:location])
+      assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'TOKEN')
+    end
+
+    # 🔴 **`scheme://` の形にならない `Location` はクエリを落とす**（Codex P1）。マスクは
+    # `scheme://` の形しか伏せないので、OAuth の callback（`myapp:/callback?code=…`）や
+    # `mailto:` のクエリが素通りしていた。
+    def test_refused_line_strips_query_of_opaque_location
+      ['myapp:/callback?code=SECRET', 'myapp:callback?code=SECRET',
+        'mailto:user@example.com?access_token=SECRET'].each do |location|
+        WebMock.reset!
+        stub_request(:get, "#{@url}?access_token=TOKEN").to_return(status: 302, headers: {'Location' => location})
+
+        logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+        assert_equal('redirect refused', logged.first[:error])
+
+        assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'SECRET', location)
+        assert_equal(location.sub(/\?.*/, ''), logged.first[:location])
+      end
+    end
+
+    # ⚠ 並行して動く利用側では直前の `info` 行と対応が付かないので、`method` / `url` を添える。
+    # ⚠ `mkcol` の応答（`Net::HTTPResponse`）からも `Location` を読む。
+    def test_refused_line_tells_the_request
+      stub_request(:mkcol, @url).to_return(status: 301, headers: {'Location' => '/moved/'})
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.mkcol('/api')}}
+
+      assert_equal(:MKCOL, logged.first[:method])
+      assert_equal(@url, logged.first[:url])
+      assert_equal("#{ORIGIN}/moved/", logged.first[:location])
+    end
+
+    # ⚠ `upload` の行は、実際に送った動詞で残す（`UPLOAD` ではない。Codex P2）。
+    def test_refused_upload_line_tells_the_actual_method
+      {nil => :POST, put: :PUT}.each do |method, expected|
+        WebMock.reset!
+        stub_request(expected.downcase, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
+        options = method ? {method:} : {}
+
+        logged = capture_error_log {assert_raise(GatewayError) {@http.upload('/api', image, options)}}
+
+        assert_equal(expected, logged.first[:method])
+      end
+    end
+
     # ⚠ 304 は 3xx に居るがリダイレクトではない。
     def test_not_modified_passes_through
       stub_request(:get, @url).to_return(status: 304)
@@ -478,6 +553,15 @@ module Ginseng
 
       assert_raise(GatewayError) {service.say('本文')}
       assert_not_requested(:post, ELSEWHERE)
+    end
+
+    private
+
+    def capture_error_log
+      logged = []
+      @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+      yield
+      return logged
     end
   end
 end
