@@ -7,8 +7,9 @@ module Ginseng
     # #4524)。
     #
     # ⚠ **HTTP 本体から切り出してあるが、置き場所に強い理由は無い。**
-    # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割で、
-    # 中身は一切変えていない。
+    # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割。
+    # ⚠ #653 で資格情報の一覧を `HTTP` へ移し、`follow_redirects: false` を
+    # 尊重するようにした（切り出した当時の中身からは変わっている）。
     module HostValidationMethods
       # ⚠⚠ **メソッドと body を保つリダイレクト (#569)。** それ以外は GET に
       # 化ける（303 は仕様、301 / 302 は歴史的経緯）。⚠ body 付きメソッドに

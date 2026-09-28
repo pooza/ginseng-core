@@ -145,6 +145,48 @@ module Ginseng
       assert_raise(GatewayError) {@http.get('/api')}
     end
 
+    # 🔴🔴 **拒んだ行の `Location` は、絶対形にしてからログへ渡す**（2.0.0 のリリース前
+    # レビュー）。ログのマスクは `scheme://` で始まる URL しか伏せないので、相対の
+    # `Location` にこちらのクエリが付いて返ると、**トークンが平文で出ていた**。
+    def test_refused_line_absolutizes_relative_location
+      stub_request(:get, "#{@url}?access_token=TOKEN").to_return(
+        status: 301, headers: {'Location' => '/api/?access_token=TOKEN#access_token=FRAG'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+      assert_equal(1, logged.size)
+      assert_equal("#{ORIGIN}/api/?access_token=TOKEN", logged.first[:location])
+      message = Ginseng::Logger.new.create_message(logged.first)
+
+      assert_not_include(message, 'TOKEN')
+      assert_not_include(message, 'FRAG')
+    end
+
+    # ⚠ スキーム相対（`//host/…`）も同じ。
+    def test_refused_line_absolutizes_scheme_relative_location
+      stub_request(:get, "#{@url}?access_token=TOKEN").to_return(
+        status: 302, headers: {'Location' => '//elsewhere.example.com/cb?access_token=TOKEN'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+      assert_equal('https://elsewhere.example.com/cb?access_token=TOKEN', logged.first[:location])
+      assert_not_include(Ginseng::Logger.new.create_message(logged.first), 'TOKEN')
+    end
+
+    # ⚠ 並行して動く利用側では直前の `info` 行と対応が付かないので、`method` / `url` を添える。
+    # ⚠ `mkcol` の応答（`Net::HTTPResponse`）からも `Location` を読む。
+    def test_refused_line_tells_the_request
+      stub_request(:mkcol, @url).to_return(status: 301, headers: {'Location' => '/moved/'})
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.mkcol('/api')}}
+
+      assert_equal(:MKCOL, logged.first[:method])
+      assert_equal(@url, logged.first[:url])
+      assert_equal("#{ORIGIN}/moved/", logged.first[:location])
+    end
+
     # ⚠ 304 は 3xx に居るがリダイレクトではない。
     def test_not_modified_passes_through
       stub_request(:get, @url).to_return(status: 304)
@@ -478,6 +520,15 @@ module Ginseng
 
       assert_raise(GatewayError) {service.say('本文')}
       assert_not_requested(:post, ELSEWHERE)
+    end
+
+    private
+
+    def capture_error_log
+      logged = []
+      @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+      yield
+      return logged
     end
   end
 end

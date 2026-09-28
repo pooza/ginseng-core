@@ -26,6 +26,21 @@ module Ginseng
       end
     end
 
+    # ⚠ 利用側の Package で差し替えた logger を通ること（`Logger.new` を直に書くと
+    # `Ginseng::Logger` に解決され、利用側が足したマスクの設定が効かない）。
+    class LoggedSlack < StubSlack
+      def self.logged
+        return @logged ||= []
+      end
+
+      def self.logger
+        logged = self.logged
+        logger = Object.new
+        logger.define_singleton_method(:error) {|entry| logged.push(entry)}
+        return logger
+      end
+    end
+
     def disable?
       return true if environment_class.win?
       return false
@@ -51,6 +66,14 @@ module Ginseng
       assert_requested(second)
       # ⚠⚠ リダイレクト先へは行かない（ガードが効いている）。
       assert_not_requested(:post, MOVED)
+    end
+
+    def test_broadcast_logs_through_the_package_logger
+      stub_request(:post, FIRST).to_return(status: 301, headers: {'Location' => MOVED})
+      stub_request(:post, SECOND).to_return(status: 200)
+
+      assert_raise(GatewayError) {LoggedSlack.broadcast(message: 'OK')}
+      assert_equal([FIRST], LoggedSlack.logged.map {|entry| entry[:slack]})
     end
 
     def test_broadcast_raises_nothing_when_every_hook_is_fine

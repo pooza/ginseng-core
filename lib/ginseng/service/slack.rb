@@ -54,7 +54,9 @@ module Ginseng
         errors.push([slack.uri.to_s, e])
       end
       return if errors.empty?
-      errors.each {|uri, e| Logger.new.error(error: e, slack: uri)}
+      # ⚠ `logger`（利用側の Package で差し替わる）を通す。`Logger.new` を直に書くと
+      # `Ginseng::Logger` に解決され、利用側が足したマスクの設定が効かない。
+      errors.each {|uri, e| logger.error(error: e, slack: uri)}
       raise errors.first.last
     end
   end
