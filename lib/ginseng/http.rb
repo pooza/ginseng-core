@@ -20,6 +20,71 @@ module Ginseng
     # ⚠ 呼び出し側が `options[:timeout]` を明示したときは、そちらを優先する。
     attr_accessor :timeout
 
+    # ⚠⚠ **資格情報の経路は、この 3 つをここで 1 度だけ持つ (#653)。**
+    # 🔴 `HostValidationMethods`（落として追う）と `RedirectGuard`（追わない）は
+    # 判断が違うが、**「何が資格情報か」は同じ**。一覧を 2 つ持つと、次に 1 つ
+    # 足したときに片方だけ増えて穴になる（`Masking#mask_query_params` を公開した
+    # のと同じ理由）。⚠ どちらの module も `class HTTP` の中に居るので、素の名前で
+    # ここへ解決される。
+    # ⚠⚠ **オリジンをまたいで持ち出してはいけないヘッダ (#527)。**いずれも
+    # 「どのオリジンに対する資格情報か」が値の側に書かれていないので、
+    # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
+    CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
+
+    # ⚠⚠ **名前に資格情報が現れるヘッダ (#653)。** 🔴 `CREDENTIAL_HEADERS` の 3 つだけ
+    # では `X-Api-Key` / `X-Auth-Token` / `Private-Token` / `Authentication` /
+    # `X-Amz-Security-Token` のような**慣習的な名前を素通りさせる** — 実測で、これらは
+    # **別ホストの 2 段目へそのまま届いた**（`Authorization` と違い、上流の
+    # `send_authorization_header?` は素の headers を落とさない）。
+    #
+    # ⚠⚠ **一覧ではなく名前の形で見る。** `RedirectGuard` の契約は「口ごとに
+    # `follow_redirects: false` を書かず、**持っているかどうかで決める**」なので、
+    # 🔴 固定の 3 個では**custom auth ヘッダを使う口を足した瞬間に黙って外れる**。
+    #
+    # ⚠ **外れる向きは安全側。** 誤って資格情報と読んでも「リダイレクトを追わない」
+    # だけで、資格情報が落ちるわけではない。⚠⚠ **`key` は単体では入れていない**
+    # （`X-Idempotency-Key` のような資格情報でない名前を巻き込むため）。
+    # ⚠ 利用側の custom ヘッダは実測で `X-Mulukhiya` / `X-Trace` の 2 つだけで、
+    # どちらも当たらない。
+    CREDENTIAL_HEADER_PATTERN =
+      /authorization|authentication|credential|password|secret|token|api[-_]?key/i
+
+    # ⚠ **オリジンをまたいで持ち出してはいけないヘッダか。** `RedirectGuard`（追わない）
+    # と `HostValidationMethods#redirect_options`（落として追う）が同じ判断を使う。
+    def self.credential_header?(name)
+      key = name.to_s.downcase
+      return true if CREDENTIAL_HEADERS.include?(key)
+      return CREDENTIAL_HEADER_PATTERN.match?(key)
+    end
+
+    # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
+    # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
+    # ヘッダを見ているだけでは落としきれない。
+    #
+    # 🔴 **上流の抑止は、この経路では効かない。** HTTParty は自分でホップを
+    # 追ったときだけ `@changed_hosts` を立てて Basic 認証を止めるが、ここは
+    # `follow_redirects: false` で**ホップごとに Request を作り直す**ので、
+    # 毎回 `@changed_hosts = false` の新品になる。⚠ `digest_auth` に至っては
+    # 上流にその抑止すら無い。
+    #
+    # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
+    # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
+    # 落としても防げるものが無く相互 TLS が壊れるだけ。
+    # 🔴 **この判断は `host_validator` を渡した経路のもの (#653)。** `RedirectGuard`
+    # の素の経路には**ホスト検証が 1 つも無い**（`Location` の行き先を信じて追う）ので、
+    # そちらでは「意図しないホストへ相互 TLS で認証しに行く」ことになる。
+    # ⚠ `pem` / `p12` を渡す利用側は実測でゼロ。足すときはここを見直す。
+    #
+    # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
+    # `CREDENTIAL_HEADERS` で落ちるが、HTTParty の `process_cookies` は
+    # **呼び出しごとに options[:cookies] を headers['cookie'] へ移す**ので、
+    # こちらが持ち回る options には `cookies:` が残ったままになり、
+    # **ヘッダを見る判定に一度も掛からない**（実測でホップ 2 まで届いていた）。
+    CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
+
+    # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
+    NOT_MODIFIED = 304
+
     # 4xx のうち、時間をおけば結果が変わりうるもの。
     RETRYABLE_STATUSES = [408, 425, 429].freeze
 
@@ -75,6 +140,22 @@ module Ginseng
       uri.host = @base_uri.host
       uri.port = @base_uri.port
       return uri
+    end
+
+    # 資格情報を運ぶ要求のガードを、このインスタンスへ挟む (#653)。
+    #
+    # ⚠⚠ **`Ginseng::HTTP` の既定にはしない** — `RedirectGuard` は本文を伴う要求の
+    # リダイレクトを資格情報の有無を問わず切るので、**相手が正規に 3xx を返す POST の
+    # 口まで一律に落ちる**（pooza/ginseng-style#111 の A を採らなかった理由）。
+    # ⚠ 宛先が 1 つに決まっている Service（`LineService` / `Slack` ほか）が自分で挟む。
+    #
+    # ⚠ **挿し先をここへ寄せる。** 呼び出し側が `singleton_class.prepend` を直に
+    # 書くと、クラスへ挿す形と混ざったときに二重に走る（実害は無いが読めなくなる）。
+    # ⚠⚠ **同じインスタンスへ何度呼んでも 1 個のまま**（Ruby の `prepend` は同じ特異クラスに
+    # 同じ module を 2 回挿さない。実測で確認）。
+    def guard_redirects!
+      singleton_class.prepend(RedirectGuard)
+      return self
     end
 
     # サイズのプリフライト等で GET の前に HEAD を撃つ呼び出し側があり、GET だけを

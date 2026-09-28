@@ -35,6 +35,26 @@ module Ginseng
       assert_equal('{"ok":true}', response.body)
     end
 
+    # 🔴🔴 **呼び出し側の `follow_redirects: false` を尊重する (#653)。**
+    # ⚠⚠ **以前は黙って無視していた** — この経路は `follow_redirects: false` を
+    # HTTParty へ渡したうえで**自前でホップを追う**ので、呼び出し側が同じキーを
+    # 立てても追従が止まらなかった。🔴 307 / 308 は `redirect_options` が body を
+    # 持ち越すので、**本文に載せた資格情報が次のホストへ渡っていた**。
+    # ⚠ `RedirectGuard` を挟まない素の `HTTP` でも契約が変わる（挙動の変化。2.0.0）。
+    def test_honors_explicit_follow_redirects_false
+      WebMock.stub_request(:get, 'https://example.com/x')
+        .to_return(status: 302, headers: {'Location' => 'https://elsewhere.example.com/y'})
+      WebMock.stub_request(:get, 'https://elsewhere.example.com/y').to_return(status: 200, body: 'hop2')
+
+      response = @http.get('https://example.com/x', {
+        host_validator: public_hosts('example.com', 'elsewhere.example.com'),
+        follow_redirects: false,
+      })
+
+      assert_equal(302, response.code)
+      assert_not_requested(:get, 'https://elsewhere.example.com/y')
+    end
+
     # ⚠⚠ **同じ options を head と get で使い回しても validator が残ること (#528)。**
     # 以前は request が options.delete(:host_validator) で呼び出し側の hash を壊して
     # いたため、**プリフライト (HEAD) を通した時点で validator が消え、本命の GET が

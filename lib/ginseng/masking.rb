@@ -431,5 +431,12 @@ module Ginseng
     # ⚠ **`mask_url` を公開したのと同じ理由**（#580）。**マスク対象の列を 2 か所に
     # 分けない。**
     public :mask_fields
+
+    # ⚠⚠ **「クエリのどの名前が資格情報か」は、マスクと同じ判断 (#653)。**
+    # `Ginseng::HTTP::RedirectGuard` が「資格情報を持つ要求か」を決めるのに使う。
+    # 🔴 一覧を 2 つ持つと、**片方だけ増えて穴になる** — 実際 `mask_fields` を
+    # 公開したのも同じ理由（#625）。⚠ `masking_list` が凍らせた現物を返すので、
+    # 受け取った側が `delete` してマスクを外すことはできない。
+    public :mask_query_params
   end
 end

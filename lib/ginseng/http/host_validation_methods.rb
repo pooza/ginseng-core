@@ -10,32 +10,6 @@ module Ginseng
     # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割で、
     # 中身は一切変えていない。
     module HostValidationMethods
-      # ⚠⚠ **オリジンをまたいで持ち出してはいけないヘッダ (#527)。**いずれも
-      # 「どのオリジンに対する資格情報か」が値の側に書かれていないので、
-      # 撃ち直すと**リダイレクト先に資格情報をそのまま渡すことになる**。
-      CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'].freeze
-
-      # ⚠⚠ **ヘッダ以外の経路で渡された資格情報 (#568)。** HTTParty は
-      # `basic_auth:` / `digest_auth:` を options で受けるので、`Authorization`
-      # ヘッダを見ているだけでは落としきれない。
-      #
-      # 🔴 **上流の抑止は、この経路では効かない。** HTTParty は自分でホップを
-      # 追ったときだけ `@changed_hosts` を立てて Basic 認証を止めるが、ここは
-      # `follow_redirects: false` で**ホップごとに Request を作り直す**ので、
-      # 毎回 `@changed_hosts = false` の新品になる。⚠ `digest_auth` に至っては
-      # 上流にその抑止すら無い。
-      #
-      # ⚠ **クライアント証明書 (`:pem` / `:p12`) は落とさない。** 秘密鍵は出て
-      # 行かず、提示先はホップごとに `validate_host!` を通ったホストなので、
-      # 落としても防げるものが無く相互 TLS が壊れるだけ。
-      #
-      # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
-      # `CREDENTIAL_HEADERS` で落ちるが、HTTParty の `process_cookies` は
-      # **呼び出しごとに options[:cookies] を headers['cookie'] へ移す**ので、
-      # こちらが持ち回る options には `cookies:` が残ったままになり、
-      # **ヘッダを見る判定に一度も掛からない**（実測でホップ 2 まで届いていた）。
-      CREDENTIAL_OPTIONS = [:basic_auth, :digest_auth, :cookies].freeze
-
       # ⚠⚠ **メソッドと body を保つリダイレクト (#569)。** それ以外は GET に
       # 化ける（303 は仕様、301 / 302 は歴史的経緯）。⚠ body 付きメソッドに
       # ついては **HTTParty 自身の `handle_redirection` と同じ規則**にしてある
@@ -52,34 +26,32 @@ module Ginseng
       # 安全かつ本文を持たない HEAD には当てはまらない（curl -I -L も HEAD のまま）。
       SAFE_METHODS = [:get, :head].freeze
 
-      # ⚠ 3xx に居るがリダイレクトではない。`redirect_location` 参照。
-      NOT_MODIFIED = 304
-
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
+        # 🔴🔴 **呼び出し側の「追わない」を、merge で消す前に読む (#653 Codex P1)。**
+        # ⚠⚠ この経路は `follow_redirects: false` を **HTTParty へ**渡したうえで
+        # **自前でホップを追う**ので、`RedirectGuard` が同じキーを立てても
+        # **追従は止まらなかった**。🔴 307 / 308 は `redirect_options` が body を
+        # 持ち越すため、**`client_secret` のような本文の資格情報が、validator の
+        # 通る別ホストへそのまま渡っていた**（オリジンが変われば落とすのは
+        # ヘッダと資格情報オプションだけ）。
+        # ⚠⚠ **`nil` は「追う」ではない。** HTTParty は `follow_redirects` を素の
+        # 真偽で見るので `nil` なら追わない。🔴 ここだけ `!= false` で見ていると
+        # **`follow_redirects: config['...']` のようにキーが在って値が `nil` の形で、
+        # この経路だけ追ってしまう**（`RedirectGuard` は `key?` で判定するため、
+        # 呼び出し側の明示として素通りする）。
+        follow = !options.key?(:follow_redirects) || options[:follow_redirects].present?
         options = options.merge(follow_redirects: false)
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
         origin = origin_of(uri)
         (limit + 1).times do
-          # 検証は repeat の外で行う。中に置くと、拒否した相手を retry_limit 回
-          # 叩き直すうえ、GatewayError の再送判定にも巻き込まれる。
-          # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
-          # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
-          hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
-          response = repeat(method, uri, start = Time.now) do
-            r = execute(method, uri, hop_options, max_bytes)
-            # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
-            # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
-            # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
-            # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
-            # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
-            log(method:, **hop_options.slice(:multipart), url: uri, status: r.code, start:)
-            bad_response!(r) unless r.code < 400
-            r
-          end
+          response = request_hop(method, uri, options, validator, max_bytes)
           location = redirect_location(response)
-          return response unless location
+          # ⚠ **追わないと言われていたら 3xx をそのまま返す。** validator を渡さない
+          # 経路（HTTParty に任せる側）と同じ形にする — 3xx を落とすかどうかは
+          # 呼び出し側（`RedirectGuard#guard_response`）が決める。
+          return response unless follow && location
           uri = create_uri(::URI.join(uri.to_s, location).to_s)
           # ⚠ **メソッドはホップごとに変わりうる (#569)。** GET / HEAD しか
           # 通っていなかった頃は `method` が不変だったが、body 付きメソッドを
@@ -91,6 +63,25 @@ module Ginseng
           options = redirect_options(options, origin, uri, keep_body:)
         end
         raise GatewayError, "Too many redirects (#{limit})"
+      end
+
+      # ホップ 1 回ぶん。⚠ 検証は `repeat` の外で行う — 中に置くと、拒否した相手を
+      # retry_limit 回叩き直すうえ、`GatewayError` の再送判定にも巻き込まれる。
+      # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
+      # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
+      def request_hop(method, uri, options, validator, max_bytes)
+        hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
+        return repeat(method, uri, start = Time.now) do
+          response = execute(method, uri, hop_options, max_bytes)
+          # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
+          # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
+          # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
+          # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
+          # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
+          log(method:, **hop_options.slice(:multipart), url: uri, status: response.code, start:)
+          bad_response!(response) unless response.code < 400
+          next response
+        end
       end
 
       # リダイレクト先へ持ち越す options を作る (#527)。
@@ -122,7 +113,7 @@ module Ginseng
         headers = options[:headers]
         return options if headers.blank?
         return options.merge(
-          headers: headers.reject {|k, _v| CREDENTIAL_HEADERS.include?(k.to_s.downcase)},
+          headers: headers.reject {|k, _v| HTTP.credential_header?(k)},
         )
       end
 
