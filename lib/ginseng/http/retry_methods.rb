@@ -22,18 +22,29 @@ module Ginseng
         raise gateway_error(e)
       rescue => e
         cnt += 1
-        log_retry_error(e, method, uri, start, count: cnt)
-        raise gateway_error(e) unless retryable?(e) && cnt < retry_limit
         seconds = retry_after(e)
-        # ⚠⚠ **相手が長い待ちを指定したら、待たずに諦めて呼び出し側へ返す (#525)。**
-        # プロセスを何分も止めるのは呼び出し側の期待を超える。**「次の機会に回す」
-        # 判断は呼ぶ側のもの**なので、こちらは例外で返す。
-        # 🔴 **上限は `Retry-After` 由来の値にだけ掛ける (#549)。** 固定値にも
-        # 掛けると、`/http/retry/seconds` を 60 より大きくしているアプリで
-        # **ヘッダの無い 503 や接続断まで 1 回で諦める**ようになる。
-        raise gateway_error(e) if seconds && seconds > max_retry_seconds
+        gave_up = give_up_reason(e, cnt, seconds)
+        # ⚠ **再送するかを決めてから出す (#662)。** 行は従来どおり落ちた試行 1 回につき
+        # 1 本（利用側が `count` を持つ行を「落ちた試行」として数えている）。
+        log_retry_error(e, method, uri, start, count: cnt, retry_after: seconds, gave_up:)
+        raise gateway_error(e) if gave_up
         sleep(seconds || retry_seconds)
         retry
+      end
+
+      # 諦める理由。再送するなら nil。
+      #
+      # ⚠⚠ **相手が長い待ちを指定したら、待たずに諦めて呼び出し側へ返す (#525)。**
+      # プロセスを何分も止めるのは呼び出し側の期待を超える。**「次の機会に回す」
+      # 判断は呼ぶ側のもの**なので、こちらは例外で返す。
+      # 🔴 **上限は `Retry-After` 由来の値にだけ掛ける (#549)。** 固定値にも
+      # 掛けると、`/http/retry/seconds` を 60 より大きくしているアプリで
+      # **ヘッダの無い 503 や接続断まで 1 回で諦める**ようになる。
+      def give_up_reason(error, count, seconds)
+        return :not_retryable unless retryable?(error)
+        return :retry_limit unless count < retry_limit
+        return :retry_after_too_long if seconds && seconds > max_retry_seconds
+        return nil
       end
 
       # 再送して結果が変わりうるか。
@@ -57,14 +68,26 @@ module Ginseng
         return status >= 500
       end
 
-      def log_retry_error(error, method, uri, start, count: nil)
-        @logger.error(
-          error:,
-          method: method.upcase.to_sym,
-          url: uri.to_s,
-          start:,
-          count:,
-        )
+      # ⚠⚠ **429 は、なぜ待った・諦めたかを行に残す (#662)。** 読めた待ちの秒数
+      # （`retry_after`）と、あれば `X-RateLimit-Reset` の値（窓の明ける時刻）を添える。
+      # ⚠ 諦めた回は `gave_up` に理由を添える。🔴 **待ちが長すぎて諦めた回
+      # （`retry_after_too_long`）と `retry_limit` を使い切った回は、`count` だけでは
+      # 区別できない**（前者も `count: 1` の 1 本で終わる）。
+      #
+      # ⚠ `count` は nil でもキーごと出す（従来の形。`Net::ReadTimeout` の行は持たない）。
+      def log_retry_error(error, method, uri, start, **detail)
+        entry = {error:, method: method.upcase.to_sym, url: uri.to_s, start:, count: detail[:count]}
+        entry.merge!(detail.except(:count).compact)
+        reset = ratelimit_reset_header(error)
+        entry[:ratelimit_reset] = reset if reset
+        entry[:max_seconds] = max_retry_seconds if detail[:gave_up] == :retry_after_too_long
+        @logger.error(entry)
+      end
+
+      # 429 の応答の `X-RateLimit-Reset`（生の値）。無ければ nil。
+      def ratelimit_reset_header(error)
+        return nil unless error.is_a?(GatewayError) && error.source_status == 429
+        return response_header(error.response, 'x-ratelimit-reset').to_s.strip.presence
       end
 
       def retry_seconds
@@ -81,11 +104,17 @@ module Ginseng
       #
       # ⚠ **秒数と HTTP-date の両方の形がある** (RFC 9110)。⚠ 過去の日付や負の値は
       # 0 に倒す（`sleep` に負数を渡すと ArgumentError になる）。
+      #
+      # ⚠⚠ **`Retry-After` が無ければ `X-RateLimit-Reset`（ISO 8601）を読む**
+      # (pooza/makoto2#425)。🔴 **Mastodon は 429 に `Retry-After` を付けない**
+      # （`rack_attack.rb` の `throttled_responder` も `Api::RateLimitHeaders` も
+      # `X-RateLimit-Reset` だけ）ので、**Mastodon 相手では #525 の「従う」が効いて
+      # いなかった。**⚠ **`Retry-After` があればそちらが勝つ**（RFC のヘッダが正本）。
       def retry_after(error)
         return nil unless error.is_a?(GatewayError)
         return nil unless error.source_status == 429
-        value = retry_after_header(error.response).to_s.strip
-        return nil if value.empty?
+        value = response_header(error.response, 'retry-after').to_s.strip
+        return ratelimit_reset(error.response) if value.empty?
         return [value.to_i, 0].max if value.match?(/\A[[:digit:]]+\z/)
         return [(Time.httpdate(value) - Time.now).ceil, 0].max
       rescue ArgumentError
@@ -94,15 +123,25 @@ module Ginseng
         return nil
       end
 
-      # 応答から `Retry-After` を取り出す。
+      # `X-RateLimit-Reset`（ISO 8601 の時刻）を、いまからの秒数として読む。
+      # ⚠ **無い・読めなければ nil**（固定値へ倒す → `retry_after`）。
+      def ratelimit_reset(response)
+        value = response_header(response, 'x-ratelimit-reset').to_s.strip
+        return nil if value.empty?
+        return [(Time.iso8601(value) - Time.now).ceil, 0].max
+      rescue ArgumentError
+        return nil
+      end
+
+      # 応答からヘッダを取り出す。
       #
       # ⚠⚠ **応答の型が 2 つある (#549)。** `HTTParty::Response` は `headers` を
       # 持つが、`#mkcol` が添える `Net::HTTPResponse` は持たず `response[name]`
       # で読む。⚠ **`HTTParty::Response#[]` は body（パース結果）を引く**ので、
       # `headers` を先に見ること。
-      def retry_after_header(response)
-        return response.headers['retry-after'] if response.respond_to?(:headers)
-        return response['retry-after'] if response.respond_to?(:[])
+      def response_header(response, name)
+        return response.headers[name] if response.respond_to?(:headers)
+        return response[name] if response.respond_to?(:[])
         return nil
       end
 
