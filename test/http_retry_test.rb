@@ -231,6 +231,70 @@ module Ginseng
       assert_equal([3] * (@http.retry_limit - 1), @slept)
     end
 
+    # ⚠⚠ **待ちが長すぎて諦めた回は、それと分かる行を残す (#662)。** `count: 1` の
+    # 1 本だけでは `retry_limit` を使い切った回と区別できない。
+    def test_log_tells_retry_after_too_long
+      stub_request(:get, @url).to_return(status: 429, headers: {'Retry-After' => '3600'})
+
+      logged = capture_log {assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}}
+
+      assert_equal(1, logged.size)
+      assert_equal(1, logged.first[:count])
+      assert_equal(3600, logged.first[:retry_after])
+      assert_equal(:retry_after_too_long, logged.first[:gave_up])
+      assert_equal(@http.send(:max_retry_seconds), logged.first[:max_seconds])
+    end
+
+    # ⚠ `X-RateLimit-Reset` は生の値を残す（規制がいつ解けたはずかを後から追う）。
+    def test_log_keeps_ratelimit_reset
+      at = (Time.now + 3600).utc.iso8601(6)
+      stub_request(:get, @url).to_return(status: 429, headers: {'X-RateLimit-Reset' => at})
+
+      logged = capture_log {assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}}
+
+      assert_equal(1, logged.size)
+      assert_equal(at, logged.first[:ratelimit_reset])
+      assert_equal(:retry_after_too_long, logged.first[:gave_up])
+      assert_operator(logged.first[:retry_after], :>, 3500)
+    end
+
+    # 待って再送した回は `gave_up` を持たず、使い切った最後の 1 回だけが持つ。
+    # ⚠ 行は従来どおり落ちた試行 1 回につき 1 本（利用側が `count` の行を数えている）。
+    def test_log_tells_retry_limit
+      stub_request(:get, @url).to_return(status: 429, headers: {'Retry-After' => '3'})
+
+      logged = capture_log {assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}}
+
+      assert_equal((1..@http.retry_limit).to_a, logged.map {|v| v[:count]})
+      assert_equal([3] * @http.retry_limit, logged.map {|v| v[:retry_after]})
+      assert_equal(([nil] * (@http.retry_limit - 1)) + [:retry_limit], logged.map {|v| v[:gave_up]})
+      assert_not_include(logged.last.keys, :max_seconds)
+    end
+
+    def test_log_tells_not_retryable
+      stub_request(:get, @url).to_return(status: 401)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.get('/api')}}
+
+      assert_equal(1, logged.size)
+      assert_equal(:not_retryable, logged.first[:gave_up])
+    end
+
+    # ⚠ 429 以外は待ちのキーを足さない（固定値で待つので、読んだ値が無い）。
+    def test_log_has_no_wait_keys_for_other_statuses
+      stub_request(:get, @url).to_return(
+        status: 503, headers: {'Retry-After' => '3', 'X-RateLimit-Reset' => Time.now.utc.iso8601},
+      )
+
+      logged = capture_log {assert_raise(GatewayError) {capture_sleep {@http.get('/api')}}}
+
+      assert_equal(@http.retry_limit, logged.size)
+      logged.each do |entry|
+        assert_not_include(entry.keys, :retry_after)
+        assert_not_include(entry.keys, :ratelimit_reset)
+      end
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。
@@ -244,6 +308,14 @@ module Ginseng
       yield
     ensure
       HTTP.remove_method(:sleep)
+    end
+
+    # ログの行を捕まえる。
+    def capture_log
+      logged = []
+      @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+      yield
+      return logged
     end
   end
 end
