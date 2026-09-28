@@ -62,7 +62,8 @@ module Ginseng
       # hash を組み直すので黙って捨てられる。効いているのは下の `upload_options`。
       # 🔴 したがって **`upload` だけは呼び出し側の明示が通らない**（常に追わない）。
       def upload(uri, file, options = {})
-        return guard_response(super, :upload, uri)
+        # ⚠ 行の `method` は実際に送った動詞（`HTTP#upload` と同じ決め方。Codex P2）。
+        return guard_response(super, options[:method] || :post, uri)
       end
 
       # ⚠ **`mkcol` は `Net::HTTP` を直に使うので、そもそもリダイレクトを追わない。**

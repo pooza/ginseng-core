@@ -207,6 +207,19 @@ module Ginseng
       assert_equal("#{ORIGIN}/moved/", logged.first[:location])
     end
 
+    # ⚠ `upload` の行は、実際に送った動詞で残す（`UPLOAD` ではない。Codex P2）。
+    def test_refused_upload_line_tells_the_actual_method
+      {nil => :POST, put: :PUT}.each do |method, expected|
+        WebMock.reset!
+        stub_request(expected.downcase, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
+        options = method ? {method:} : {}
+
+        logged = capture_error_log {assert_raise(GatewayError) {@http.upload('/api', image, options)}}
+
+        assert_equal(expected, logged.first[:method])
+      end
+    end
+
     # ⚠ 304 は 3xx に居るがリダイレクトではない。
     def test_not_modified_passes_through
       stub_request(:get, @url).to_return(status: 304)
