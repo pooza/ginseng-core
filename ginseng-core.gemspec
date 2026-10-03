@@ -57,6 +57,12 @@ Gem::Specification.new do |spec|
   # ⚠ 下限は CVE-2020-8130、除外は 13.4.0 のみ lib/rake/options.rb 欠落の
   # アップストリームバグ（13.4.2 で修正済み）。**理由が別なので併記する。**
   spec.add_dependency 'rake', '>=12.3.3', '!= 13.4.0' # CVE-2020-8130
+  # ⚠⚠ **`Ginseng::PublicHost` が、外部の決めた名前を `Resolv::DNS` で引く (#660)。**
+  # 🔴 床が無いと Ruby 同梱の版（4.0 は 0.7.0・3.4 は 0.7.1）が読み込まれ、悪意のある
+  # DNS 応答でメモリが増え続ける（実測: 300 回の解決で定数が 34 → 12034）。
+  # ⚠ 0.7.2 の required_ruby_version は `>= 2.3.0` で、この gem の `>=3.3` を押し出さない。
+  # ⚠ **外してよい条件**: 対応する Ruby がすべて 0.7.2 以上を同梱したとき。
+  spec.add_dependency 'resolv', '>=0.7.2' # CVE-2026-80212, CVE-2026-80213
   spec.add_dependency 'sanitize', '>=6.0.2' # CVE-2023-36823
   spec.add_dependency 'securerandom'
   spec.add_dependency 'set'

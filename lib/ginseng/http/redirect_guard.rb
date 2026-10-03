@@ -4,8 +4,8 @@ module Ginseng
   class HTTP
     # 資格情報を運ぶ要求のガード（#653。実装は `ginseng-fediverse` の
     # `Ginseng::Fediverse::RedirectGuard` から移設した。由来は
-    # pooza/ginseng-fediverse#280 / #282。⚠ fediverse 側の撤去は
-    # pooza/ginseng-fediverse#289 で、それまでは旧版が並んで残る）。
+    # pooza/ginseng-fediverse#280 / #282。⚠ fediverse 側の実装は
+    # pooza/ginseng-fediverse#289 で撤去済みで、あちらには別名だけが残る）。
     #
     # 🔴🔴 **クラスではなく module にして、インスタンスへ prepend する。**
     # ⚠⚠ 初版（fediverse）は `Ginseng::HTTP` のサブクラスだったが、**利用側は全員
