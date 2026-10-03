@@ -117,6 +117,25 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE)
     end
 
+    # 🔴 **HEAD も同じ (#656)。** ⚠⚠ `#head` はサイズのプリフライトに使われるので、
+    # GET だけ守っても**資格情報は先に HEAD で出ていく**。⚠ ガードの定義を
+    # `[:head, :get]` から `[:get]` に減らしても全部緑だった（実測）。
+    def test_credentialed_head_does_not_follow
+      redirect(:head, 302)
+
+      assert_raise(GatewayError) {@http.head('/api', {headers: {'Authorization' => 'Bearer secret'}})}
+      assert_not_requested(:head, ELSEWHERE)
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ 資格情報を持たない HEAD は従来どおり追う。
+    def test_plain_head_still_follows
+      redirect(:head, 302)
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_equal(200, @http.head('/api').code)
+    end
+
     # 🔴 `cookies:` は HTTParty があとからヘッダへ移すので、**ヘッダだけ見ていては
     # 落とせない**。
     def test_cookies_count_as_credentials
