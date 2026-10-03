@@ -30,19 +30,38 @@ module Ginseng
     # `IPAddr` の `private?` / `loopback?` / `link_local?` が拾わない予約・特殊用途レンジ。
     # ⚠ **`0.0.0.0` と `::` は 3 述語のいずれも false** なのに、connect(2) はローカルホスト宛と
     # して扱う。
+    #
+    # ⚠⚠ **基準は IANA の Special-Purpose Address Registry で「グローバルに到達できない」
+    # とされるもの (#660 Codex P1)。** 🔴 写し元の 2 つは一部しか持っておらず、文書用の
+    # レンジ（`192.0.2.0/24` ほか）が**公開アドレスとして通っていた** — 名目上は予約でも、
+    # 組織の中で経路を持たせている網がある。
+    # 🔴🔴 **IPv4 を埋め込む IPv6 も落とす。** `2002:7f00:1::1`（6to4）は `127.0.0.1` を、
+    # Teredo（`2001::/32`）は任意の IPv4 を指せるので、**表を IPv4 側だけ埋めても抜ける**
+    # （実測で通っていた）。⚠ NAT64 の 2 つも同じ理由。
+    # ⚠ AS112（`192.31.196.0/24` / `192.175.48.0/24`）と AMT（`192.52.193.0/24`）は
+    # グローバルに到達できる扱いなので入れない。
     RESERVED_RANGES = [
-      '0.0.0.0/8',
-      '100.64.0.0/10',
-      '192.0.0.0/24',
-      '198.18.0.0/15',
-      '224.0.0.0/4',
-      '240.0.0.0/4',
-      '::/128',
-      '64:ff9b::/96',
-      '64:ff9b:1::/48',
-      # ⚠ 非推奨の IPv6 site-local。`private?` は `fc00::/7` しか見ない（pooza/ginseng-web#140 Codex P2）。
-      'fec0::/10',
-      'ff00::/8',
+      '0.0.0.0/8',       # this-network
+      '100.64.0.0/10',   # CGNAT (RFC 6598)
+      '192.0.0.0/24',    # IETF protocol assignments
+      '192.0.2.0/24',    # 文書用 TEST-NET-1
+      '192.88.99.0/24',  # 6to4 relay anycast（廃止）
+      '198.18.0.0/15',   # benchmarking (RFC 2544)
+      '198.51.100.0/24', # 文書用 TEST-NET-2
+      '203.0.113.0/24',  # 文書用 TEST-NET-3
+      '224.0.0.0/4',     # multicast
+      '240.0.0.0/4',     # reserved（255.255.255.255 を含む）
+      '::/128',          # unspecified
+      '64:ff9b::/96',    # NAT64 well-known prefix (RFC 6146)
+      '64:ff9b:1::/48',  # NAT64 local-use prefix (RFC 8215)
+      '100::/64',        # discard-only (RFC 6666)
+      '2001::/23',       # IETF protocol assignments（Teredo / ORCHID / benchmarking を含む）
+      '2001:db8::/32',   # 文書用
+      '2002::/16',       # 6to4（IPv4 を埋め込む）
+      '3fff::/20',       # 文書用 (RFC 9637)
+      '5f00::/16',       # SRv6 SIDs (RFC 9602)
+      'fec0::/10',       # 非推奨の site-local。`private?` は `fc00::/7` しか見ない
+      'ff00::/8',        # multicast
     ].map {|v| IPAddr.new(v)}.freeze
 
     # `Ginseng::HTTP#get` の `host_validator` へ渡す callable。リダイレクトの各ホップがこれを通る。

@@ -16,6 +16,28 @@ module Ginseng
       internals.each {|ip| assert_nil(allowed('example.com', [ip]), ip)}
     end
 
+    # 🔴 **予約・文書用のレンジも公開ではない (#660 Codex P1)。** ⚠⚠ IPv4 を埋め込む IPv6
+    # （6to4 の `2002:7f00:1::1` は `127.0.0.1`）は、IPv4 側の表だけでは落ちない。
+    def test_special_purpose_ranges_are_rejected
+      specials = [
+        '192.0.2.1', '192.88.99.1', '198.18.0.1', '198.51.100.1', '203.0.113.1', '224.0.0.1',
+        '255.255.255.255', '64:ff9b::7f00:1', '100::1', '2001::1', '2001:db8::1',
+        '2002:7f00:1::1', '2002:a00:1::1', '3fff::1', '5f00::1', 'ff02::1'
+      ]
+
+      specials.each {|ip| assert_nil(allowed('example.com', [ip]), ip)}
+    end
+
+    # ⚠ **広げすぎないこと。** 表の隣にある実在の公開アドレスは通す。
+    def test_neighbouring_public_addresses_are_allowed
+      publics = [
+        '8.8.8.8', '192.0.3.1', '192.31.196.1', '198.51.101.1', '203.0.114.1',
+        '2001:200::1', '2001:4860:4860::8888', '2003::1', '2400:cb00::1', '2606:4700::1111'
+      ]
+
+      publics.each {|ip| assert_equal(ip, allowed('example.com', [ip]), ip)}
+    end
+
     # ⚠⚠ **1 本でも内部アドレスを含めば拒否**（混ぜて返すのはリバインディングそのもの）。
     def test_mixed_answers_are_rejected
       assert_nil(allowed('example.com', ['93.184.215.14', '127.0.0.1']))
