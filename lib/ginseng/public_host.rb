@@ -40,6 +40,8 @@ module Ginseng
     # （実測で通っていた）。⚠ NAT64 の 2 つも同じ理由。
     # ⚠ AS112（`192.31.196.0/24` / `192.175.48.0/24`）と AMT（`192.52.193.0/24`）は
     # グローバルに到達できる扱いなので入れない。
+    # ⚠ **IPv6 は `GLOBAL_UNICAST_V6` の外を丸ごと落とす**ので、ここに並べるのは
+    # その中にある例外だけ。
     RESERVED_RANGES = [
       '0.0.0.0/8',       # this-network
       '100.64.0.0/10',   # CGNAT (RFC 6598)
@@ -51,18 +53,20 @@ module Ginseng
       '203.0.113.0/24',  # 文書用 TEST-NET-3
       '224.0.0.0/4',     # multicast
       '240.0.0.0/4',     # reserved（255.255.255.255 を含む）
-      '::/128',          # unspecified
-      '64:ff9b::/96',    # NAT64 well-known prefix (RFC 6146)
-      '64:ff9b:1::/48',  # NAT64 local-use prefix (RFC 8215)
-      '100::/64',        # discard-only (RFC 6666)
       '2001::/23',       # IETF protocol assignments（Teredo / ORCHID / benchmarking を含む）
       '2001:db8::/32',   # 文書用
       '2002::/16',       # 6to4（IPv4 を埋め込む）
       '3fff::/20',       # 文書用 (RFC 9637)
-      '5f00::/16',       # SRv6 SIDs (RFC 9602)
-      'fec0::/10',       # 非推奨の site-local。`private?` は `fc00::/7` しか見ない
-      'ff00::/8',        # multicast
     ].map {|v| IPAddr.new(v)}.freeze
+
+    # 🔴🔴 **IPv6 は「落とすもの」を並べず、通す範囲を 1 つ決める (#660 Codex P1・2 巡目)。**
+    # ⚠⚠ グローバルに経路を持つ IPv6 ユニキャストは、いまのところ全部 `2000::/3` の中に
+    # ある。🔴 外側には予約が点在していて（`::/128`・NAT64 の `64:ff9b::/96`・破棄用の
+    # `100::/64`・ダミーの `100:0:0:1::/64`・SRv6 の `5f00::/16`・site-local の
+    # `fec0::/10`・multicast …）、**並べる形は足すたびに 1 つ漏れる**（実際に 2 巡続けて
+    # 漏れた）。⚠ IANA が外側へ新しい予約を足しても、ここは変えなくてよい。
+    # ⚠ IPv4-mapped / -compatible は、判定の前に IPv4 へ畳んである。
+    GLOBAL_UNICAST_V6 = IPAddr.new('2000::/3').freeze
 
     # `Ginseng::HTTP#get` の `host_validator` へ渡す callable。リダイレクトの各ホップがこれを通る。
     # ⚠ **真偽値ではなく IP アドレスを返す**（拒否なら nil）。ginseng-core は文字列が返ると
@@ -100,6 +104,7 @@ module Ginseng
       # `::ffff:127.0.0.1` が family 違いで素通りする）。
       addr = addr.native if addr.ipv4_mapped? || addr.ipv4_compat?
       return true if addr.private? || addr.loopback? || addr.link_local?
+      return true if addr.ipv6? && !GLOBAL_UNICAST_V6.include?(addr)
       return RESERVED_RANGES.any? {|range| range.include?(addr)}
     end
 

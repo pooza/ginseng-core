@@ -28,6 +28,15 @@ module Ginseng
       specials.each {|ip| assert_nil(allowed('example.com', [ip]), ip)}
     end
 
+    # 🔴🔴 **IPv6 は `2000::/3` の外を丸ごと拒否する (#660 Codex P1・2 巡目)。**
+    # ⚠⚠ 並べる形は足すたびに漏れる — `100:0:0:1::/64`（ダミー）は表に無かった。
+    # ⚠ 末尾の 2 つは**どの予約にも入っていない未割り当て**。表では落とせない。
+    def test_ipv6_outside_global_unicast_is_rejected
+      outsiders = ['100:0:0:1::1', '100::1', '5f00::1', 'fec0::1', '64:ff9b:1::1', '4000::1', 'e000::1']
+
+      outsiders.each {|ip| assert_nil(allowed('example.com', [ip]), ip)}
+    end
+
     # ⚠ **広げすぎないこと。** 表の隣にある実在の公開アドレスは通す。
     def test_neighbouring_public_addresses_are_allowed
       publics = [
