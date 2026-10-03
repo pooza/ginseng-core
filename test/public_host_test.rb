@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
+require 'webmock/test_unit'
+
 module Ginseng
-  # 公開アドレスだけを通す判定 (#660)。⚠ DNS は引かず、resolver を差し替えて測る。
+  # 公開アドレスだけを通す判定 (#660)。⚠ DNS は引かず、resolver を差し替えて測る
+  # （`test_resolution_has_a_single_deadline` だけは、応答しない先へ実際に問い合わせる）。
   class PublicHostTest < TestCase
     def test_public_address_is_returned_for_pinning
       assert_equal('93.184.215.14', allowed('example.com', ['93.184.215.14']))
@@ -86,15 +89,77 @@ module Ginseng
       assert_false(PublicHost.public?('localhost', resolver: ->(_) {['93.184.215.14']}))
     end
 
-    # 🔴 **受け口まで通すこと。** `HTTP` は validator が返した IP へ接続を固定し、
-    # 拒否（nil）なら要求を出さない。
-    def test_validator_is_accepted_by_http
-      validator = PublicHost.validator
+    # 🔴 **受け口まで通すこと。** `HTTP` は拒否（nil）なら要求を出さない。
+    # ⚠⚠ **`assert_raise(GatewayError)` だけでは空振りする** — 拒否を無視しても、
+    # 繋ぎに行った先の接続拒否が同じ `GatewayError` になる（リリース前レビューで実測）。
+    # 拒否の文言まで見て、要求が出ていないことを WebMock で取る。
+    def test_rejection_reaches_http
+      WebMock.disable_net_connect!
+      stub = stub_request(:get, 'http://127.0.0.1/')
 
-      assert_respond_to(validator, :call)
-      assert_nil(validator.call('localhost'))
-      assert_nil(validator.call('127.0.0.1'))
-      assert_raise(GatewayError) {HTTP.new.get('http://127.0.0.1/', {host_validator: validator})}
+      error = assert_raise(GatewayError) do
+        HTTP.new.get('http://127.0.0.1/', {host_validator: PublicHost.validator})
+      end
+
+      assert_match(/Rejected host/, error.message)
+      assert_not_requested(stub)
+    ensure
+      WebMock.reset!
+      WebMock.allow_net_connect!
+    end
+
+    # 🔴 **国際化ドメイン名は punycode へ直してから引く。** ⚠ 直さないと `Resolv` が
+    # `Encoding::CompatibilityError` を上げ、`GatewayError` にならずに漏れる。
+    def test_idn_is_resolved_as_punycode
+      asked = []
+      resolver = lambda do |host|
+        asked.push(host)
+        ['93.184.215.14']
+      end
+
+      assert_equal('93.184.215.14', PublicHost.allowed_address('日本語.jp', resolver:))
+      assert_equal(['xn--wgv71a119e.jp'], asked)
+    end
+
+    # 🔴 **IPv4 の別表記と、名前として壊れた形は解決へ進めない。** ⚠⚠ `127.1` や
+    # `0x7f.1` は 4 オクテットの形ではないが、`getaddrinfo` は `127.0.0.1` と読む。
+    # ⚠ resolver は常に公開アドレスを返す — **呼ばれないこと**を見る。
+    def test_malformed_hosts_never_reach_the_resolver
+      hosts = [
+        '127.1', '0x7f.1', '0x7f.0.0.1', '0177.0.0.1', '00127.0.0.1', '127.0.0.1.', '2130706433',
+        'localhost.', '::ffff:127.0.0.1', '1.2.3.4:80', ' 127.0.0.1', "example.com\n", 'a b.example.com',
+        "#{'a' * 64}.example.com", "#{'a.' * 130}com", 'example.123'
+      ]
+      asked = []
+      resolver = lambda do |host|
+        asked.push(host)
+        ['93.184.215.14']
+      end
+
+      hosts.each {|host| assert_nil(PublicHost.allowed_address(host, resolver:), host.inspect)}
+      assert_empty(asked)
+    end
+
+    # ⚠ 広げすぎないこと。末尾ドット・数字を含むラベル・`_` は通す。
+    def test_ordinary_hosts_reach_the_resolver
+      ['example.com', 'example.com.', '1.example.com', 'a-1.b2.example.org', '_x.example.com', 'EXAMPLE.COM'].each do |host|
+        assert_equal('93.184.215.14', allowed(host, ['93.184.215.14']), host)
+      end
+    end
+
+    # 🔴 **`timeout: nil` で締め切りが外れないこと。** 設定のキーが欠けると `nil` が来る。
+    def test_nil_timeout_falls_back_to_the_default
+      started = Time.now
+
+      assert_raise(Timeout::Error) do
+        PublicHost.resolve_addresses('img.example.com', nameserver: ['192.0.2.1'], timeout: nil)
+      end
+      assert_operator(Time.now - started, :<, PublicHost::DNS_TIMEOUT + 1)
+    end
+
+    # ⚠ `Errno::*` も拒否に倒す（素のまま漏らさない）。
+    def test_system_call_errors_are_rejected
+      assert_nil(PublicHost.allowed_address('example.com', resolver: ->(_) {raise Errno::EMFILE}))
     end
 
     private
