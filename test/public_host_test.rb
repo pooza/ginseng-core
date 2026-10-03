@@ -148,13 +148,19 @@ module Ginseng
     end
 
     # 🔴 **`timeout: nil` で締め切りが外れないこと。** 設定のキーが欠けると `nil` が来る。
+    # ⚠⚠ **別スレッドで走らせ、待つ側に上限を持つ。** 読み替えを外すと締め切りが無くなり、
+    # 同じスレッドで呼ぶと**落ちずに固まる**（変異で実測 — CI が赤ではなくハングする）。
     def test_nil_timeout_falls_back_to_the_default
-      started = Time.now
-
-      assert_raise(Timeout::Error) do
+      thread = Thread.new do
         PublicHost.resolve_addresses('img.example.com', nameserver: ['192.0.2.1'], timeout: nil)
+      rescue Timeout::Error => e
+        e
       end
-      assert_operator(Time.now - started, :<, PublicHost::DNS_TIMEOUT + 1)
+
+      assert_not_nil(thread.join(PublicHost::DNS_TIMEOUT + 1), '締め切りが効くこと')
+      assert_kind_of(Timeout::Error, thread.value)
+    ensure
+      thread&.kill
     end
 
     # ⚠ `Errno::*` も拒否に倒す（素のまま漏らさない）。
