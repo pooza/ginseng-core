@@ -70,6 +70,40 @@ module Ginseng
       assert_requested(:get, @url, times: @http.retry_limit)
     end
 
+    # 🔴 **`host_validator` を渡した経路でも同じ規則で再送すること (#656)。**
+    # ⚠⚠ この経路は `request_hop` が自前で `repeat` を呼ぶ**別の実装**で、上のテストは
+    # 1 件も通らない — 「再送しないラッパ」に差し替えても全部緑だった（実測）。
+    def test_retry_server_error_with_host_validator
+      stub_request(:get, @url).to_return(status: 503)
+
+      assert_raise(GatewayError) {@http.get('/api', {host_validator: ->(_host) {true}})}
+      assert_requested(:get, @url, times: @http.retry_limit)
+    end
+
+    # ⚠ 恒久的な失敗を再送しないのも同じ。
+    def test_no_retry_not_found_with_host_validator
+      stub_request(:get, @url).to_return(status: 404)
+
+      assert_raise(GatewayError) {@http.get('/api', {host_validator: ->(_host) {true}})}
+      assert_requested(:get, @url, times: 1)
+    end
+
+    # 🔴 **`host_validator` を渡した経路でも、400 以上は例外になること (#656)。**
+    # ⚠⚠ `bad_response!` の行を消しても全部緑だった（実測）— 上の 2 件は
+    # `assert_raise` を持つが、**ここでは「応答を添えること」まで見る**。
+    # ⚠ HEAD も同じ経路を通る（サイズのプリフライト）。
+    def test_error_status_is_an_error_with_host_validator
+      [:get, :head].each do |method|
+        stub_request(method, @url).to_return(status: 403)
+
+        error = assert_raise(GatewayError, method.to_s) do
+          @http.public_send(method, '/api', {host_validator: ->(_host) {true}})
+        end
+
+        assert_equal(403, error.response.code, method.to_s)
+      end
+    end
+
     # ⚠⚠ **429 は「いつ再開してよいか」を相手が明示している唯一のステータス**
     # (#525、pooza/makoto2#100)。固定値で叩き直すと、規制されている最中に
     # retry_limit 回連打して規制を長引かせる。
