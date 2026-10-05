@@ -446,6 +446,39 @@ module Ginseng
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'pid file left behind', expected:, pid_file:)
       end
+
+      # 生きてはいるが、利用側が「うちの常駐ではない」と答えた番号か (#673)。
+      #
+      # 🔴🔴 **`stop` も身元を見る。** ⚠⚠ `alive_state_of` を通っていたのは `start` /
+      # `restart` / `status` の入口だけで、**`stop` は読んだ番号へそのまま TERM を送っていた** —
+      # pid が再利用されていると、🔴 **無関係なプロセスを止める**（モロヘイヤのステージングで、
+      # 同じユーザーで動く Mastodon の puma を実際に止めた。pooza/mulukhiya-toot-proxy#4792）。
+      #
+      # ⚠ **既定の `alive_state_of` では決して真にならない**（生死しか見ないため）。
+      # 上書きしていない利用側のふるまいは変わらない。
+      # ⚠ 「居ない」（素の生死が :dead）は `ESRCH` の経路に任せる。
+      def foreign_pid?(found)
+        return false unless Process.alive_state(found) == :alive
+        return alive_state_of(found) == :dead
+      end
+
+      # ⚠ **シグナルは送らず、古い pid ファイルだけ片付ける (#673)。** 中身がまだ
+      # `found` のときだけ消す（#532）。⚠ 「既に居なかった」と同じく正常終了にする —
+      # 🔴 ここで exit 1 にすると、**`stop` を鎖で呼ぶ側（rc.d など）が止まる**。
+      def release_foreign_pid(found)
+        remove_pid(found)
+        warn "PID file found, but PID #{found} is not #{app_name}."
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'stop', reason: 'pid file points to another process', pid_file:)
+      end
+
+      # TERM を送れたか (#673)。⚠ **送らなかったときだけ false** — 送って失敗したときは
+      # 従来どおり例外（`ESRCH` / `EPERM`）で `run_stop` の rescue へ行く。
+      def sent_term?(found)
+        return false if foreign_pid?(found)
+        send_signal('TERM', found)
+        return true
+      end
     end
   end
 end

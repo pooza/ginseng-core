@@ -242,7 +242,8 @@ module Ginseng
         end
         abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
       end
-      send_signal('TERM', p)
+      # ⚠ **身元が違うなら送らない (#673)。** → `sent_term?`
+      return release_foreign_pid(p) unless sent_term?(p)
       # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
       remove_pid(p)
     rescue Errno::ESRCH
