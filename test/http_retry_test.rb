@@ -385,7 +385,7 @@ module Ginseng
     end
 
     # 🔴 **`host_validator` の経路にも効く (#672)。** ⚠⚠ プリフライトの HEAD は validator と
-    # 一緒に使われる（mulukhiya-toot-proxy#4523）ので、**こちらに届かないと依頼の形で効かない**。
+    # 一緒に使われる（pooza/mulukhiya-toot-proxy#4523）ので、**こちらに届かないと依頼の形で効かない**。
     # ⚠ リダイレクトの先の答えにも効く。
     def test_quiet_statuses_on_validating_hops
       stub_request(:head, @url).to_return(status: 302, headers: {'Location' => 'https://example.org/x'})
@@ -401,6 +401,39 @@ module Ginseng
       assert_requested(:head, 'https://example.org/x', times: 1)
     end
 
+    # 🔴 **終端の無い `Range` でも、本来の例外を置き換えない（リリース前レビュー）。**
+    # ⚠⚠ `Array(400..)` は `RangeError` を上げ、`rescue GatewayError` を素通りする。
+    def test_quiet_statuses_accepts_ranges
+      stub_request(:get, @url).to_return(status: 404)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.get('/api', quiet_statuses: (400..))}}
+
+      assert_empty(logged)
+    end
+
+    # ⚠ `mkcol` にも効く（応答は `Net::HTTPResponse` で、状態コードは文字列）。
+    def test_quiet_statuses_on_mkcol
+      stub_request(:mkcol, @url).to_return(status: 405)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.mkcol('/api', quiet_statuses: [405])}}
+
+      assert_empty(logged)
+    end
+
+    # ⚠ `upload` は options を組み直すので、validator の経路へ写していることを固定する。
+    def test_quiet_statuses_on_upload_with_validator
+      stub_request(:post, @url).to_return(status: 403)
+
+      logged = capture_log do
+        assert_raise(GatewayError) do
+          @http.upload('/api', StringIO.new('x'), quiet_statuses: [403],
+            host_validator: ->(_host) {true})
+        end
+      end
+
+      assert_empty(logged)
+    end
+
     # ⚠⚠ **HTTParty へは渡さない。** 知らないオプションは黙って捨てられるので、
     # 渡っていないことを直に見る。
     def test_quiet_statuses_is_not_passed_to_httparty
@@ -411,10 +444,13 @@ module Ginseng
         super(method, uri, options, max_bytes)
       end
 
+      stub_request(:post, @url).to_return(status: 200)
+
       @http.get('/api', quiet_statuses: [403])
       @http.get('/api', quiet_statuses: [403], host_validator: ->(_host) {true})
+      @http.post('/api', body: {}, quiet_statuses: [403])
 
-      assert_equal(2, seen.size)
+      assert_equal(3, seen.size)
       assert_false(seen.flatten.include?(:quiet_statuses))
     end
 
