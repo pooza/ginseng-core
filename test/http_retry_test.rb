@@ -329,6 +329,110 @@ module Ginseng
       end
     end
 
+    # ⚠ **想定内の状態コードで落ちた試行は、行を出さない (#672)。** 例外は投げる。
+    def test_quiet_statuses_silences_the_line_but_still_raises
+      stub_request(:head, @url).to_return(status: 403)
+
+      error = nil
+      logged = capture_log do
+        error = assert_raise(GatewayError) {@http.head('/api', quiet_statuses: [403, 405])}
+      end
+
+      assert_equal(403, error.source_status)
+      assert_empty(logged)
+      assert_requested(:head, @url, times: 1)
+    end
+
+    # ⚠⚠ **指定が無ければ、行の形は従来どおり**（1 試行 1 行・`count` を持つ）。
+    def test_quiet_statuses_is_optional
+      stub_request(:head, @url).to_return(status: 403)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.head('/api')}}
+
+      assert_equal([1], logged.map {|entry| entry[:count]})
+      assert_equal([:not_retryable], logged.map {|entry| entry[:gave_up]})
+    end
+
+    # ⚠ 挙げていない状態は出す。
+    def test_quiet_statuses_keeps_other_statuses
+      stub_request(:get, @url).to_return(status: 404)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.get('/api', quiet_statuses: [403])}}
+
+      assert_equal(1, logged.size)
+    end
+
+    # 🔴 **再送する状態は、指定されても黙らせない (#672)。** あの行は「なぜ待った・
+    # 諦めたか」を運び、利用側が落ちた試行として数えている（#662）。
+    def test_quiet_statuses_does_not_silence_retried_statuses
+      stub_request(:get, @url).to_return(status: 503)
+
+      logged = capture_log {assert_raise(GatewayError) {@http.get('/api', quiet_statuses: [503])}}
+
+      assert_equal(@http.retry_limit, logged.size)
+      assert_equal(:retry_limit, logged.last[:gave_up])
+    end
+
+    # ⚠ body を伴うメソッドにも効く。⚠⚠ **呼び出し側の hash は壊さない**（#528 / #537）。
+    def test_quiet_statuses_on_request_with_body
+      stub_request(:post, @url).to_return(status: 403)
+      options = {body: {}, quiet_statuses: [403]}
+
+      logged = capture_log {assert_raise(GatewayError) {@http.post('/api', options)}}
+
+      assert_empty(logged)
+      assert_equal({body: {}, quiet_statuses: [403]}, options)
+    end
+
+    # 🔴 **`host_validator` の経路にも効く (#672)。** ⚠⚠ プリフライトの HEAD は validator と
+    # 一緒に使われる（mulukhiya-toot-proxy#4523）ので、**こちらに届かないと依頼の形で効かない**。
+    # ⚠ リダイレクトの先の答えにも効く。
+    def test_quiet_statuses_on_validating_hops
+      stub_request(:head, @url).to_return(status: 302, headers: {'Location' => 'https://example.org/x'})
+      stub_request(:head, 'https://example.org/x').to_return(status: 405)
+
+      logged = capture_log do
+        assert_raise(GatewayError) do
+          @http.head('/api', quiet_statuses: [403, 405], host_validator: ->(_host) {true})
+        end
+      end
+
+      assert_empty(logged)
+      assert_requested(:head, 'https://example.org/x', times: 1)
+    end
+
+    # ⚠⚠ **HTTParty へは渡さない。** 知らないオプションは黙って捨てられるので、
+    # 渡っていないことを直に見る。
+    def test_quiet_statuses_is_not_passed_to_httparty
+      stub_request(:get, @url).to_return(status: 200)
+      seen = []
+      @http.define_singleton_method(:execute) do |method, uri, options, max_bytes = nil|
+        seen.push(options.keys)
+        super(method, uri, options, max_bytes)
+      end
+
+      @http.get('/api', quiet_statuses: [403])
+      @http.get('/api', quiet_statuses: [403], host_validator: ->(_host) {true})
+
+      assert_equal(2, seen.size)
+      assert_false(seen.flatten.include?(:quiet_statuses))
+    end
+
+    # 🔴 **応答を持たない失敗は黙らせない (#672)。** ⚠⚠ `TooLargeError` も
+    # `:not_retryable` で、応答を持たない例外の `source_status` は 502 へ倒れる —
+    # `response` を見ないと「502 は想定内」の指定でこの行まで消える。
+    def test_quiet_statuses_does_not_silence_errors_without_a_response
+      stub_request(:get, @url).to_return(status: 200, body: 'x' * 64)
+
+      error = nil
+      logged = capture_log do
+        error = assert_raise(TooLargeError) {@http.get('/api', max_bytes: 8, quiet_statuses: [502])}
+      end
+
+      assert_equal(502, error.source_status)
+      assert_equal(1, logged.size)
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。

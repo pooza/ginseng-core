@@ -14,7 +14,7 @@ module Ginseng
     module RetryMethods
       private
 
-      def repeat(method, uri, start)
+      def repeat(method, uri, start, quiet: nil)
         cnt ||= 0
         yield
       rescue Net::ReadTimeout => e
@@ -26,10 +26,32 @@ module Ginseng
         gave_up = give_up_reason(e, cnt, seconds)
         # ⚠ **再送するかを決めてから出す (#662)。** 行は従来どおり落ちた試行 1 回につき
         # 1 本（利用側が `count` を持つ行を「落ちた試行」として数えている）。
-        log_retry_error(e, method, uri, start, count: cnt, retry_after: seconds, gave_up:)
+        unless quiet_failure?(e, gave_up, quiet)
+          log_retry_error(e, method, uri, start, count: cnt, retry_after: seconds, gave_up:)
+        end
         raise gateway_error(e) if gave_up
         sleep(seconds || retry_seconds)
         retry
+      end
+
+      # 呼び出し側が「想定内」と言った状態コードで落ちた試行か (#672)。
+      #
+      # `options[:quiet_statuses]` に状態コードの配列を渡すと、その状態で落ちた試行は
+      # エラー行を出さない。⚠ **例外はこれまでどおり投げる** — 止めるのは行だけ。
+      # （HEAD に応じない相手へのプリフライトのように、**呼び出し側が握りつぶすと
+      # 決めている失敗**の行は、上流で出すと呼び出し側からは止められない。）
+      #
+      # ⚠⚠ **再送する状態（429 / 5xx など）は、指定されても黙らせない。**
+      # 🔴 あの行は「なぜ待った・諦めたか」を運ぶ（#662）うえ、利用側が `count` を持つ行を
+      # 「落ちた試行」として数えている。**黙らせてよいのは、1 回で終わる恒久的な答えだけ** —
+      # `retryable?` を上書きして再送に倒した状態（tomato-shrieker の 404）も同じ扱いになる。
+      # ⚠ **上流が実際に返した応答があるときだけ。** `PinningError` / `TooLargeError` も
+      # `:not_retryable` で、応答を持たない例外の `source_status` は 502 へ倒れるので、
+      # 🔴 **`response` を見ないと「502 は想定内」の指定で設定ミスの行まで消える**。
+      def quiet_failure?(error, gave_up, quiet)
+        return false unless quiet && gave_up == :not_retryable
+        return false unless error.is_a?(GatewayError) && error.response
+        return Array(quiet).include?(error.source_status)
       end
 
       # 諦める理由。再送するなら nil。

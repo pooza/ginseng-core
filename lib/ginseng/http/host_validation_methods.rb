@@ -71,8 +71,12 @@ module Ginseng
       # ⚠ pinning は**ホップごとに付け替える**。リダイレクト先は別ホストなので、
       # 前のホップのアドレスを引き継ぐと繋ぎ先を間違える。
       def request_hop(method, uri, options, validator, max_bytes)
-        hop_options = PinnedAddressAdapter.pin(options, validate_host!(uri, validator))
-        return repeat(method, uri, start = Time.now) do
+        # ⚠ **`quiet_statuses` は options に載せたままホップを渡り歩く (#672)。**
+        # 取り出すのはここだけ（HTTParty へは渡さない）。リダイレクト先の答えにも効く。
+        quiet = options[:quiet_statuses]
+        hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses),
+          validate_host!(uri, validator))
+        return repeat(method, uri, start = Time.now, quiet:) do
           response = execute(method, uri, hop_options, max_bytes)
           # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
           # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
