@@ -439,12 +439,30 @@ module Ginseng
       daemon = create(pid: Process.pid)
       daemon.define_singleton_method(:alive_state_of) {|_found| :dead}
 
-      capture_stderr {daemon.send(:run_stop)}
+      stderr = capture_stderr {daemon.send(:run_stop)}
 
       assert_empty(daemon.signals)
       assert_false(File.exist?(daemon.pid_file))
-      assert_include(daemon.logs.map {|_severity, message| message[:reason]},
-        'pid file points to another process')
+      assert_match(/PID #{Process.pid} is not /, stderr)
+      entry = daemon.logs.map(&:last).find {|message| message[:reason] == 'pid file points to another process'}
+
+      assert_equal(Process.pid, entry[:pid])
+    end
+
+    # 🔴 **上書き側が例外を上げても、止められなくならない（リリース前レビュー）。**
+    # ⚠⚠ `Errno::ESRCH` を漏らすと `run_stop` の rescue が「既に居ない」と取り違え、
+    # **TERM を送らないまま pid ファイルを消す**。
+    def test_run_stop_still_signals_when_the_override_raises
+      [Errno::ESRCH, RuntimeError].each do |error|
+        daemon = create(pid: Process.pid)
+        daemon.define_singleton_method(:alive_state_of) {|_found| raise error}
+
+        daemon.send(:run_stop)
+
+        assert_equal([['TERM', Process.pid]], daemon.signals)
+        assert_include(daemon.logs.map {|_severity, message| message[:reason]},
+          'identity check failed')
+      end
     end
 
     # ⚠ 利用側が「うちの常駐」と答えたなら、従来どおり止める。

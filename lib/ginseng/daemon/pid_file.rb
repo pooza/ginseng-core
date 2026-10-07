@@ -454,7 +454,8 @@ module Ginseng
       # pid が再利用されていると、🔴 **無関係なプロセスを止める**（モロヘイヤのステージングで、
       # 同じユーザーで動く Mastodon の puma を実際に止めた。pooza/mulukhiya-toot-proxy#4792）。
       #
-      # ⚠ **既定の `alive_state_of` では決して真にならない**（生死しか見ないため）。
+      # ⚠ **既定の `alive_state_of` では真にならない**（生死しか見ないため。2 回の問いの
+      # あいだに死んだ場合だけ真になるが、帰結は `ESRCH` の経路と同じ）。
       # 上書きしていない利用側のふるまいは変わらない。
       # ⚠ 「居ない」（素の生死が :dead）は `ESRCH` の経路に任せる。
       #
@@ -463,19 +464,30 @@ module Ginseng
       # **「A の生死」に「B の身元」を掛けた答え**が戻ってくる（#638 が消した形）。
       # ⚠ `alive_state` だけを上書きしている利用側は、**従来どおり送られる**（悪化はしない）。
       # 2026-10-08 に利用側 11 本を実測して該当ゼロ（上書きは 2 本とも `alive_state_of`）。
+      #
+      # 🔴 **上書き側の例外は「分からない」と読み、従来どおり送る（リリース前レビュー）。**
+      # ⚠⚠ 漏らすと `stop` が**無音で**止められなくなる（`abort_stop!` を通らない）うえ、
+      # 🔴 **`Errno::ESRCH` だと `run_stop` の rescue が「既に居ない」と取り違え、
+      # 生きている常駐の pid ファイルを消す**。
       def foreign_pid?(found)
         return false unless Process.alive_state(found) == :alive
         return alive_state_of(found) == :dead
+      rescue StandardError => e
+        @logger.error(daemon: app_name, version: package_class.version, message: 'stop',
+          reason: 'identity check failed', error: e, pid_file:)
+        return false
       end
 
       # ⚠ **シグナルは送らず、古い pid ファイルだけ片付ける (#673)。** 中身がまだ
       # `found` のときだけ消す（#532）。⚠ 「既に居なかった」と同じく正常終了にする —
       # 🔴 ここで exit 1 にすると、**`stop` を鎖で呼ぶ側（rc.d など）が止まる**。
+      # ⚠ **行に番号を残す** — ここは pid ファイルを消すので、syslog だけを見る運用では
+      # 「どの番号を止めかけたか」があとから分からなくなる。
       def release_foreign_pid(found)
         remove_pid(found)
         warn "PID file found, but PID #{found} is not #{app_name}."
         @logger.warn(daemon: app_name, version: package_class.version,
-          message: 'stop', reason: 'pid file points to another process', pid_file:)
+          message: 'stop', reason: 'pid file points to another process', pid: found, pid_file:)
       end
 
       # `stop` で番号が取れなかったときの出口 (#635 / #637)。⚠ **必ず exit する。**

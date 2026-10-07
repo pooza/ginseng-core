@@ -161,6 +161,9 @@ module Ginseng
     # サイズのプリフライト等で GET の前に HEAD を撃つ呼び出し側があり、GET だけを
     # 検証しても HEAD が素通りするなら SSRF 対策として意味を成さないので、head も
     # get と同じく options[:host_validator] を受ける (mulukhiya-toot-proxy#4523)。
+    #
+    # ⚠ HEAD に応じない相手の 403 / 405 のように、**想定内の失敗のエラー行を止めたい**
+    # ときは options[:quiet_statuses] を渡す (#672)。→ `RetryMethods#quiet_failure?`
     def head(uri, options = {})
       return request(:head, uri, options)
     end

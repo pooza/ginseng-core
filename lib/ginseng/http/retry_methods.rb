@@ -48,9 +48,21 @@ module Ginseng
       # ⚠ **上流が実際に返した応答があるときだけ。** `PinningError` / `TooLargeError` も
       # `:not_retryable` で、応答を持たない例外の `source_status` は 502 へ倒れるので、
       # 🔴 **`response` を見ないと「502 は想定内」の指定で設定ミスの行まで消える**。
+      #
+      # ⚠ **消えるのは error の行だけ。** 応答があった試行の info 行（URL と状態コード）は
+      # 残る。⚠⚠ **401 / 403 を挙げると、資格情報の失効も error からは消える** —
+      # error だけを監視へ流している運用では、挙げる側がそれを承知していること。
+      # ⚠ **リダイレクトの先（別オリジン）の答えにも効く。** `host_validator` を渡さない
+      # 経路は HTTParty が追い切った最後の答えを見るので、🔴 **渡したときだけ初段に限ると、
+      # validator の有無でログの形が変わる**。
+      #
+      # ⚠⚠ **`Range` は配列にしない（リリース前レビュー）。** 🔴 `Array(400..)` は
+      # `RangeError` を上げ、ここは `repeat` の `rescue` の中なので、**本来の
+      # `GatewayError` を置き換えてしまう**（しかも失敗した瞬間に初めて出る）。
       def quiet_failure?(error, gave_up, quiet)
         return false unless quiet && gave_up == :not_retryable
         return false unless error.is_a?(GatewayError) && error.response
+        return quiet.cover?(error.source_status) if quiet.is_a?(Range)
         return Array(quiet).include?(error.source_status)
       end
 
