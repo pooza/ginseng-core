@@ -12,6 +12,9 @@ module Ginseng
     # ⚠ 設定の書き出し（`save_config` / `config_cache_path`）も別ファイル (#651)。
     include ConfigCache
 
+    # ⚠ 番号が「うちの常駐か」をコマンド行で確かめる一式 (#676)。**宣言しなければ効かない。**
+    include ProcessIdentity
+
     # ⚠ `restart` が子の生存を見る猶予（秒） (#630)。🔴 **長くすると `restart` が
     # 戻らなくなる**。⚠⚠ pid ファイルの取得は `exec` の前なのですぐに終わる —
     # ここで見ているのは主に `exec` の成否。
@@ -115,8 +118,14 @@ module Ginseng
     # ここの直呼びへ畳むと、**`alive_state` を上書きしている利用側の身元チェックが黙って
     # 外れる**（pid の再利用を `status` と `start` で見逃す）。畳んでよいのは「`alive_state`
     # の上書きをやめてよい」と告知して、利用側が移ってから。
+    #
+    # ⚠ **`process_pattern` を宣言すれば、上書きせずに身元を足せる (#676)。** 生きている
+    # 番号のコマンド行が一致しなければ :dead と答える（→ `ProcessIdentity`）。
+    # ⚠ 宣言が無ければ、従来どおり生死だけを見る。
     def alive_state_of(found)
-      return Process.alive_state(found)
+      state = Process.alive_state(found)
+      return state unless state == :alive && (pattern = process_pattern)
+      return identity_mismatch?(found, pattern) ? :dead : :alive
     end
 
     # ⚠ **既存の呼び出し側のために真偽 2 値のまま残す**（:unknown は false 側）。
