@@ -446,6 +446,56 @@ module Ginseng
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'pid file left behind', expected:, pid_file:)
       end
+
+      # 生きてはいるが、利用側が「うちの常駐ではない」と答えた番号か (#673)。
+      #
+      # 🔴🔴 **`stop` も身元を見る。** ⚠⚠ `alive_state_of` を通っていたのは `start` /
+      # `restart` / `status` の入口だけで、**`stop` は読んだ番号へそのまま TERM を送っていた** —
+      # pid が再利用されていると、🔴 **無関係なプロセスを止める**（モロヘイヤのステージングで、
+      # 同じユーザーで動く Mastodon の puma を実際に止めた。pooza/mulukhiya-toot-proxy#4792）。
+      #
+      # ⚠ **既定の `alive_state_of` では決して真にならない**（生死しか見ないため）。
+      # 上書きしていない利用側のふるまいは変わらない。
+      # ⚠ 「居ない」（素の生死が :dead）は `ESRCH` の経路に任せる。
+      #
+      # ⚠⚠ **訊くのは `alive_state_of` だけ。`alive_state` の上書きは見ない (#674 Codex P1)。**
+      # 🔴 `alive_state` は引数を取れず pid ファイルを自分で読み直すので、ここで掛けると
+      # **「A の生死」に「B の身元」を掛けた答え**が戻ってくる（#638 が消した形）。
+      # ⚠ `alive_state` だけを上書きしている利用側は、**従来どおり送られる**（悪化はしない）。
+      # 2026-10-08 に利用側 11 本を実測して該当ゼロ（上書きは 2 本とも `alive_state_of`）。
+      def foreign_pid?(found)
+        return false unless Process.alive_state(found) == :alive
+        return alive_state_of(found) == :dead
+      end
+
+      # ⚠ **シグナルは送らず、古い pid ファイルだけ片付ける (#673)。** 中身がまだ
+      # `found` のときだけ消す（#532）。⚠ 「既に居なかった」と同じく正常終了にする —
+      # 🔴 ここで exit 1 にすると、**`stop` を鎖で呼ぶ側（rc.d など）が止まる**。
+      def release_foreign_pid(found)
+        remove_pid(found)
+        warn "PID file found, but PID #{found} is not #{app_name}."
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'stop', reason: 'pid file points to another process', pid_file:)
+      end
+
+      # `stop` で番号が取れなかったときの出口 (#635 / #637)。⚠ **必ず exit する。**
+      def abort_stop_without_pid!
+        # ⚠⚠ **「無い」と「読めない」を言い分ける (#635)。** 🔴 読めないだけのときに
+        # 「PID file not found」と言うのは**嘘**で、しかもそこで無音のまま終わると
+        # `restart` が「起動を試みる前に」消える。
+        if pid_file_unreadable?
+          abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
+        end
+        # 🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+        # ⚠⚠ #635 は「無い」と「読めない」を言い分けたが、**第 3 の状態**
+        # （FIFO / ディレクトリ / dangling symlink / 空 / ゴミ / 64B 超え）が
+        # 「無い」側へ落ちていた。🔴 **原因にたどり着けない。**
+        if pid_file_present?
+          abort_stop!("PID file '#{pid_file}' exists but is not a valid PID file.",
+            'pid file invalid')
+        end
+        abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
+      end
     end
   end
 end

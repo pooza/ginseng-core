@@ -433,6 +433,41 @@ module Ginseng
       assert_equal(Process.pid, daemon.pid)
     end
 
+    # 🔴🔴 **`stop` も身元を見る (#673)。** ⚠⚠ 利用側が「うちの常駐ではない」と答えた
+    # 番号へは TERM を送らず、古い pid ファイルだけ片付ける。
+    def test_run_stop_does_not_signal_a_foreign_process
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:alive_state_of) {|_found| :dead}
+
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_empty(daemon.signals)
+      assert_false(File.exist?(daemon.pid_file))
+      assert_include(daemon.logs.map {|_severity, message| message[:reason]},
+        'pid file points to another process')
+    end
+
+    # ⚠ 利用側が「うちの常駐」と答えたなら、従来どおり止める。
+    def test_run_stop_signals_a_process_the_override_accepts
+      daemon = create(pid: Process.pid)
+      daemon.define_singleton_method(:alive_state_of) {|_found| :alive}
+
+      daemon.send(:run_stop)
+
+      assert_equal([['TERM', Process.pid]], daemon.signals)
+      assert_false(File.exist?(daemon.pid_file))
+    end
+
+    # ⚠ **:unknown（触れない）は止めにいく側のまま** — `EPERM` の経路で pid ファイルを残す (#509)。
+    def test_run_stop_still_tries_when_the_override_is_unsure
+      daemon = create(pid: Process.pid, error: Errno::EPERM)
+      daemon.define_singleton_method(:alive_state_of) {|_found| :unknown}
+
+      assert_raise(SystemExit) {capture_stderr {daemon.send(:run_stop)}}
+      assert_equal([['TERM', Process.pid]], daemon.signals)
+      assert(File.exist?(daemon.pid_file))
+    end
+
     def test_run_stop_exits_without_pid_file
       assert_raise(SystemExit) {create.send(:run_stop)}
     end
