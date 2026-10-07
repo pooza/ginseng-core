@@ -225,25 +225,11 @@ module Ginseng
     # ⚠ **停止コマンド自身が孤児を作る**という形だった。
     def run_stop
       reset_pid_file_error
-      unless (p = pid)
-        # ⚠⚠ **「無い」と「読めない」を言い分ける (#635)。** 🔴 読めないだけのときに
-        # 「PID file not found」と言うのは**嘘**で、しかもそこで無音のまま終わると
-        # `restart` が「起動を試みる前に」消える。
-        if pid_file_unreadable?
-          abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
-        end
-        # 🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
-        # ⚠⚠ #635 は「無い」と「読めない」を言い分けたが、**第 3 の状態**
-        # （FIFO / ディレクトリ / dangling symlink / 空 / ゴミ / 64B 超え）が
-        # 「無い」側へ落ちていた。🔴 **原因にたどり着けない。**
-        if pid_file_present?
-          abort_stop!("PID file '#{pid_file}' exists but is not a valid PID file.",
-            'pid file invalid')
-        end
-        abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
-      end
-      # ⚠ **身元が違うなら送らない (#673)。** → `sent_term?`
-      return release_foreign_pid(p) unless sent_term?(p)
+      # ⚠ 番号が取れない理由は 3 通りある → `abort_stop_without_pid!`
+      abort_stop_without_pid! unless (p = pid)
+      # ⚠ **身元が違うなら送らない (#673)。** → `foreign_pid?`
+      return release_foreign_pid(p) if foreign_pid?(p)
+      send_signal('TERM', p)
       # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
       remove_pid(p)
     rescue Errno::ESRCH

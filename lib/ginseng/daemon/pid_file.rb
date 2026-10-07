@@ -457,6 +457,12 @@ module Ginseng
       # ⚠ **既定の `alive_state_of` では決して真にならない**（生死しか見ないため）。
       # 上書きしていない利用側のふるまいは変わらない。
       # ⚠ 「居ない」（素の生死が :dead）は `ESRCH` の経路に任せる。
+      #
+      # ⚠⚠ **訊くのは `alive_state_of` だけ。`alive_state` の上書きは見ない (#674 Codex P1)。**
+      # 🔴 `alive_state` は引数を取れず pid ファイルを自分で読み直すので、ここで掛けると
+      # **「A の生死」に「B の身元」を掛けた答え**が戻ってくる（#638 が消した形）。
+      # ⚠ `alive_state` だけを上書きしている利用側は、**従来どおり送られる**（悪化はしない）。
+      # 2026-10-08 に利用側 11 本を実測して該当ゼロ（上書きは 2 本とも `alive_state_of`）。
       def foreign_pid?(found)
         return false unless Process.alive_state(found) == :alive
         return alive_state_of(found) == :dead
@@ -472,12 +478,23 @@ module Ginseng
           message: 'stop', reason: 'pid file points to another process', pid_file:)
       end
 
-      # TERM を送れたか (#673)。⚠ **送らなかったときだけ false** — 送って失敗したときは
-      # 従来どおり例外（`ESRCH` / `EPERM`）で `run_stop` の rescue へ行く。
-      def sent_term?(found)
-        return false if foreign_pid?(found)
-        send_signal('TERM', found)
-        return true
+      # `stop` で番号が取れなかったときの出口 (#635 / #637)。⚠ **必ず exit する。**
+      def abort_stop_without_pid!
+        # ⚠⚠ **「無い」と「読めない」を言い分ける (#635)。** 🔴 読めないだけのときに
+        # 「PID file not found」と言うのは**嘘**で、しかもそこで無音のまま終わると
+        # `restart` が「起動を試みる前に」消える。
+        if pid_file_unreadable?
+          abort_stop!("PID file '#{pid_file}' exists but could not be read.", 'pid file unreadable')
+        end
+        # 🔴 **「在るが pid ファイルとして読めるものではない」を「無い」と言わない (#637)。**
+        # ⚠⚠ #635 は「無い」と「読めない」を言い分けたが、**第 3 の状態**
+        # （FIFO / ディレクトリ / dangling symlink / 空 / ゴミ / 64B 超え）が
+        # 「無い」側へ落ちていた。🔴 **原因にたどり着けない。**
+        if pid_file_present?
+          abort_stop!("PID file '#{pid_file}' exists but is not a valid PID file.",
+            'pid file invalid')
+        end
+        abort_stop!('PID file not found. Is the daemon started?', 'pid file not found')
       end
     end
   end
