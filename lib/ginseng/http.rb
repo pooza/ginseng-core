@@ -189,7 +189,7 @@ module Ginseng
     end
 
     def mkcol(uri, options = {})
-      repeat(:mkcol, uri = create_uri(uri), start = Time.now) do
+      repeat(:mkcol, uri = create_uri(uri), start = Time.now, quiet: options[:quiet_statuses]) do
         net_uri = ::URI.parse(uri.normalize.to_s)
         http = Net::HTTP.new(net_uri.host, net_uri.port)
         http.use_ssl = net_uri.scheme == 'https'
@@ -219,6 +219,8 @@ module Ginseng
       # いない（`upload_options` が別の hash を組む）。⚠ 揃えようとして `delete` に
       # すると**呼び出し側の hash から validator が消える** — #528 で踏んだ形。
       if validator = options[:host_validator]
+        # ⚠ `upload_options` は hash を組み直すので、ここで写す (#672)。
+        hop_options = hop_options.merge(options.slice(:quiet_statuses))
         return request_validating_hops(method, uri, hop_options, validator)
       end
       start = Time.now
@@ -267,7 +269,9 @@ module Ginseng
       if validator = options.delete(:host_validator)
         return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
       end
-      repeat(method, uri = create_uri(uri), start = Time.now) do
+      # ⚠ **HTTParty へは渡さない (#672)。** → `quiet_failure?`
+      quiet = options.delete(:quiet_statuses)
+      repeat(method, uri = create_uri(uri), start = Time.now, quiet:) do
         response = execute(method, uri, options, max_bytes)
         log(method:, url: uri, status: response.code, start:)
         bad_response!(response) unless response.code < 400
@@ -295,7 +299,9 @@ module Ginseng
       if validator = options.delete(:host_validator)
         return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
       end
-      repeat(method, uri = create_uri(uri), start = Time.now) do
+      # ⚠ **HTTParty へは渡さない (#672)。** → `quiet_failure?`
+      quiet = options.delete(:quiet_statuses)
+      repeat(method, uri = create_uri(uri), start = Time.now, quiet:) do
         response = execute(method, uri, options, max_bytes)
         log(method:, url: uri, status: response.code, start:)
         bad_response!(response) unless response.code < 400
