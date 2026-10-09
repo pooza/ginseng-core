@@ -101,10 +101,11 @@ module Ginseng
     # **成功しているのに `Timeout::Error`** になっていた（pooza/mulukhiya-toot-proxy#4794）。
     #
     # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま。
+    # ⚠ **0 以下は「締切なし」**（`Timeout.timeout(0)` と同じ意味を保つ）。
     def exec(timeout: nil)
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          if timeout && !environment_class.win?
+          if deadline?(timeout) && !environment_class.win?
             capture_until(timeout)
           else
             block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, chdir: dir)}
@@ -200,6 +201,10 @@ module Ginseng
       return @env.transform_values {|value| value.is_a?(String) ? masked(value) : value}
     end
 
+    def deadline?(timeout)
+      return timeout.is_a?(Numeric) && timeout.positive?
+    end
+
     def spawn_args
       return @user ? [sudo_command] : [child_env, to_s]
     end
@@ -208,31 +213,55 @@ module Ginseng
     # シグナルを送ると**シェルだけが死んで本体が残る**。
     # ⚠ 出力は別スレッドで読む — 待っているあいだにパイプのバッファが埋まると子が止まる。
     def capture_until(timeout)
+      deadline = monotonic + timeout
       Open3.popen3(*spawn_args, chdir: dir, pgroup: true) do |stdin, stdout, stderr, waiter|
         stdin.close
         readers = [stdout, stderr].map {|io| Thread.new {io.read}}
-        unless waiter.join(timeout)
-          terminate(waiter)
-          readers.each(&:kill)
-          raise Timeout::Error, "execution expired (#{timeout}s): #{masked(to_s)}"
-        end
+        finished = await(waiter, readers, deadline)
+        expire!(waiter.pid, timeout) unless finished
         @stdout, @stderr = readers.map(&:value)
         @status = waiter.value
+      ensure
+        # 🔴 **外から `Thread#kill` で中断されても、子を残さない。**締切の猶予（TERM → KILL）の
+        # 途中で外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
+        abandon(waiter.pid, readers) unless finished
       end
     end
 
-    # 締切を過ぎた子をグループごと止め、回収まで待つ（ゾンビを残さない）。
+    # 子の終了と、出力の読み切りを締切まで待つ。間に合えば true。
     #
-    # 🔴 **先頭のプロセスが終わったことを「止まった」と読まないこと。** シェルを経由すると
-    # 先頭はシェルで、TERM で先に死ぬ。⚠⚠ TERM を無視する本体がグループに残るので、
+    # ⚠⚠ **出力を読み切るところまで締切に含める。**先頭が終わっても、パイプを握った子孫
+    # （`sh -c 'sleep 30 &'`）が残っていると `read` は戻らない。
+    def await(waiter, readers, deadline)
+      return false unless waiter.join(remaining(deadline))
+      return readers.all? {|reader| reader.join(remaining(deadline))}
+    end
+
+    def remaining(deadline)
+      return [deadline - monotonic, 0].max
+    end
+
+    def expire!(pgid, timeout)
+      terminate(pgid)
+      raise Timeout::Error, "execution expired (#{timeout}s): #{masked(to_s)}"
+    end
+
+    def abandon(pgid, readers)
+      signal_group('KILL', pgid) if group_alive?(pgid)
+      readers&.each(&:kill)
+    end
+
+    # 締切を過ぎた子をプロセスグループごと止める。
+    #
+    # ⚠⚠ **先頭のプロセスが終わったことを「止まった」と読まない。**`to_s` がシェルを経由すると
+    # 先頭はシェルで、TERM で先に死ぬ。TERM を無視する本体がグループに残るので、
     # **グループが空になったか**で見て、残っていれば KILL する。
-    def terminate(waiter)
-      pgid = waiter.pid
+    # ⚠ 先頭の回収は `popen3` のブロックの出口が行う（ゾンビを残さない）。
+    def terminate(pgid)
       signal_group('TERM', pgid)
       deadline = monotonic + KILL_GRACE_SECONDS
       sleep(0.05) while group_alive?(pgid) && monotonic < deadline
       signal_group('KILL', pgid) if group_alive?(pgid)
-      waiter.join
     end
 
     def monotonic

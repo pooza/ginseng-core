@@ -251,6 +251,41 @@ module Ginseng
       assert_equal(300_000, @command.stdout.bytesize)
     end
 
+    # 🔴 先頭が締切の前に終わっても、パイプを握った子孫が残っていれば締切で止める
+    # （pooza/mulukhiya-toot-proxy#4811 の Codex P1）。⚠ 出力の読み切りが締切の外にあると、ここで永久に戻らない。
+    def test_deadline_covers_descendant_holding_the_pipe
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "#{nap} &"]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 5)
+      assert_empty(running(nap))
+    end
+
+    # 🔴 外側から `Thread#kill` で中断されても子を残さない（pooza/mulukhiya-toot-proxy#4811 の Codex P1）。
+    # ⚠ ハンドラの締切は、実行中のスレッドを kill して切る。
+    def test_child_is_killed_when_the_thread_is_killed
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+      thread = Thread.new {@command.exec(timeout: 30)}
+      sleep(0.5)
+      thread.kill
+      thread.join(5)
+
+      assert_empty(running(nap))
+    end
+
+    # ⚠ 0 は「締切なし」（`Timeout.timeout(0)` と同じ意味・pooza/mulukhiya-toot-proxy#4811 の Codex P2）。
+    def test_zero_timeout_means_no_deadline
+      @command.args = ['sh', '-c', 'sleep 0.3; echo ok']
+
+      assert_equal(0, @command.exec(timeout: 0))
+      assert_equal("ok\n", @command.stdout)
+    end
+
     def unique_sleep
       return "sleep 30.#{SecureRandom.random_number(10**8).to_s.rjust(8, '0')}"
     end
