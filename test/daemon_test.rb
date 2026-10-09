@@ -486,6 +486,103 @@ module Ginseng
       assert(File.exist?(daemon.pid_file))
     end
 
+    # ⚠⚠ **宣言が無ければ、身元は見ない (#676)。** 🔴 既定のふるまいを変えない —
+    # `ps` を呼ばないことまで固定する。
+    def test_alive_state_of_ignores_identity_without_a_pattern
+      daemon = create
+      asked = []
+      daemon.define_singleton_method(:process_command_line) {|found| asked.push(found) && ''}
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+      assert_empty(asked)
+    end
+
+    # 🔴 **生きていても、コマンド行が一致しなければ :dead (#676)。** pid の再利用。
+    def test_alive_state_of_tells_a_reused_pid
+      daemon = identified(/exp_daemon\.rb start/, 'sidekiq 8.0 other [0 of 5 busy]')
+
+      assert_equal(:dead, daemon.alive_state_of(Process.pid))
+    end
+
+    def test_alive_state_of_accepts_a_matching_process
+      daemon = identified(/exp_daemon\.rb start/, 'ruby bin/exp_daemon.rb start')
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+    end
+
+    # ⚠⚠ **分からないときは、うちの常駐として扱う (#676)。** 🔴 :dead と誤ると
+    # `start` が 2 本目を立てる。
+    def test_alive_state_of_stays_alive_when_the_command_line_is_unavailable
+      daemon = identified(/exp_daemon/, '')
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+
+      daemon = identified(/exp_daemon/, nil)
+      daemon.define_singleton_method(:process_command_line) {|_found| raise Errno::ENOENT, 'ps'}
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+      assert_include(daemon.logs.map {|_severity, message| message[:message]},
+        'process identity unavailable')
+    end
+
+    # ⚠ 居ない番号には `ps` を撃たない（素の生死が先）。
+    def test_alive_state_of_does_not_ask_ps_about_a_dead_pid
+      daemon = identified(/exp_daemon/, nil)
+      asked = []
+      daemon.define_singleton_method(:process_command_line) {|found| asked.push(found) && ''}
+      child = fork {exit!(0)}
+      Process.wait(child)
+
+      assert_equal(:dead, daemon.alive_state_of(child))
+      assert_empty(asked)
+    end
+
+    # ⚠ **本物の `ps` で、自分のコマンド行が取れる**（Linux / FreeBSD / macOS で同じ書式）。
+    def test_process_command_line_reads_the_real_process
+      line = create.send(:process_command_line, Process.pid)
+
+      assert_match(/ruby|rake/, line)
+      assert_empty(create.send(:process_command_line, (2**22) + 12_345))
+    end
+
+    # 🔴 **宣言だけで `start` と `stop` の両方に効く (#676 / #673)。**
+    def test_process_pattern_reaches_start_and_stop
+      daemon = identified(/exp_daemon\.rb start/, 'puma 7.0 (tcp://0.0.0.0:3000) [mastodon]')
+      File.write(daemon.pid_file, Process.pid.to_s)
+
+      assert_nothing_raised {capture_stderr {daemon.send(:abort_if_running!)}}
+      capture_stderr {daemon.send(:run_stop)}
+
+      assert_empty(daemon.signals)
+      assert_false(File.exist?(daemon.pid_file))
+    end
+
+    # ⚠⚠ **スクリプト名だけの部分一致にしない (#676)。** `stop` や編集中のエディタを
+    # 「うちの常駐」と答えると、`stop` がそこへ TERM を送る。
+    def test_launcher_pattern
+      pattern = create.launcher_pattern('exp_daemon.rb')
+
+      assert_match(pattern, 'ruby bin/exp_daemon.rb start')
+      assert_match(pattern, '/usr/local/bin/ruby /srv/app/bin/exp_daemon.rb restart')
+      assert_match(pattern, 'exp_daemon.rb start --foo')
+      assert_no_match(pattern, 'ruby bin/exp_daemon.rb stop')
+      assert_no_match(pattern, 'vim bin/exp_daemon.rb')
+      assert_no_match(pattern, 'ruby bin/other_exp_daemon.rb start')
+      assert_no_match(pattern, 'ruby bin/exp_daemon.rb starting')
+      assert_no_match(pattern, 'ruby bin/exp_daemonXrb start')
+    end
+
+    # ⚠ **引数は末尾まで一致させる**（`<path>.bak` や別のチェックアウトを拾わない）。
+    def test_exec_pattern
+      pattern = create.exec_pattern('puma', '--config', '/srv/app/config/puma.rb')
+
+      assert_match(pattern, 'ruby /srv/app/vendor/bin/puma --config /srv/app/config/puma.rb')
+      assert_match(pattern, 'puma --config /srv/app/config/puma.rb --quiet')
+      assert_no_match(pattern, 'puma --config /srv/app/config/puma.rb.bak')
+      assert_no_match(pattern, 'puma --config /srv/app-old/config/puma.rb')
+      assert_no_match(pattern, 'notpuma --config /srv/app/config/puma.rb')
+    end
+
     def test_run_stop_exits_without_pid_file
       assert_raise(SystemExit) {create.send(:run_stop)}
     end
@@ -1656,6 +1753,14 @@ module Ginseng
 
     # ⚠ `warn` の行も測る。🔴 ログの `reason` だけ見ていると、**運用者が実際に読む
     # 文言**（`(PID )` のような壊れた形）を素通りさせる。
+    # `process_pattern` を宣言し、`ps` の答えを差し替えた常駐 (#676)。
+    def identified(pattern, line)
+      daemon = create
+      daemon.define_singleton_method(:process_pattern) {pattern}
+      daemon.define_singleton_method(:process_command_line) {|_found| line} unless line.nil?
+      return daemon
+    end
+
     def capture_stderr
       original = $stderr
       $stderr = StringIO.new
