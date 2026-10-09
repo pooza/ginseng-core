@@ -502,6 +502,50 @@ module Ginseng
       daemon = identified(/exp_daemon\.rb start/, 'sidekiq 8.0 other [0 of 5 busy]')
 
       assert_equal(:dead, daemon.alive_state_of(Process.pid))
+      # ⚠⚠ **他人と答えたことを残す。** `start` はこのあと黙って pid ファイルを奪う。
+      # 🔴 コマンド行は載せない（他人の引数は資格情報を含みうる）。
+      assert_equal([[:warn, {
+        daemon: daemon.app_name, version: daemon.package_class.version,
+        message: 'process identity mismatch', pid: Process.pid
+      }]], daemon.logs)
+    end
+
+    # 🔴🔴 **`Regexp` でない宣言は「分からない」へ倒す (#676)。** ⚠⚠ `String#match?` は
+    # 引数の側を正規表現にするので、流すと本物の常駐が他人になる（＝ 2 本目が立つ）。
+    def test_alive_state_of_stays_alive_when_the_pattern_is_not_a_regexp
+      ['exp_daemon.rb start', '', :exp_daemon, true, [/exp_daemon/]].each do |pattern|
+        daemon = identified(pattern, 'ruby bin/exp_daemon.rb start')
+
+        assert_equal(:alive, daemon.alive_state_of(Process.pid), pattern.inspect)
+        assert_equal([:error, 'process identity unavailable'],
+          [daemon.logs.last.first, daemon.logs.last.last[:message]], pattern.inspect)
+      end
+    end
+
+    # ⚠⚠ **宣言の中の例外も「分からない」へ倒す。** 🔴 外へ抜けると、`status` /
+    # `restart` がログ無しで落ちる。
+    def test_alive_state_of_stays_alive_when_the_pattern_raises
+      daemon = identified(nil, 'ruby bin/exp_daemon.rb start')
+      daemon.define_singleton_method(:process_pattern) {raise 'no config'}
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+      assert_equal([:error, 'process identity unavailable'],
+        [daemon.logs.last.first, daemon.logs.last.last[:message]])
+    end
+
+    # 🔴 **触れない番号（:unknown）は `ps` へ回さない (#510)。** ⚠⚠ 回すと、不一致で
+    # :dead に化け、生きている常駐の上に 2 本目を立てうる。
+    def test_alive_state_of_does_not_ask_ps_about_an_untouchable_pid
+      daemon = identified(/exp_daemon/, nil)
+      asked = []
+      daemon.define_singleton_method(:process_command_line) {|found| asked.push(found) && ''}
+      original = Process.method(:alive_state)
+      Process.define_singleton_method(:alive_state) {|_pid| :unknown}
+
+      assert_equal(:unknown, daemon.alive_state_of(Process.pid))
+      assert_empty(asked)
+    ensure
+      Process.define_singleton_method(:alive_state, original) if original
     end
 
     def test_alive_state_of_accepts_a_matching_process
@@ -543,6 +587,37 @@ module Ginseng
 
       assert_match(/ruby|rake/, line)
       assert_empty(create.send(:process_command_line, (2**22) + 12_345))
+    end
+
+    # 🔴🔴 **本物の `ps` の行が、引数の末尾まで取れて、照合まで繋がる (#676)。**
+    #
+    # ⚠⚠ ほかのテストは `process_command_line` を差し替えているので、`ps` の引数を
+    # 壊しても落ちない — `-ww` を外す（幅で切られる）・`command=` を `comm=` にする
+    # （引数が落ちる）・`=` を外す（見出しが付く）は、どれも**全部の常駐を他人にする**。
+    # ⚠ 幅は `COLUMNS` で狭める（端末が無いと `ps` は幅を環境変数から取る）。
+    def test_real_ps_line_reaches_the_pattern_untruncated
+      marker = "exp-marker-#{'x' * 300}-end"
+      child = Process.spawn(RbConfig.ruby, '-e', 'sleep 60', '--', marker, out: File::NULL)
+      columns = ENV.fetch('COLUMNS', nil)
+      ENV['COLUMNS'] = '20'
+      daemon = create
+      line = daemon.send(:process_command_line, child)
+
+      assert_match(/\A\S*ruby\S* -e sleep 60 -- #{marker}\z/, line)
+
+      daemon.define_singleton_method(:process_pattern) {/ -- #{marker}\z/}
+
+      assert_equal(:alive, daemon.alive_state_of(child))
+
+      daemon.define_singleton_method(:process_pattern) {/ -- #{marker}-other\z/}
+
+      assert_equal(:dead, daemon.alive_state_of(child))
+    ensure
+      ENV['COLUMNS'] = columns
+      if child
+        Process.kill('KILL', child)
+        Process.wait(child)
+      end
     end
 
     # 🔴 **宣言だけで `start` と `stop` の両方に効く (#676 / #673)。**
@@ -1751,8 +1826,6 @@ module Ginseng
       $stdout = original
     end
 
-    # ⚠ `warn` の行も測る。🔴 ログの `reason` だけ見ていると、**運用者が実際に読む
-    # 文言**（`(PID )` のような壊れた形）を素通りさせる。
     # `process_pattern` を宣言し、`ps` の答えを差し替えた常駐 (#676)。
     def identified(pattern, line)
       daemon = create
@@ -1761,6 +1834,8 @@ module Ginseng
       return daemon
     end
 
+    # ⚠ `warn` の行も測る。🔴 ログの `reason` だけ見ていると、**運用者が実際に読む
+    # 文言**（`(PID )` のような壊れた形）を素通りさせる。
     def capture_stderr
       original = $stderr
       $stderr = StringIO.new
