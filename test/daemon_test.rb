@@ -569,6 +569,22 @@ module Ginseng
         'process identity unavailable')
     end
 
+    # 🔴🔴 **`exec` の最中の姿（`[ruby]`）を、他人と答えない (#676)。** ⚠⚠ コマンド行が
+    # 一瞬だけ空になる間、`ps` は空行ではなく `[プロセス名]` を返す。🔴 ここを不一致に
+    # 数えると、起動中の本物に `stop` が重なったとき TERM を送らずに pid ファイルを消す。
+    def test_alive_state_of_stays_alive_while_the_command_line_is_unreadable
+      ['[ruby]', '[sh]', '[ruby] <defunct>', '[kworker/0:1-events]'].each do |line|
+        daemon = identified(/exp_daemon\.rb start/, line)
+
+        assert_equal(:alive, daemon.alive_state_of(Process.pid), line)
+        assert_empty(daemon.logs, line)
+      end
+      # ⚠ 角括弧で始まるだけの、読めている行は別（不一致なら他人）。
+      daemon = identified(/exp_daemon\.rb start/, '[ruby] bin/other.rb start')
+
+      assert_equal(:dead, daemon.alive_state_of(Process.pid))
+    end
+
     # ⚠ 居ない番号には `ps` を撃たない（素の生死が先）。
     def test_alive_state_of_does_not_ask_ps_about_a_dead_pid
       daemon = identified(/exp_daemon/, nil)
