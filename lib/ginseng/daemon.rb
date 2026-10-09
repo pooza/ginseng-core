@@ -124,8 +124,8 @@ module Ginseng
     # ⚠ 宣言が無ければ、従来どおり生死だけを見る。
     def alive_state_of(found)
       state = Process.alive_state(found)
-      return state unless state == :alive && (pattern = process_pattern)
-      return identity_mismatch?(found, pattern) ? :dead : :alive
+      return state unless state == :alive
+      return identity_mismatch?(found) ? :dead : :alive
     end
 
     # ⚠ **既存の呼び出し側のために真偽 2 値のまま残す**（:unknown は false 側）。

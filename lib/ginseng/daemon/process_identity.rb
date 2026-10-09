@@ -20,14 +20,34 @@ module Ginseng
     #
     #   def process_pattern
     #     return Regexp.union(
-    #       launcher_pattern('puma_daemon.rb'),
-    #       exec_pattern('puma', '--config', config_path),
+    #       launcher_pattern('puma_daemon.rb'),                   # 起動スクリプトのまま
+    #       exec_pattern('puma', '--config', puma_config_path),   # exec した直後
+    #       /\Apuma [\d.]+ \(.*\) \[#{Regexp.escape(app_tag)}\]/, # puma が書き換えたあと
     #     )
     #   end
+    #
+    # ⚠ `puma_config_path` / `app_tag` は利用側のメソッド（gem には無い）。3 つ目の形は
+    # 常駐ごとに違うので、**動いている常駐の `ps -ww -o command= -p <pid>` を見て書く**。
+    #
+    # ⚠⚠ **見抜けるのは、こちらから触れる番号だけ**（同じユーザーのプロセス。root なら
+    # 全部）。触れない番号（`EPERM`。別ユーザーのプロセスが引いた場合）は従来どおり
+    # :unknown で、`start` は起動しない — 🔴 そこを :dead へ倒すと、生きている常駐の上に
+    # 2 本目を立てうる (#510)。
     #
     # ⚠ **時刻では見ない。** 「プロセスの開始時刻が pid ファイルの書き込みより後なら他人」と
     # する案は、時計が飛ぶと本物を他人と誤る向きに倒れる（#676）。
     module ProcessIdentity
+      # コマンド行が読めないときに `ps` が代わりに返す姿（`[ruby]` / `[sh] <defunct>`）。
+      #
+      # 🔴🔴 **`exec` の最中は、コマンド行が一瞬だけ空になる**（Linux で 1 回につき 1〜2 ms）。
+      # その間 `ps -o command=` は空行ではなく `[プロセス名]` を返すので、空行だけを
+      # 「分からない」にしていると、**起動中の本物を他人と答える** — そこへ `stop` が重なると
+      # TERM を送らずに pid ファイルを消し、`start` が重なると 2 本目が立つ（実測）。
+      # ⚠⚠ **利用側のパターンでは塞げない**（`[ruby]` は「うちの常駐」の姿として書けない）。
+      # ⚠ ゾンビ（`<defunct>`）と kernel thread もこの形。どちらも「分からない」＝従来どおり
+      # 生きている扱いへ倒す。
+      UNREADABLE_COMMAND_LINE = /\A\[[^\]]*\](?: <defunct>)?\z/
+
       # うちの常駐のコマンド行に一致する `Regexp`。⚠ **利用側の宣言点。** nil なら見ない。
       #
       # 🔴🔴 **常駐が取りうる姿を全部挙げること。** 挙げ漏らした姿は「他人」になり、
@@ -37,6 +57,12 @@ module Ginseng
       # （puma / sidekiq は書き換える）。⚠ `launcher_pattern` / `exec_pattern` が使える。
       # ⚠ **部分一致を広く取らないこと** — 他人を「うちの常駐」と答えると、従来どおり
       # 「already running」で起動せず、`stop` はそこへ TERM を送る。
+      # ⚠⚠ **パターンは ASCII の範囲で書く。** `ps` はロケールが UTF-8 でないと非 ASCII の
+      # バイトを `?` に置き換えるので、**叩く側のロケールで答えが変わる**（systemd の既定は
+      # ロケール無し）。⚠ 書き換えられるプロセス名の可変部（sidekiq の `[0 of 5 busy]`）にも
+      # 錨を打たない — 書き換えの途中の姿が見えることがある。
+      # 🔴 **`Regexp` を返すこと。** 文字列を返すと「分からない」扱いになり、身元は
+      # 見られない（error を 1 行残す）。⚠ 例外を上げた場合も同じ。
       def process_pattern
         return nil
       end
@@ -64,11 +90,31 @@ module Ginseng
       # ⚠⚠ **分からないときは false（＝うちの常駐として扱う）へ倒す。** 🔴 true と誤ると
       # `start` が pid ファイルを奪って 2 本目を立てる。「起動しない」は外から見えるが、
       # **二重起動は黙って進む**ので、迷ったら従来どおりの側に置く。
-      # ⚠ 分からない場合 = コマンド行が取れない（`ps` が無い・失敗した・空を返した）。
-      def identity_mismatch?(found, pattern)
+      # ⚠ 分からない場合 = コマンド行が取れない（`ps` が無い・失敗した・空を返した・
+      # `[プロセス名]` だけを返した → `UNREADABLE_COMMAND_LINE`）／
+      # 宣言が読めない（`process_pattern` が例外を上げた・`Regexp` でないものを返した）。
+      #
+      # 🔴🔴 **`Regexp` でない宣言を `match?` へ流さない。** `String#match?` は**引数の側を
+      # 正規表現にする**ので、パターンとコマンド行の役が入れ替わり、本物の常駐がほぼ必ず
+      # 不一致になる（＝黙って 2 本目が立つ）。⚠ `'puma_daemon.rb start'` と書く誤りは自然。
+      # ⚠⚠ **`process_pattern` も rescue の内側で呼ぶ。** 外に置くと、宣言の中の例外が
+      # `status` / `restart` をログ無しで抜ける。
+      #
+      # ⚠ **他人と答えるときは warn を 1 行残す。** 🔴 `start` はこのあと黙って pid ファイルを
+      # 奪うので、ここで残さないと**挙げ漏らしによる二重起動の瞬間が、どこにも記録されない**。
+      # ⚠⚠ **コマンド行そのものは載せない** — 他人のプロセスの引数で、資格情報を含みうる。
+      # 番号があれば、運用者が `ps` で見られる。
+      def identity_mismatch?(found)
+        return false unless pattern = process_pattern
+        unless pattern.is_a?(Regexp)
+          raise TypeError, "process_pattern must be a Regexp (#{pattern.class})"
+        end
         line = process_command_line(found)
-        return false if line.empty?
-        return !pattern.match?(line)
+        return false if line.empty? || UNREADABLE_COMMAND_LINE.match?(line)
+        return false if pattern.match?(line)
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'process identity mismatch', pid: found)
+        return true
       rescue StandardError => e
         @logger.error(daemon: app_name, version: package_class.version,
           message: 'process identity unavailable', error: e, pid: found)
