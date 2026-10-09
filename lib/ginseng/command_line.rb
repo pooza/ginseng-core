@@ -89,17 +89,27 @@ module Ginseng
       end.join(' ')
     end
 
+    # 締切で TERM を送ってから、KILL に切り替えるまでの猶予（秒）。
+    KILL_GRACE_SECONDS = 2
+
+    # 🔴🔴 **締切が来たら、子プロセスを止めてから `Timeout::Error` を上げる。**
+    #
+    # ⚠⚠ 以前は `Timeout.timeout { Open3.capture3(...) }` の形で、締切が来ても `capture3` の
+    # 後始末が**子プロセスの終了を待つ**ので、例外が上がるのは子が終わった後だった
+    # （`sleep 5` に 1 秒の締切で 5.0 秒後。Linux と FreeBSD 15.1 で実測）。
+    # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走し、締切の後に間に合った子は
+    # **成功しているのに `Timeout::Error`** になっていた（pooza/mulukhiya-toot-proxy#4794）。
+    #
+    # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま。
     def exec(timeout: nil)
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          block = proc do
-            if @user
-              @stdout, @stderr, @status = Open3.capture3(sudo_command, chdir: dir)
-            else
-              @stdout, @stderr, @status = Open3.capture3(child_env, to_s, chdir: dir)
-            end
+          if timeout && !environment_class.win?
+            capture_until(timeout)
+          else
+            block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, chdir: dir)}
+            timeout ? Timeout.timeout(timeout, &block) : block.call
           end
-          timeout ? Timeout.timeout(timeout, &block) : block.call
         end
       end
       @pid = @status.pid
@@ -188,6 +198,64 @@ module Ginseng
     def masked_env
       return @env if secrets.empty?
       return @env.transform_values {|value| value.is_a?(String) ? masked(value) : value}
+    end
+
+    def spawn_args
+      return @user ? [sudo_command] : [child_env, to_s]
+    end
+
+    # ⚠⚠ **プロセスグループごと起こす。** `to_s` はシェルを経由しうるので、子の番号だけに
+    # シグナルを送ると**シェルだけが死んで本体が残る**。
+    # ⚠ 出力は別スレッドで読む — 待っているあいだにパイプのバッファが埋まると子が止まる。
+    def capture_until(timeout)
+      Open3.popen3(*spawn_args, chdir: dir, pgroup: true) do |stdin, stdout, stderr, waiter|
+        stdin.close
+        readers = [stdout, stderr].map {|io| Thread.new {io.read}}
+        unless waiter.join(timeout)
+          terminate(waiter)
+          readers.each(&:kill)
+          raise Timeout::Error, "execution expired (#{timeout}s): #{masked(to_s)}"
+        end
+        @stdout, @stderr = readers.map(&:value)
+        @status = waiter.value
+      end
+    end
+
+    # 締切を過ぎた子をグループごと止め、回収まで待つ（ゾンビを残さない）。
+    #
+    # 🔴 **先頭のプロセスが終わったことを「止まった」と読まないこと。** シェルを経由すると
+    # 先頭はシェルで、TERM で先に死ぬ。⚠⚠ TERM を無視する本体がグループに残るので、
+    # **グループが空になったか**で見て、残っていれば KILL する。
+    def terminate(waiter)
+      pgid = waiter.pid
+      signal_group('TERM', pgid)
+      deadline = monotonic + KILL_GRACE_SECONDS
+      sleep(0.05) while group_alive?(pgid) && monotonic < deadline
+      signal_group('KILL', pgid) if group_alive?(pgid)
+      waiter.join
+    end
+
+    def monotonic
+      return Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+
+    # ⚠ 送る直前に終わっていることがある（`ESRCH`）。そのときは何もしない。
+    def signal_group(signal, pgid)
+      Process.kill(signal, -pgid)
+    rescue Errno::ESRCH
+      nil
+    rescue Errno::EPERM => e
+      @logger.error(error: e, command: masked(to_s), pgid:, signal:)
+    end
+
+    # ⚠ 触れない（`EPERM`）は「居る」。居ないと言い切れるのは `ESRCH` だけ。
+    def group_alive?(pgid)
+      Process.kill(0, -pgid)
+      return true
+    rescue Errno::ESRCH
+      return false
+    rescue Errno::EPERM
+      return true
     end
 
     def sudo_command

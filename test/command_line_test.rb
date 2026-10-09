@@ -210,6 +210,62 @@ module Ginseng
       end
     end
 
+    # 🔴 **締切の時点で戻り、子を残さない**（pooza/mulukhiya-toot-proxy#4794）。
+    # ⚠⚠ 以前は子が終わるまで例外が上がらなかった（`sleep 30` なら 30 秒後）。
+    def test_exec_timeout_kills_the_child
+      nap = unique_sleep
+      @command.args = ['sh', '-c', nap]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 5)
+      assert_empty(running(nap))
+    end
+
+    # ⚠ シェルが立てた孫まで止める。
+    def test_exec_timeout_kills_the_grandchild
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "(#{nap}; echo done) & wait"]
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_empty(running(nap))
+    end
+
+    # 🔴 TERM を無視する相手は KILL で止める。⚠⚠ 先頭のシェルは TERM で先に死ぬので、
+    # **先頭の終了を見て引き上げると本体が残る**。
+    def test_exec_timeout_escalates_to_kill
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_empty(running(nap))
+    end
+
+    # ⚠ パイプのバッファ（64KB）を超える出力でも詰まらない。
+    def test_exec_with_timeout_reads_large_output
+      @command.args = ['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" a']
+
+      assert_equal(0, @command.exec(timeout: 10))
+      assert_equal(300_000, @command.stdout.bytesize)
+    end
+
+    def unique_sleep
+      return "sleep 30.#{SecureRandom.random_number(10**8).to_s.rjust(8, '0')}"
+    end
+
+    # ⚠ KILL はグループへ送った時点で戻る。孫が消えるまでの一瞬を待ってから数える。
+    def running(command)
+      pids = []
+      20.times do
+        pids = `pgrep -f '^#{command}$'`.split
+        break if pids.empty?
+        sleep(0.1)
+      end
+      return pids
+    end
+
     def test_env
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
