@@ -554,7 +554,7 @@ module Ginseng
 
     # いま居る番人の pid。
     def keepers
-      return `pgrep -f '^/bin/sh -c trap .* while read order'`.split
+      return `pgrep -f '^/bin/sh -c .* while read order; do case'`.split
     end
 
     # 🔴 **番人の準備が遅れても、命令は順に届く。**
@@ -580,14 +580,18 @@ module Ginseng
     end
 
     # ⚠ コマンドが自分のグループへ TERM 以外を撒いても、番人は死なない（＝止められる）。
+    # ⚠⚠ **名前を並べて無視する形は漏れる (Codex P2)。** 相手が自分では無視してグループへ
+    # 撒いたシグナルで、番人だけが死ぬ。⚠ 並べ忘れやすいもの（XCPU / VTALRM / PROF）も測る。
     def test_exec_timeout_survives_signals_the_command_sends_to_its_group
-      nap = unique_sleep
-      @command.args = ['sh', '-c', "trap '' INT TERM; kill -INT 0; #{nap}; #{nap}"]
+      ['INT', 'HUP', 'USR1', 'XCPU', 'VTALRM', 'PROF'].each do |signal|
+        nap = unique_sleep
+        @command.args = ['sh', '-c', "trap '' #{signal} TERM; kill -#{signal} 0; #{nap}; #{nap}"]
 
-      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+        error = assert_raise(Timeout::Error, signal) {@command.exec(timeout: 0.3)}
 
-      assert_no_match(/still running/, error.message)
-      assert_empty(running(nap))
+        assert_no_match(/still running/, error.message, signal)
+        assert_empty(running(nap), signal)
+      end
     end
 
     # 🔴 **実行の最中にホストが fork しても、番人を残さない。**

@@ -48,15 +48,20 @@ module Ginseng
       # 番人。標準入力から命令を 1 行ずつ読み、**自分のグループへ**シグナルを送る。
       # - `TERM` / `KILL`: `kill -s <名前> 0`。⚠ KILL は自分も死ぬ
       # - それ以外・EOF: 終わる
-      # - ⚠ TERM は自分では無視する（そうしないと、自分の TERM で死んで KILL を送れない）。
-      #   コマンドが自分のグループへ撒きうるほかのシグナルも無視する（`kill -INT 0` など）
-      # - ⚠ **止めるシグナルも無視する**（TSTP / TTIN / TTOU）。🔴 別のプロセスグループなので、
-      #   端末を読もうとした子には TTIN がグループごと届く — 番人まで止まると、命令を読めない
+      # - ⚠⚠ **無視できるシグナルは、番号で全部無視する（1〜64）。** 名前を並べる形は漏れる
+      #   — 相手が自分では無視して、グループへ撒いたシグナル（`kill -XCPU 0` など）で
+      #   番人だけが死ぬ (Codex P2)。⚠ 無視できない番号（KILL / STOP）は `command` が
+      #   失敗を握る（`trap` は特殊組み込みなので、素のままだと失敗でシェルが終わる）
+      #   - TERM: そうしないと、自分の TERM で死んで KILL を送れない
+      #   - TSTP / TTIN / TTOU: 🔴 別のプロセスグループなので、端末を読もうとした子には TTIN が
+      #     グループごと届く — 番人まで止まると、命令を読めない
       # - 🔴 SIGSTOP は無視できない。→ `wake`
-      # - ⚠ `trap` は命令を読む前に済む（＝準備の前に TERM が飛ぶことは無い）
+      # - ⚠ 無視の設定は命令を読む前に済む（＝準備の前に TERM が飛ぶことは無い）
+      # - ⚠ dash / bash / busybox の `sh` で確かめた。FreeBSD の `sh` は未実測
       # - ⚠ `/bin/sh` を直に指す（`PATH` に依らない。Ruby がシェル経由の文字列に使うのと同じ）
       KEEPER_SCRIPT = <<~SH.tr("\n", ' ').strip.freeze
-        trap '' HUP INT QUIT TERM USR1 USR2 PIPE ALRM TSTP TTIN TTOU;
+        n=1;
+        while [ "$n" -le 64 ]; do command trap '' "$n" 2>/dev/null; n=$((n + 1)); done;
         while read order; do
           case "$order" in TERM|KILL) kill -s "$order" 0;; *) exit 0;; esac;
         done
