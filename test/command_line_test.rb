@@ -286,113 +286,83 @@ module Ginseng
       assert_equal("ok\n", @command.stdout)
     end
 
-    # 🔴🔴 **止められない子がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 別のユーザーへ降りた子
-    # （`sudo` 経由）へはシグナルが `EPERM` になる。`popen3` のブロック形式は出口で子を
-    # 待つので、そのままだと**子が終わるまで戻らない**（`sleep 6` に 1 秒の締切で、戻るのは 6.0 秒後・実測）。
+    # 🔴🔴 **止められない相手がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 出口で子の終了を
+    # 待つ形（`popen3` のブロック形式）だと、**相手が終わるまで戻らない**
+    # （`sleep 6` に 1 秒の締切で、戻るのは 6.0 秒後・実測）。
     # ⚠ 止めたことにしない — 文言と error の行で分かること。
-    def test_exec_timeout_returns_even_if_the_child_cannot_be_signaled
+    def test_exec_timeout_returns_even_if_the_child_cannot_be_stopped
       nap = unique_sleep
-      @command.args = ['sh', '-c', nap]
+      @command.args = escaping(nap)
       logger = Recorder.new
       @command.instance_variable_set(:@logger, logger)
-      original = deny_group_signals
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 1.5)}
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
-      # ⚠ 上限は 締切 0.5 ＋ 猶予 2 ＋ 見切り 1。**数字で書く**（定数から作ると、定数を
+      # ⚠ 上限は 締切 1.5 ＋ 猶予 2 ＋ 見切り 1。**数字で書く**（定数から作ると、定数を
       # 変えても緑のままになる）。
-      assert_operator(elapsed, :<, 5.5)
+      assert_operator(elapsed, :<, 6.5)
       assert_match(/still running/, error.message)
       assert_equal([:error, 'timed out, but the child could not be stopped'],
         [logger.logs.last.first, logger.logs.last.last[:message]])
       assert_not_empty(running_now(nap))
     ensure
-      Process.define_singleton_method(:kill, original) if original
       `pkill -KILL -f '^#{nap}$'` if nap
     end
 
-    # 🔴🔴 **グループの番号を手放したあとは、そこへシグナルを送らない (#684)。**
+    # 🔴🔴 **Ruby の側からは、どのプロセスにもシグナルを送らない (#684)。**
     #
-    # ⚠⚠ 番号の持ち主が回収されると番号が空き、別のプロセスが引ける。そのあとで送ると、
-    # **無関係なプロセスグループへ TERM / KILL が届く**（リリース前レビューで、番号の再利用を
-    # 強制して実測した）。⚠ 再利用そのものは移植できる形で起こせないので、**順番**を固定する。
-    # ⚠ 3 つの形: 普通の締切／コマンドが先に終わり子孫がパイプを握る／TERM を無視する。
-    # 🔴 **KILL は 1 回だけ**（番人も一緒に死ぬので、2 回目は空いた番号へ飛ぶ）。
-    def test_exec_timeout_never_signals_the_group_after_releasing_it
+    # ⚠⚠ グループ宛てのシグナルは番号へ送る。番号の持ち主が回収されると番号が空き、
+    # 別のプロセスが引ける — そのあとで送ると、**無関係なプロセスグループへ TERM / KILL が
+    # 届く**（リリース前レビューで、番号の再利用を強制して実測した）。「送る前に確かめる」では
+    # 塞ぎきれなかったので、**グループの持ち主（番人）自身に送らせる**。
+    # ⚠ 4 つの形: 普通の締切／コマンドが先に終わり子孫がパイプを握る／TERM を無視する／
+    # 間に合う。どれも `Process.kill` を 1 回も呼ばないこと。
+    def test_ruby_never_signals_any_process_itself
       [
         ['sh', '-c', unique_sleep],
         ['sh', '-c', "#{unique_sleep} &"],
         ['sh', '-c', "trap '' TERM; #{unique_sleep}; #{unique_sleep}"],
+        ['sh', '-c', 'echo ok'],
       ].each do |args|
         events = []
         restore = trace_process_calls(events)
         @command.args = args
-        assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+        begin
+          @command.exec(timeout: 0.5)
+        rescue Timeout::Error
+          nil
+        end
         restore.call
-        kills = events.select {|event| event.first == :kill}
 
-        assert_no_signal_after_release(events, args.last)
-        assert_equal('TERM', kills.first[1], args.last)
-        assert_operator(kills.count {|event| event[1] == 'KILL'}, :<=, 1, args.last)
-        assert_equal(1, kills.map(&:last).uniq.size, args.last)
+        assert_empty(events.select {|event| event.first == :kill}, args.last)
       ensure
         restore&.call
       end
     end
 
-    # ⚠ TERM を無視する相手には KILL まで進む。そのあと手放すときに、もう 1 回送らない。
-    def test_exec_timeout_sends_kill_only_once
-      events = []
-      restore = trace_process_calls(events)
-      @command.args = ['sh', '-c', "trap '' TERM; #{unique_sleep}; #{unique_sleep}"]
-
-      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
-      assert_equal(['TERM', 'KILL'], events.select {|event| event.first == :kill}.map {|event| event[1]})
-    ensure
-      restore&.call
-    end
-
-    # 🔴 **KILL を送ったら、番人がまだ生きて見えても、もう送らない。**
-    # ⚠⚠ KILL の直後は、番人がまだ死にきっていないことがある（`wait2` が nil を返す）。
-    # 「生きているから番号は自分のもの」と読むと、2 回目の KILL が、番人が消えて空いた
-    # 番号へ飛ぶ。⚠ KILL のあと、番人が生きて見え続ける形を作って測る。
-    def test_exec_timeout_does_not_trust_the_keeper_after_kill
-      events = []
-      restore = trace_process_calls(events)
-      traced = Process.method(:wait2)
-      Process.define_singleton_method(:wait2) do |pid, *args|
-        next nil if events.include?([:kill, 'KILL', pid])
-        traced.call(pid, *args)
-      end
-      @command.args = ['sh', '-c', "trap '' TERM; #{unique_sleep}; #{unique_sleep}"]
-
-      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
-      assert_equal(['TERM', 'KILL'], events.select {|event| event.first == :kill}.map {|event| event[1]})
-    ensure
-      restore&.call
-    end
-
-    # 🔴🔴 **番号の持ち主を確かめられなければ、1 つも送らない (#684 Codex P1)。**
-    #
-    # ⚠⚠ ホストが `SIGCHLD` を無視していたり、別のスレッドが `Process.wait(-1)` を回して
-    # いたりすると、終わった子は先に回収され、こちらの `wait2` は `Errno::ECHILD` になる。
-    # 🔴 コマンド自身を番号の持ち主にしていると、**出力を握った子孫が残っているあいだは
-    # 回収しにいかないので、横取りに気づかないまま TERM / KILL を送る**。
-    # ⚠ 番人が居ない（確かめたら `ECHILD`）形を作り、締切を迎えさせる。
-    def test_exec_timeout_sends_nothing_when_the_group_cannot_be_confirmed
+    # 🔴 **番人が居なくなっていたら、誰にも何も送らない。** ⚠⚠ 代わりにこちらから番号宛てに
+    # 送ると、空いたかもしれない番号へ飛ぶ。止められなかったことは、そのまま報告する。
+    # ⚠ 番人を 0.2 秒で終わらせて、締切 0.6 秒を迎えさせる。
+    def test_exec_timeout_sends_nothing_when_the_keeper_is_gone
       nap = unique_sleep
       events = []
       restore = trace_process_calls(events)
-      Process.define_singleton_method(:wait2) {|*| raise Errno::ECHILD}
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        args = [*args[0..1], 'sleep 0.2'] if args[2].to_s.include?('while read order')
+        spawn.call(*args, **options)
+      end
       @command.args = ['sh', '-c', nap]
 
-      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.6)}
 
       assert_empty(events.select {|event| event.first == :kill})
       assert_match(/still running/, error.message)
+      assert_not_empty(running_now(nap))
     ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
       restore&.call
       `pkill -KILL -f '^#{nap}$'` if nap
     end
@@ -442,19 +412,22 @@ module Ginseng
     # ⚠⚠ 回収用のスレッドを中断不可の区間で作ると、Ruby は終了時にそれを止められず、
     # **相手が終わるまでプロセスが終わらない**（常駐の再起動が、子の完走を待つことになる）。
     # ⚠ 別プロセスで測る — 測りたいのは「プロセスが終わるまでの時間」。
+    # ⚠ **こちらの直接の子**が残る形で測る（番人を先に終わらせて、誰にも何も送らせない）。
+    # 🔴 グループを抜けた子孫を残す形では測れない — 直接の子は止まって回収されるので、
+    # 回収用のスレッドが残らず、この欠陥の経路を通らない（実際に、そう書いて素通りさせた）。
     def test_host_can_exit_while_an_unstoppable_child_remains
       nap = unique_sleep
       script = <<~RUBY
         require 'ginseng'
-        original = Process.method(:kill)
-        Process.define_singleton_method(:kill) do |signal, *pids|
-          raise Errno::EPERM if pids.any?(&:negative?)
-          original.call(signal, *pids)
+        spawn = Process.method(:spawn)
+        Process.define_singleton_method(:spawn) do |*args, **options|
+          args = [*args[0..1], 'sleep 0.2'] if args[2].to_s.include?('while read order')
+          spawn.call(*args, **options)
         end
         command = Ginseng::CommandLine.new(#{nap.split.inspect})
         command.instance_variable_set(:@logger, Class.new {def error(*) = nil}.new)
         begin
-          command.exec(timeout: 0.3)
+          command.exec(timeout: 0.6)
         rescue Timeout::Error
           nil
         end
@@ -466,7 +439,7 @@ module Ginseng
 
       assert_not_nil(waiter.join(20), '子が終わるまでホストが終了しない')
       assert_predicate(waiter.value, :success?)
-      # ⚠ 起動 ＋ 締切 0.3 ＋ 猶予 2 ＋ 見切り 1。子（30 秒）を待つと、ここを超える。
+      # ⚠ 起動 ＋ 締切 0.6 ＋ 猶予 2 ＋ 見切り 1。子（30 秒）を待つと、ここを超える。
       assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 15)
       assert_not_empty(running_now(nap))
     ensure
@@ -476,33 +449,29 @@ module Ginseng
 
     # いま居る番人の pid。
     def keepers
-      return `pgrep -f '^/bin/sh -c trap .* echo; read _$'`.split
+      return `pgrep -f '^/bin/sh -c trap .* while read order'`.split
     end
 
-    # 🔴 **番人が TERM を無視する準備を済ませる前に、TERM を送らない。**
-    # ⚠⚠ `Process.spawn` が戻った時点では、シェルはまだ `trap` を実行していない。そこへ
-    # グループ宛ての TERM が届くと番人が死に、**番号を確かめられなくなって KILL を送れない**
-    # （TERM を無視する相手が残る）。実測: 起動から 2 ms 以内だと死ぬ。
+    # 🔴 **番人の準備が遅れても、命令は順に届く。**
+    # ⚠⚠ `Process.spawn` が戻った時点では、シェルはまだ `trap` を実行していない。準備の前に
+    # グループへ TERM が飛ぶと番人が死に、KILL を送る者が居なくなる（TERM を無視する相手が
+    # 残る）。⚠ 番人が自分で送る形なら、`trap` は必ず先に済む。
     # ⚠ 番人の起動を 0.5 秒遅らせて、締切 0.2 秒を先に来させる。
-    def test_exec_timeout_waits_for_the_keeper_before_term
+    def test_exec_timeout_orders_reach_a_slow_keeper
       nap = unique_sleep
-      events = []
-      restore = trace_process_calls(events)
       spawn = Process.method(:spawn)
       Process.define_singleton_method(:spawn) do |*args, **options|
-        args = [*args[0..1], "sleep 0.5; #{args[2]}"] if args[2].to_s.end_with?('read _')
+        args = [*args[0..1], "sleep 0.5; #{args[2]}"] if args[2].to_s.include?('while read order')
         spawn.call(*args, **options)
       end
       @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
 
       error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.2)}
 
-      assert_equal(['TERM', 'KILL'], events.select {|event| event.first == :kill}.map {|event| event[1]})
       assert_no_match(/still running/, error.message)
       assert_empty(running(nap))
     ensure
       Process.define_singleton_method(:spawn, spawn) if spawn
-      restore&.call
     end
 
     # ⚠ コマンドが自分のグループへ TERM 以外を撒いても、番人は死なない（＝止められる）。
@@ -547,16 +516,14 @@ module Ginseng
     # 読み手を待って、**止められなかった相手が終わるまで戻らない**。
     def test_exec_timeout_returns_inside_an_uninterruptible_block
       nap = unique_sleep
-      @command.args = ['sh', '-c', nap]
-      original = deny_group_signals
+      @command.args = escaping(nap)
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       assert_raise(Timeout::Error) do
-        Thread.handle_interrupt(Object => :never) {@command.exec(timeout: 0.5)}
+        Thread.handle_interrupt(Object => :never) {@command.exec(timeout: 1.5)}
       end
-      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5.5)
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 6.5)
     ensure
-      Process.define_singleton_method(:kill, original) if original
       `pkill -KILL -f '^#{nap}$'` if nap
     end
 
@@ -712,14 +679,11 @@ module Ginseng
         logger.logs.map {|severity, message| [severity, message[:message]]})
     end
 
-    # グループ宛て（負の番号）のシグナルを、全部 `EPERM` にする。元の実装を返す。
-    def deny_group_signals
-      original = Process.method(:kill)
-      Process.define_singleton_method(:kill) do |signal, *pids|
-        raise Errno::EPERM if pids.any?(&:negative?)
-        original.call(signal, *pids)
-      end
-      return original
+    # グループを抜けて居座る子孫（＝こちらからは止められない相手）を残すコマンド。
+    # ⚠ ruby が起動して `setsid` し終えるまで 1 秒ほど要る。締切は 1.5 秒以上で使う。
+    def escaping(nap)
+      escape = "Process.setsid; exec(*%w[#{nap}])"
+      return ['sh', '-c', "#{RbConfig.ruby} -e '#{escape}' & wait"]
     end
 
     # ⚠ `running` と違って、消えるのを待たない。
@@ -727,12 +691,12 @@ module Ginseng
       return `pgrep -f '^#{command}$'`.split
     end
 
-    # グループ宛ての `Process.kill` と回収（`wait2`）を、番号つきで順に記録する。
+    # `Process.kill`（宛先を問わず）と回収（`wait2`）を、番号つきで順に記録する。
     # 元へ戻す手続きを返す。
     def trace_process_calls(events)
       originals = [:kill, :wait2].to_h {|name| [name, Process.method(name)]}
       Process.define_singleton_method(:kill) do |signal, *pids|
-        pids.select(&:negative?).each {|pid| events.push([:kill, signal, -pid])} if signal != 0
+        pids.each {|pid| events.push([:kill, signal, pid])}
         originals[:kill].call(signal, *pids)
       end
       Process.define_singleton_method(:wait2) do |pid, *args|
@@ -741,19 +705,6 @@ module Ginseng
         result
       end
       return -> {originals.each {|name, impl| Process.define_singleton_method(name, impl)}}
-    end
-
-    # 🔴 **グループの番号を手放したあとは、そこへ送っていないこと。**
-    # ⚠ 手放す = その番号の持ち主（番人）を回収した・KILL した。
-    def assert_no_signal_after_release(events, message = nil)
-      events.each_with_index do |(kind, signal, group), index|
-        next unless kind == :kill
-        earlier = events[0...index]
-        released = earlier.include?([:reaped, group])
-        killed = earlier.include?([:kill, 'KILL', group])
-
-        assert_false(released || killed, "#{message}: #{signal} after release in #{events.inspect}")
-      end
     end
 
     def unique_sleep

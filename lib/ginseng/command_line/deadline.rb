@@ -1,30 +1,29 @@
 # frozen_string_literal: true
 
-require 'io/wait'
-
 module Ginseng
   class CommandLine
     # 締切つきの `exec` (#684)。締切が来たら子プロセスをグループごと止める。
     #
-    # 🔴🔴 **グループの番号は、こちらが握る「生きた」プロセス（番人）に押さえさせる。** ここの芯。
+    # 🔴🔴 **こちらからは、プロセスグループの番号へシグナルを送らない。** ここの芯。
     # ⚠⚠ グループ宛てのシグナルは**番号**へ送る。番号の持ち主が回収されると（グループに誰も
     # 残っていなければ）その番号は空き、**別のプロセスが引ける** — そのあとで送ると、
     # 🔴 **無関係なプロセスグループへ TERM / KILL が届く**（root の常駐なら、どのグループにも届く）。
     #
-    # ⚠ コマンド自身を持ち主にすると、守れない場面が残る（2.4.0 のリリース前レビューと
-    # Codex の P1 3 件が、順に突いた）。
+    # ⚠ 「送る前に持ち主を確かめる」では塞ぎきれない（2.4.0 のリリース前レビューと Codex の
+    # P1 4 件が、順に突いた）。
     # - `Open3.popen3` は起こした瞬間に `Process.detach` するので、回収の時機を握れない
     #   （番号の再利用を強制して、誤爆を実測した）
-    # - 自分で回収を握っても、**回収するのが自分だけとは限らない。** ホストが `SIGCHLD` を
-    #   無視していたり、別のスレッドが `Process.wait(-1)` を回していたりすると、終わった子は
-    #   先に回収される。🔴 **回収せずに「まだ自分の子か」を確かめる手段が無い**
+    # - 自分で回収を握っても、**回収するのが自分だけとは限らない**（ホストが `SIGCHLD` を
+    #   無視している・別のスレッドが `Process.wait(-1)` を回している）。回収せずに
+    #   「まだ自分の子か」を確かめる手段が無い
+    # - 生きた持ち主を置いて確かめてから送っても、**確かめてから送るまでの間**が残る
     #
-    # ⚠⚠ **生きているプロセスは、誰にも回収できない。** だから番人には何もさせず
-    # （標準入力が閉じるまで待つだけ・TERM は無視）、コマンドをそのグループへ入れる。
-    # - 送る前に番人が生きているかを確かめる（`wait2` + `WNOHANG` が nil）。生きていれば、
-    #   番号は確かに自分のもの
+    # ⚠⚠ **だから、グループの持ち主（番人）自身に送らせる。** 番人は何もしない小さな `sh` で、
+    # コマンドをそのグループへ入れる。こちらは番人の標準入力へ命令を書くだけ。
+    # - 番人が `kill 0`（自分のグループ宛て）を実行する瞬間、番人は必ず生きていて、番号は
+    #   必ず番人のもの。**番号を取り違える余地が無い**
+    # - 番人が居なければ（死んでいた）、命令は届かず、誰にも何も送られない
     # - コマンドは、いつ回収してもよい（番号と関係が無い）
-    # - 🔴 **KILL は 1 回だけ。** 番人も一緒に死ぬので、それ以後は送らない
     #
     # 🔴 **「止まったか」「猶予を使い切ったか」は、出力のパイプで測る。**
     # - ⚠⚠ **プロセスグループはゾンビも数える。** 回収されていない孤児（付け替わった親が
@@ -45,34 +44,35 @@ module Ginseng
       # コマンドの終了を見にいく間隔の上限（秒）。⚠ 1 ミリ秒から倍々で伸ばす。
       REAP_INTERVAL_MAX = 0.02
 
-      # 番人。標準入力が閉じたら終わる。
-      # - ⚠ TERM は無視する（グループ宛ての TERM で一緒に死ぬと、KILL を送る前に番号が空く）。
-      #   ⚠ コマンドが自分のグループへ撒きうるほかのシグナルも無視する（`kill -INT 0` など）
-      # - 🔴 **無視の準備が済んだら 1 行書く。** `Process.spawn` が戻った時点では、シェルは
-      #   まだ `trap` を実行していない（実測: 起動から 2 ms 以内に TERM が届くと死ぬ）。
-      #   → 最初の TERM の前に、この 1 行を待つ（`keeper_ready?`）
+      # 番人。標準入力から命令を 1 行ずつ読み、**自分のグループへ**シグナルを送る。
+      # - `TERM` / `KILL`: `kill -s <名前> 0`。⚠ KILL は自分も死ぬ
+      # - それ以外・EOF: 終わる
+      # - ⚠ TERM は自分では無視する（そうしないと、自分の TERM で死んで KILL を送れない）。
+      #   コマンドが自分のグループへ撒きうるほかのシグナルも無視する（`kill -INT 0` など）
+      # - ⚠ `trap` は命令を読む前に済む（＝準備の前に TERM が飛ぶことは無い）
       # - ⚠ `/bin/sh` を直に指す（`PATH` に依らない。Ruby がシェル経由の文字列に使うのと同じ）
-      KEEPER = [
-        '/bin/sh', '-c', "trap '' HUP INT QUIT TERM USR1 USR2 PIPE ALRM; echo; read _"
-      ].freeze
-
-      # 番人の準備を待つ上限（秒）。⚠ 締切を過ぎたあとの待ちなので、短く切る。
-      KEEPER_READY_SECONDS = 1
+      KEEPER_SCRIPT = <<~SH.tr("\n", ' ').strip.freeze
+        trap '' HUP INT QUIT TERM USR1 USR2 PIPE ALRM;
+        while read order; do
+          case "$order" in TERM|KILL) kill -s "$order" 0;; *) exit 0;; esac;
+        done
+      SH
+      KEEPER = ['/bin/sh', '-c', KEEPER_SCRIPT].freeze
 
       # 起こした子。
-      # - `keeper` / `gate`: 番人の pid（＝グループの番号）と、その標準入力の書く側
-      # - `ready`: 番人が準備完了を書いてくるパイプの読む側
-      # - `held`: 番人が生きていると信じてよいか。⚠ **偽になったら、もう送らない**
+      # - `keeper` / `gate`: 番人の pid と、その標準入力の書く側（命令を書く口）
       # - `status`: コマンドの終了状態（回収済みなら入る。横取りされたら `LOST`）
-      Child = Struct.new(:keeper, :gate, :ready, :pid, :pipes, :held, :status)
+      Child = Struct.new(:keeper, :gate, :pid, :pipes, :status)
 
-      # コマンドを、ほかの誰かに回収された印。⚠ 終了状態は分からない — 間に合った実行も
-      # `Errno::ECHILD` で終わる（分からないものを成功にも失敗にもしない）。
+      # コマンドを、ほかの誰かに回収された印 (#684 Codex P1)。
+      # ⚠ ホストが `SIGCHLD` を無視していたり、別のスレッドが `Process.wait(-1)` を回して
+      # いたりすると、こちらの `wait2` は `Errno::ECHILD` になる。終了状態は分からない —
+      # 間に合った実行も `Errno::ECHILD` で終わる（分からないものを成功にも失敗にもしない）。
       LOST = :lost
 
       # ⚠ **外へ約束しない。** 名前を変えると「名前が消える」＝メジャーになる。
       private_constant :KILL_GRACE_SECONDS, :DRAIN_GRACE_SECONDS, :REAP_INTERVAL_MAX,
-        :KEEPER, :KEEPER_READY_SECONDS, :Child, :LOST
+        :KEEPER_SCRIPT, :KEEPER, :Child, :LOST
 
       private
 
@@ -98,10 +98,10 @@ module Ginseng
         uninterruptible {release(child, readers)} if child
       end
 
-      # 🔴🔴 **「起こした／確かめた／送った」と、その記録の間で中断させない (#684 Codex P1)。**
+      # 🔴🔴 **「起こした／回収した」と、その記録の間で中断させない (#684 Codex P1)。**
       # ⚠⚠ 外からの `Thread#kill` は、メソッドが値を返してから変数へ入るまでの間にも届く。
-      # - 起こした直後に届くと、番号を誰も覚えておらず、子が残る
-      # - KILL を送った直後に届くと、番人が死んだことを覚えておらず、もう 1 回送る
+      # - 起こした直後に届くと、誰も覚えておらず、子と番人が残る
+      # - 回収の直後に届くと、終わった実行を「終わっていない」と読んで KILL する
       # ⚠ 中で待つ処理をしないこと（中断が、その間ずっと届かなくなる）。
       # 🔴 **スレッドは、作られたときの「中断不可」を引き継ぐ。** 区間の中で作るスレッドは、
       # 自分で中断可能へ戻すこと（→ `reader` / `forget`）。
@@ -125,17 +125,16 @@ module Ginseng
       # 止まったまま締切を迎える）。
       def spawn_group
         gate_r, gate_w = IO.pipe
-        ready_r, ready_w = IO.pipe
         out_r, out_w = IO.pipe
         err_r, err_w = IO.pipe
-        keeper = Process.spawn(*KEEPER, pgroup: true, in: gate_r, out: ready_w, err: File::NULL)
+        keeper = Process.spawn(*KEEPER, pgroup: true, in: gate_r, out: File::NULL, err: File::NULL)
         pid = Process.spawn(*spawn_args, chdir: dir, pgroup: keeper,
           in: File::NULL, out: out_w, err: err_w)
-        return Child.new(keeper, gate_w, ready_r, pid, [out_r, err_r], true)
+        return Child.new(keeper, gate_w, pid, [out_r, err_r])
       ensure
         # ⚠ 子へ渡した端は必ず閉じる — こちらが握ったままだと、読み手が EOF に達しない。
-        [gate_r, ready_w, out_w, err_w].each {|io| io&.close}
-        discard(keeper, [gate_w, ready_r, out_r, err_r]) unless pid
+        [gate_r, out_w, err_w].each {|io| io&.close}
+        discard(keeper, [gate_w, out_r, err_r]) unless pid
       end
 
       # ⚠ コマンドを起こせなかったとき（存在しないコマンド・無い `chdir` 先）の後始末。
@@ -147,9 +146,9 @@ module Ginseng
       # 終わるのを待たずに手放す（回収だけ別スレッドに任せる）。
       #
       # 🔴🔴 **`Process.detach` を、中断不可の区間（`uninterruptible`）の中で呼ばない。**
-      # ⚠⚠ スレッドは、作られたときの「中断不可」を**引き継ぐ**。`Process.detach` が作る
-      # 回収用のスレッドがそうなると、Ruby は終了時にそれを止められず、🔴 **相手が終わるまで
-      # ホストのプロセスが終了できない**（止められなかった子が居座るあいだ、ずっと）。
+      # ⚠⚠ `Process.detach` が作る回収用のスレッドが中断不可を引き継ぐと、Ruby は終了時に
+      # それを止められず、🔴 **相手が終わるまでホストのプロセスが終了できない**（止められ
+      # なかった子が居座るあいだ、ずっと）。
       # 実測: 区間の中で `detach` した 6.8 秒の子に対して、終了まで 6.9 秒。
       # ⚠ だから自前のスレッドにして、**その中で中断可能へ戻す**。
       def forget(pid)
@@ -176,6 +175,7 @@ module Ginseng
       end
 
       # コマンドを回収する。`deadline` までに終わらなければ nil（回収しない）。
+      # ⚠ 回収と、`child.status` への記録は 1 つの区間（→ `uninterruptible`）。
       # ⚠ 横取りされていたら `LOST` を記録して返す（ここでは例外にしない — 締切の経路では、
       # このあと `Timeout::Error` を上げる）。
       def reap(child, deadline)
@@ -208,19 +208,10 @@ module Ginseng
       # ⚠ 送れない（`EPERM`）相手・グループを抜けた相手には届かないが、ここでは気にしない —
       # 止まったかは、呼び出し側がパイプを見て決める。
       def terminate(child, readers)
-        signal_group(child, 'TERM') if keeper_ready?(child)
+        order(child, 'TERM')
         deadline = monotonic + KILL_GRACE_SECONDS
         reap(child, deadline) if drained?(readers, deadline)
-        signal_group(child, 'KILL') unless finished?(child, readers)
-      end
-
-      # 番人は、TERM を無視する準備を済ませたか。
-      #
-      # ⚠ 済んでいなければ TERM を飛ばす（→ そのまま KILL へ進む）。🔴 準備の前に TERM を
-      # 送ると番人が死に、**番号を確かめられなくなって KILL を送れない**。
-      # ⚠ 待つのは締切を過ぎたあとの 1 回だけ。間に合った実行は待たない。
-      def keeper_ready?(child)
-        return !child.ready.wait_readable(KEEPER_READY_SECONDS).nil?
+        order(child, 'KILL') unless finished?(child, readers)
       end
 
       # コマンドを回収済みで、出力も読み切ったか。
@@ -254,62 +245,31 @@ module Ginseng
         )
       end
 
-      # ⚠ 終わっていなければ KILL してから手放す。🔴 **番人の標準入力を閉じたら、以後は送らない**
-      # （番人が終わって、番号が空く）。⚠ 回収は別スレッドに任せる（→ `forget`）。
+      # ⚠ 終わっていなければ KILL、終わっていれば番人だけ終わらせて、手放す。
+      # ⚠ 番人には「終われ」と書く — 🔴 **標準入力を閉じるだけに頼らない。** 実行の最中に
+      # ホストが `fork` していると、その子が書く側の端を継いでいて、こちらが閉じても
+      # 番人に EOF が届かない（fork した子が終わるまで番人が残る・実測）。
+      # ⚠ 回収は別スレッドに任せる（→ `forget`）。
       # ⚠ 読み手を止めてからパイプを閉じる。🔴 閉じ忘れると、止められなかった相手が終わるまで
       # 読み手のスレッドとパイプが残る。⚠ 相手の側は、次に書いたとき `SIGPIPE`
       # （無視していれば `EPIPE`）を受ける。
       def release(child, readers)
-        signal_group(child, 'KILL') unless readers && finished?(child, readers)
-        dismiss(child)
+        order(child, readers && finished?(child, readers) ? 'EXIT' : 'KILL')
+        child.gate.close unless child.gate.closed?
         forget(child.keeper)
         forget(child.pid) unless child.status
         readers&.each {|reader| reader.kill if reader.alive?}
         child.pipes.each {|io| io.close unless io.closed?}
       end
 
-      # 番人を終わらせる。
+      # 番人へ命令を書く。
       #
-      # ⚠ 標準入力を閉じれば自分で終わるが、**それだけに頼らない。** 🔴 実行の最中に
-      # ホストが `fork` していると、その子が書く側の端を継いでいて、こちらが閉じても
-      # 番人に EOF が届かない（fork した子が終わるまで番人が残る・実測）。
-      # ⚠ 生きていると確かめられた自分の子なので、**番人の pid へ**直に KILL する
-      # （グループ宛てではない）。
-      def dismiss(child)
-        Process.kill('KILL', child.keeper) if keeping?(child)
-      rescue Errno::ESRCH
-        nil
-      ensure
-        child.held = false
-        [child.gate, child.ready].each {|io| io.close unless io.closed?}
-      end
-
-      # グループへシグナルを送る。🔴 **番人が生きていると確かめられたときだけ。**
-      #
-      # ⚠ 確かめる・送る・覚えるは 1 つの区間（→ `uninterruptible`）。
-      # ⚠ 既に居ない（`ESRCH`）・送れない（`EPERM`）は、ここでは何もしない。
-      def signal_group(child, signal)
-        uninterruptible do
-          next unless keeping?(child)
-          child.held = false if signal == 'KILL'
-          Process.kill(signal, -child.keeper)
-        rescue Errno::ESRCH, Errno::EPERM
-          nil
-        end
-      end
-
-      # 番人は生きているか（＝グループの番号は、まだ自分のものか）。
-      #
-      # ⚠⚠ **nil（まだ終わっていない）だけを「生きている」と読む。** 終了状態が返った
-      # （終わっていたので、いま回収した）・`ECHILD`（誰かに回収された）は、どちらも
-      # 番号を手放したということ。🔴 一度偽になったら戻さない。
-      def keeping?(child)
-        return false unless child.held
-        child.held = Process.wait2(child.keeper, Process::WNOHANG).nil?
-        return child.held
-      rescue Errno::ECHILD
-        child.held = false
-        return false
+      # ⚠ 番人が居ない（KILL を命じたあと・誰かに殺された）ときは `EPIPE` になる。
+      # そのときは何もしない — 🔴 **代わりにこちらから送らない**（冒頭）。
+      def order(child, word)
+        child.gate.syswrite("#{word}\n")
+      rescue Errno::EPIPE, IOError
+        return nil
       end
 
       def remaining(deadline)
