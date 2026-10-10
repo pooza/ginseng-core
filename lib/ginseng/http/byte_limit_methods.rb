@@ -24,7 +24,12 @@ module Ginseng
         return HTTParty.public_send(method, uri.normalize, options) do |fragment|
           received += fragment.bytesize
           next if received <= max_bytes
-          raise TooLargeError, "Response body exceeded #{max_bytes} bytes (#{uri})"
+          # ⚠⚠ **メッセージに URL を入れない (#689)。** 🔴 例外のメッセージは**ロガーの外**
+          # （利用側の通知・応答・別の例外への包み直し）へも運ばれ、そこでは `Masking` が
+          # 掛からない。⚠ URL は `log_retry_error` が `url:` のフィールドで別に残している。
+          # ⚠ **ロガーのマスクの差を塞ぐ変更ではない** — ロガーを通る分には、文中の URL も
+          # フィールドの URL も同じ形に伏せられる（`Masking#mask_urls_in`。実測）。
+          raise TooLargeError, "Response body exceeded #{max_bytes} bytes"
         end
       end
     end
