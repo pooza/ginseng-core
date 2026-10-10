@@ -340,6 +340,29 @@ module Ginseng
       end
     end
 
+    # 🔴🔴 **回収した直後に中断されても、グループへシグナルを送らない (#684 Codex P1)。**
+    # ⚠⚠ 外からの `Thread#kill` は、回収が値を返してから記録されるまでの間にも届く。
+    # 記録が飛ぶと「未回収」と読んで、空いたかもしれない番号へ KILL する。
+    # ⚠ 回収が成功したその場で、実行中のスレッドを別スレッドから kill して測る。
+    def test_interruption_right_after_reaping_does_not_signal_the_group
+      events = []
+      restore = trace_process_calls(events)
+      traced = Process.method(:wait2)
+      target = nil
+      Process.define_singleton_method(:wait2) do |*args|
+        result = traced.call(*args)
+        Thread.new {target.kill}.join if result
+        result
+      end
+      @command.args = ['sh', '-c', 'echo ok']
+      target = Thread.new {@command.exec(timeout: 10)}
+      target.join(5)
+
+      assert_equal([[:reaped]], events)
+    ensure
+      restore&.call
+    end
+
     # 🔴 **例外の文言にコマンドを載せない。** ⚠⚠ `secrets=` を使っていない利用側では、引数の
     # 資格情報がそのまま文言になる。文言はログと行き先が違う（通知・HTTP の応答）。
     # ⚠ コマンドは error の行に出し、`secrets` はそこでも伏せる (#642)。

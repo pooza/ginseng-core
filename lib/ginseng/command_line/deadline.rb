@@ -32,8 +32,11 @@ module Ginseng
       # 先頭の終了を見にいく間隔の上限（秒）。⚠ 1 ミリ秒から倍々で伸ばす。
       REAP_INTERVAL_MAX = 0.02
 
+      # 起こした子。⚠ **`status` が入っている ＝ 先頭を回収済み**（もうシグナルを送らない）。
+      Child = Struct.new(:pid, :pipes, :status)
+
       # ⚠ **外へ約束しない。** 名前を変えると「名前が消える」＝メジャーになる。
-      private_constant :KILL_GRACE_SECONDS, :DRAIN_GRACE_SECONDS, :REAP_INTERVAL_MAX
+      private_constant :KILL_GRACE_SECONDS, :DRAIN_GRACE_SECONDS, :REAP_INTERVAL_MAX, :Child
 
       private
 
@@ -44,19 +47,29 @@ module Ginseng
 
       def capture_until(timeout)
         deadline = monotonic + timeout
-        pid, pipes = spawn_group
-        readers = pipes.map {|io| Thread.new {io.read}}
-        status = await(pid, readers, deadline)
-        unless status
-          status = terminate(pid, readers)
-          expire!(pid, readers, timeout)
+        child = nil
+        uninterruptible {child = spawn_group}
+        readers = child.pipes.map {|io| Thread.new {io.read}}
+        unless await(child, readers, deadline)
+          terminate(child, readers)
+          expire!(child, readers, timeout)
         end
         @stdout, @stderr = readers.map(&:value)
-        @status = status
+        @status = child.status
       ensure
         # 🔴 **外から `Thread#kill` で中断されても、子を残さない。** ⚠ 締切の猶予の途中で
         # 外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
-        release(pid, readers, pipes, reaped: !status.nil?) if pid
+        uninterruptible {release(child, readers)} if child
+      end
+
+      # 🔴🔴 **「起こした／回収した」と、その記録の間で中断させない (#684 Codex P1)。**
+      # ⚠⚠ 外からの `Thread#kill` は、メソッドが値を返してから変数へ入るまでの間にも届く。
+      # - 回収の直後に届くと、**回収済みなのに未回収と読んで、空いたかもしれない番号へ KILL する**
+      #   （冒頭の誤爆が、ここだけ残る）
+      # - 起こした直後に届くと、番号を誰も覚えておらず、子が残る
+      # ⚠ 中で待つ処理をしないこと（中断が、その間ずっと届かなくなる）。
+      def uninterruptible(&)
+        return Thread.handle_interrupt(Object => :never, &)
       end
 
       # ⚠⚠ **プロセスグループごと起こす。** `to_s` はシェルを経由しうるので、子の番号だけに
@@ -69,7 +82,7 @@ module Ginseng
         err_r, err_w = IO.pipe
         pid = Process.spawn(*spawn_args, chdir: dir, pgroup: true,
           in: File::NULL, out: out_w, err: err_w)
-        return [pid, [out_r, err_r]]
+        return Child.new(pid, [out_r, err_r])
       ensure
         # ⚠ 書く側の端は必ず閉じる — こちらが握ったままだと、読み手が EOF に達しない。
         [out_w, err_w].each {|io| io&.close}
@@ -83,9 +96,9 @@ module Ginseng
       # 🔴 **先に読み切りを待ち、先頭はそのあとで回収する。** 逆にすると、先頭を回収した
       # あとで締切が来て、空いたかもしれない番号へシグナルを送ることになる。
       # ⚠ 出力を出さないコマンドでは、読み手は先頭が終わるまで戻らないので、待ち方は変わらない。
-      def await(pid, readers, deadline)
+      def await(child, readers, deadline)
         return nil unless drained?(readers, deadline)
-        return reap(pid, deadline)
+        return reap(child, deadline)
       end
 
       # 出力のパイプが両方とも閉じたか（＝生きている書き手が 1 つも残っていないか）。
@@ -94,29 +107,29 @@ module Ginseng
       end
 
       # 先頭を回収する。`deadline` までに終わらなければ nil（回収しない）。
-      def reap(pid, deadline)
+      # ⚠ 回収と、`child.status` への記録は 1 つの区間（→ `uninterruptible`）。
+      def reap(child, deadline)
         interval = 0.001
         loop do
-          _, status = Process.wait2(pid, Process::WNOHANG)
-          return status if status
+          uninterruptible {child.status = Process.wait2(child.pid, Process::WNOHANG)&.last}
+          return child.status if child.status
           return nil if monotonic >= deadline
           sleep([interval, remaining(deadline)].min)
           interval = [interval * 2, REAP_INTERVAL_MAX].min
         end
       end
 
-      # 締切を過ぎた子をプロセスグループごと止める。先頭を回収できたら、その終了状態を返す。
+      # 締切を過ぎた子をプロセスグループごと止める。
       #
       # ⚠ TERM のあと、**出力が閉じて先頭も終わったら**そこで引き上げる（KILL は送らない）。
       # 🔴 先頭を回収したあとは、もう送らない（冒頭）。⚠ 猶予の間に終わらなければ KILL。
       # ⚠ 送れない（`EPERM`）相手・グループを抜けた相手には届かないが、ここでは気にしない —
       # 止まったかは、呼び出し側がパイプを見て決める。
-      def terminate(pid, readers)
-        signal_group('TERM', pid)
+      def terminate(child, readers)
+        signal_group('TERM', child.pid)
         deadline = monotonic + KILL_GRACE_SECONDS
-        status = reap(pid, deadline) if drained?(readers, deadline)
-        signal_group('KILL', pid) unless status
-        return status
+        reap(child, deadline) if drained?(readers, deadline)
+        signal_group('KILL', child.pid) unless child.status
       end
 
       # 🔴🔴 **止められなかったことを、止めたことにしない (#684 Codex P1 / P2)。**
@@ -129,9 +142,9 @@ module Ginseng
       #
       # ⚠ **締切までに出ていた出力は捨てない。** 読み終えた分を `stdout` / `stderr` に残す
       # （ffmpeg が TERM で出す末尾など、診断に要る）。読み終えていない側は nil。
-      def expire!(pid, readers, timeout)
+      def expire!(child, readers, timeout)
         stopped = drained?(readers, monotonic + DRAIN_GRACE_SECONDS)
-        @pid = pid
+        @pid = pid = child.pid
         @stdout, @stderr = readers.map {|reader| reader.value unless reader.alive?}
         log_expired(pid, timeout, stopped:)
         detail = stopped ? '' : "; still running: output still held, pid #{pid}"
@@ -149,13 +162,13 @@ module Ginseng
       # ⚠ 読み手を止めてからパイプを閉じる。🔴 閉じ忘れると、止められなかった相手が終わるまで
       # 読み手のスレッドとパイプが残る。⚠ 相手の側は、次に書いたとき `SIGPIPE`
       # （無視していれば `EPIPE`）を受ける。
-      def release(pid, readers, pipes, reaped:)
-        unless reaped
-          signal_group('KILL', pid)
-          Process.detach(pid)
+      def release(child, readers)
+        unless child.status
+          signal_group('KILL', child.pid)
+          Process.detach(child.pid)
         end
         readers&.each {|reader| reader.kill if reader.alive?}
-        pipes.each {|io| io.close unless io.closed?}
+        child.pipes.each {|io| io.close unless io.closed?}
       end
 
       # ⚠ `pgroup: true` で起こしているので、プロセスグループの番号は先頭の pid と同じ。
