@@ -36,6 +36,9 @@ module Ginseng
       error = assert_raise(TooLargeError) {@http.get(URL, max_bytes: 100)}
 
       assert_match(/exceeded 100 bytes/, error.message)
+      # ⚠⚠ **メッセージに URL を入れない**（pooza/mulukhiya-toot-proxy#4815）。🔴 文中の URL は
+      # マスクされず、クエリの資格情報が平文でログに残る。
+      assert_not_include(error.message, URL)
     end
 
     # ⚠ **再送しない。**相手が同じものを返す限り同じ場所で超えるだけで、
