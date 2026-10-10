@@ -210,6 +210,189 @@ module Ginseng
       end
     end
 
+    # 🔴 **締切の時点で戻り、子を残さない**（pooza/mulukhiya-toot-proxy#4794）。
+    # ⚠⚠ 以前は子が終わるまで例外が上がらなかった（`sleep 30` なら 30 秒後）。
+    def test_exec_timeout_kills_the_child
+      nap = unique_sleep
+      @command.args = ['sh', '-c', nap]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 5)
+      assert_empty(running(nap))
+    end
+
+    # ⚠ シェルが立てた孫まで止める。
+    def test_exec_timeout_kills_the_grandchild
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "(#{nap}; echo done) & wait"]
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_empty(running(nap))
+    end
+
+    # 🔴 TERM を無視する相手は KILL で止める。⚠⚠ 先頭のシェルは TERM で先に死ぬので、
+    # **先頭の終了を見て引き上げると本体が残る**。
+    def test_exec_timeout_escalates_to_kill
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_empty(running(nap))
+    end
+
+    # ⚠ パイプのバッファ（64KB）を超える出力でも詰まらない。
+    def test_exec_with_timeout_reads_large_output
+      @command.args = ['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" a']
+
+      assert_equal(0, @command.exec(timeout: 10))
+      assert_equal(300_000, @command.stdout.bytesize)
+    end
+
+    # 🔴 先頭が締切の前に終わっても、パイプを握った子孫が残っていれば締切で止める
+    # （pooza/mulukhiya-toot-proxy#4811 の Codex P1）。⚠ 出力の読み切りが締切の外にあると、ここで永久に戻らない。
+    def test_deadline_covers_descendant_holding_the_pipe
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "#{nap} &"]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 5)
+      assert_empty(running(nap))
+    end
+
+    # 🔴 外側から `Thread#kill` で中断されても子を残さない（pooza/mulukhiya-toot-proxy#4811 の Codex P1）。
+    # ⚠ ハンドラの締切は、実行中のスレッドを kill して切る。
+    def test_child_is_killed_when_the_thread_is_killed
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+      thread = Thread.new {@command.exec(timeout: 30)}
+      sleep(0.5)
+      thread.kill
+      thread.join(5)
+
+      assert_empty(running(nap))
+    end
+
+    # ⚠ 0 は「締切なし」（`Timeout.timeout(0)` と同じ意味・pooza/mulukhiya-toot-proxy#4811 の Codex P2）。
+    def test_zero_timeout_means_no_deadline
+      @command.args = ['sh', '-c', 'sleep 0.3; echo ok']
+
+      assert_equal(0, @command.exec(timeout: 0))
+      assert_equal("ok\n", @command.stdout)
+    end
+
+    # 🔴🔴 **止められない子がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 別のユーザーへ降りた子
+    # （`sudo` 経由）へはシグナルが `EPERM` になる。`popen3` のブロック形式は出口で子を
+    # 待つので、そのままだと**子が終わるまで戻らない**（1 秒の締切に対して 6.0 秒・実測）。
+    # ⚠ 止めたことにしない — 文言と error の行で分かること。
+    def test_exec_timeout_returns_even_if_the_child_cannot_be_signaled
+      nap = unique_sleep
+      @command.args = ['sh', '-c', nap]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      original = deny_group_signals
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 0.5 + CommandLine::KILL_GRACE_SECONDS +
+        CommandLine::REAP_GRACE_SECONDS + 2)
+      assert_match(/still running/, error.message)
+      assert_equal([:error, 'timed out, but the child could not be stopped'],
+        [logger.logs.last.first, logger.logs.last.last[:message]])
+      assert_not_empty(running?(nap))
+    ensure
+      Process.define_singleton_method(:kill, original) if original
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **プロセスグループを抜けた子孫も、止めたことにしない (#684 Codex P2)。**
+    # ⚠⚠ `setsid` した子孫にはグループ宛てのシグナルが届かず、グループは空になる。
+    # 「グループが空か」で決めると、動き続けているのに普通の締切として報告する。
+    def test_exec_timeout_reports_a_descendant_that_left_the_group
+      nap = unique_sleep
+      escape = "Process.setsid; exec(*%w[#{nap}])"
+      @command.args = ['sh', '-c', "#{RbConfig.ruby} -e '#{escape}' & wait"]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 1.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 1.5 + CommandLine::KILL_GRACE_SECONDS +
+        CommandLine::REAP_GRACE_SECONDS + 2)
+      assert_match(/still running/, error.message)
+      assert_equal(:error, logger.logs.last.first)
+      assert_not_empty(running?(nap))
+    ensure
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # ⚠ 止められたときは、止められなかったときの文言も error の行も出さない。
+    # 🔴 **回収されない孫（ゾンビ）が残っていても同じ。** ⚠⚠ CI のコンテナは PID 1 が孤児を
+    # 回収しないので、止めた孫がゾンビとしてグループに残る。グループで決めると、ここが
+    # 「まだ動いている」になる（手元では出ず、CI でだけ落ちた）。
+    def test_exec_timeout_does_not_claim_still_running_for_killed_grandchildren
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "(#{nap}; echo done) & (#{nap}) & wait"]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(logger.logs)
+      assert_empty(running(nap))
+    end
+
+    def test_exec_timeout_does_not_claim_still_running_when_stopped
+      @command.args = ['sh', '-c', unique_sleep]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(logger.logs)
+    end
+
+    # グループ宛て（負の番号）のシグナルを、全部 `EPERM` にする。元の実装を返す。
+    def deny_group_signals
+      original = Process.method(:kill)
+      Process.define_singleton_method(:kill) do |signal, *pids|
+        raise Errno::EPERM if pids.any?(&:negative?)
+        original.call(signal, *pids)
+      end
+      return original
+    end
+
+    # ⚠ `running` と違って、消えるのを待たない。
+    def running?(command)
+      return `pgrep -f '^#{command}$'`.split
+    end
+
+    def unique_sleep
+      return "sleep 30.#{SecureRandom.random_number(10**8).to_s.rjust(8, '0')}"
+    end
+
+    # ⚠ KILL はグループへ送った時点で戻る。孫が消えるまでの一瞬を待ってから数える。
+    def running(command)
+      pids = []
+      20.times do
+        pids = `pgrep -f '^#{command}$'`.split
+        break if pids.empty?
+        sleep(0.1)
+      end
+      return pids
+    end
+
     def test_env
       @command.env = {HOGE: 'fugafuga'}
       @command.args = ['env']
