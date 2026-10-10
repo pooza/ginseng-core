@@ -9,6 +9,9 @@ module Ginseng
   class CommandLine
     include Package
 
+    # ⚠ 締切つきの `exec` の中身は別ファイル (#684)。→ `Deadline`
+    include Deadline
+
     # サブプロセスへ引き継がせない環境変数。詳細は child_env のコメント (#480)。
     UNSET_ENV_KEYS = ['RBENV_VERSION'].freeze
 
@@ -89,33 +92,33 @@ module Ginseng
       end.join(' ')
     end
 
-    # 締切で TERM を送ってから、KILL に切り替えるまでの猶予（秒）。
-    KILL_GRACE_SECONDS = 2
-
-    # KILL を送ってから、出力のパイプが閉じるのを待つ上限（秒）。⚠ 止められない相手
-    # （下記）を見切るまでの時間でもある。
-    REAP_GRACE_SECONDS = 1
-
-    # 🔴🔴 **締切が来たら、子プロセスを止めてから `Timeout::Error` を上げる。**
+    # 🔴🔴 **締切が来たら、子プロセスを止めてから `Timeout::Error` を上げる (#684)。**
     #
     # ⚠⚠ 以前は `Timeout.timeout { Open3.capture3(...) }` の形で、締切が来ても `capture3` の
     # 後始末が**子プロセスの終了を待つ**ので、例外が上がるのは子が終わった後だった
     # （`sleep 5` に 1 秒の締切で 5.0 秒後。Linux と FreeBSD 15.1 で実測）。
-    # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走し、締切の後に間に合った子は
-    # **成功しているのに `Timeout::Error`** になっていた（pooza/mulukhiya-toot-proxy#4794）。
+    # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走していた
+    # （pooza/mulukhiya-toot-proxy#4794）。
     #
-    # 🔴 **止められない子がいる。**
+    # ⚠ 締切が来たら、プロセスグループへ TERM → 2 秒の猶予 → KILL。**締切までに出ていた
+    # 出力は `stdout` / `stderr` に残り**、`status` は nil、error を 1 行残す。
+    #
+    # 🔴 **止められない相手がいる。**
     # - 別のユーザーへ降りた子（`user=` の `sudo` 経由、権限を落とす補助コマンド）。こちらから
     #   シグナルを送れない（`EPERM`）
     # - プロセスグループを抜けた子孫（`setsid` など）。グループ宛てのシグナルが届かない
-    # ⚠⚠ **そのときも締切で戻る**（`Timeout::Error`。メッセージに `still running` と入り、
-    # error を 1 行残す）— 🔴 **子は動き続ける**。止めたい利用側は、止める手段を自分で持つこと。
-    # ⚠ 戻るまでの上限は、締切 ＋ `KILL_GRACE_SECONDS` ＋ `REAP_GRACE_SECONDS`。
-    # 🔴 **残っていると分かるのは、出力のパイプを握っている相手だけ**（→ `drained?`）。
-    # 出力を閉じてから居座る相手は、止められていなくても分からない。
-    # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま。
-    # ⚠ **0 以下は「締切なし」**（`Timeout.timeout(0)` と同じ意味を保つ）。
+    # ⚠⚠ **そのときも締切で戻る**（`Timeout::Error`。文言に `still running` が入る）—
+    # 🔴 **相手は動き続ける**（出力へ書けば `SIGPIPE` を受ける）。止めたい利用側は、
+    # 止める手段を自分で持つこと。⚠ 戻るまでの上限は、締切 ＋ 3 秒（猶予 2 ＋ 見切り 1）。
+    # 🔴 **残っていると分かるのは、出力のパイプを握っている相手だけ。**
+    #
+    # ⚠ **締切つきの子は、別のプロセスグループになる。** 端末の Ctrl-C は届かず、
+    # 端末からの入力も読めない。
+    # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま（締切は効かない）。
+    # ⚠ **0 と nil は「締切なし」。** 負の数は従来どおり `Timeout.timeout` の `ArgumentError`。
+    # ⚠ 前の実行の結果は、始める前に消す（締切で抜けたときに、前回の成功が残らないように）。
     def exec(timeout: nil)
+      @stdout, @stderr, @status, @pid = nil
       secs = Time.elapse do
         Bundler.with_unbundled_env do
           if deadline?(timeout) && !environment_class.win?
@@ -214,127 +217,8 @@ module Ginseng
       return @env.transform_values {|value| value.is_a?(String) ? masked(value) : value}
     end
 
-    def deadline?(timeout)
-      return timeout.is_a?(Numeric) && timeout.positive?
-    end
-
     def spawn_args
       return @user ? [sudo_command] : [child_env, to_s]
-    end
-
-    # ⚠⚠ **プロセスグループごと起こす。** `to_s` はシェルを経由しうるので、子の番号だけに
-    # シグナルを送ると**シェルだけが死んで本体が残る**。
-    # ⚠ 出力は別スレッドで読む — 待っているあいだにパイプのバッファが埋まると子が止まる。
-    #
-    # 🔴🔴 **`popen3` をブロック形式で使わない (#684 Codex P1)。** ブロック形式は出口で
-    # **子の終了を待つ**ので、止められなかった子（上記）がいると、`Timeout::Error` を
-    # 上げたあとでそこに掛かり、**子が終わるまで戻らない**（＝直す前と同じ）。
-    # ⚠ 回収は `waiter`（`Process.detach` のスレッド）に任せる — 待たなくてもゾンビは残らない。
-    def capture_until(timeout)
-      deadline = monotonic + timeout
-      stdin, stdout, stderr, waiter = Open3.popen3(*spawn_args, chdir: dir, pgroup: true)
-      stdin.close
-      readers = [stdout, stderr].map {|io| Thread.new {io.read}}
-      unless await(waiter, readers, deadline)
-        terminate(waiter.pid)
-        settled = true
-        expire!(waiter.pid, timeout, stopped: drained?(readers))
-      end
-      settled = true
-      @stdout, @stderr = readers.map(&:value)
-      @status = waiter.value
-    ensure
-      # 🔴 **外から `Thread#kill` で中断されても、子を残さない。**締切の猶予（TERM → KILL）の
-      # 途中で外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
-      abandon(waiter.pid) if waiter && !settled
-      close_pipes(readers, [stdout, stderr])
-    end
-
-    # 子の終了と、出力の読み切りを締切まで待つ。間に合えば true。
-    #
-    # ⚠⚠ **出力を読み切るところまで締切に含める。**先頭が終わっても、パイプを握った子孫
-    # （`sh -c 'sleep 30 &'`）が残っていると `read` は戻らない。
-    def await(waiter, readers, deadline)
-      return false unless waiter.join(remaining(deadline))
-      return readers.all? {|reader| reader.join(remaining(deadline))}
-    end
-
-    def remaining(deadline)
-      return [deadline - monotonic, 0].max
-    end
-
-    # ⚠⚠ **止められなかったことを、止めたことにしない (#684 Codex P1)。** 例外のクラスは
-    # 同じ（呼び出し側の `rescue Timeout::Error` を壊さない）だが、文言と error の行で分かる。
-    def expire!(pgid, timeout, stopped:)
-      message = "execution expired (#{timeout}s): #{masked(to_s)}"
-      raise Timeout::Error, message if stopped
-      @logger.error(command: masked(to_s), pgid:, timeout:,
-        message: 'timed out, but the child could not be stopped')
-      raise Timeout::Error, "#{message} (still running: output still held, pgid #{pgid})"
-    end
-
-    def abandon(pgid)
-      signal_group('KILL', pgid) if group_alive?(pgid)
-    end
-
-    # ⚠ 読み手を止めてから閉じる。🔴 こちらの端を閉じ忘れると、止められなかった子が
-    # 終わるまで読み手のスレッドとパイプが残る。⚠ 子の側は、次に書いたとき `EPIPE` を受ける。
-    def close_pipes(readers, pipes)
-      readers&.each {|reader| reader.kill if reader.alive?}
-      pipes.compact.each {|io| io.close unless io.closed?}
-    end
-
-    # 締切を過ぎた子をプロセスグループごと止める。⚠ 止まったかは、ここでは答えない
-    # （→ `drained?`）。
-    #
-    # ⚠⚠ **先頭のプロセスが終わったことを「止まった」と読まない。**`to_s` がシェルを経由すると
-    # 先頭はシェルで、TERM で先に死ぬ。TERM を無視する本体がグループに残るので、
-    # **グループが空になったか**で見て、残っていれば KILL する。
-    # ⚠ ここの「残っている」にはゾンビも入る（下記）。その場合は猶予いっぱい待ってから
-    # KILL を送ることになるが、害は無い。
-    def terminate(pgid)
-      signal_group('TERM', pgid)
-      deadline = monotonic + KILL_GRACE_SECONDS
-      sleep(0.05) while group_alive?(pgid) && monotonic < deadline
-      signal_group('KILL', pgid) if group_alive?(pgid)
-    end
-
-    # 出力のパイプが両方とも閉じたか（＝書き手が 1 つも残っていないか）。
-    #
-    # 🔴🔴 **「止まったか」は、グループではなくパイプで決める (#684)。**
-    # - ⚠⚠ **グループはゾンビも数える。** 親に回収されない子（コンテナで PID 1 が回収しない
-    #   構成など）は、止めたあともグループに残り、`kill(0, -pgid)` が通る。🔴 グループで
-    #   決めると、**止めたものを「まだ動いている」と報告する**（CI のコンテナで実際に出た）
-    # - ⚠⚠ **グループを抜けた子孫は、グループからは見えない** (Codex P2)。`setsid` した
-    #   子孫は、グループが空になったあとも動き続ける
-    # ⚠ 生きている書き手が 1 つでもパイプを握っていれば、読み手は戻らない。ゾンビは握らない。
-    # 🔴 **限界**: 出力を閉じて（付け替えて）居座る相手は、ここからは見えない。
-    def drained?(readers)
-      deadline = monotonic + REAP_GRACE_SECONDS
-      return readers.all? {|reader| reader.join(remaining(deadline))}
-    end
-
-    def monotonic
-      return Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    end
-
-    # ⚠ 送る直前に終わっていることがある（`ESRCH`）。そのときは何もしない。
-    # ⚠ 送れない（`EPERM`）も、ここでは何もしない — 止まったかは `drained?` が
-    # パイプを見て決め、止められなければ `expire!` が 1 行だけ残す。
-    def signal_group(signal, pgid)
-      Process.kill(signal, -pgid)
-    rescue Errno::ESRCH, Errno::EPERM
-      nil
-    end
-
-    # ⚠ 触れない（`EPERM`）は「居る」。居ないと言い切れるのは `ESRCH` だけ。
-    def group_alive?(pgid)
-      Process.kill(0, -pgid)
-      return true
-    rescue Errno::ESRCH
-      return false
-    rescue Errno::EPERM
-      return true
     end
 
     def sudo_command
