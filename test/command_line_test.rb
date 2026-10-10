@@ -474,10 +474,95 @@ module Ginseng
       `pkill -KILL -f '^#{nap}$'` if nap
     end
 
+    # いま居る番人の pid。
+    def keepers
+      return `pgrep -f '^/bin/sh -c trap .* echo; read _$'`.split
+    end
+
+    # 🔴 **番人が TERM を無視する準備を済ませる前に、TERM を送らない。**
+    # ⚠⚠ `Process.spawn` が戻った時点では、シェルはまだ `trap` を実行していない。そこへ
+    # グループ宛ての TERM が届くと番人が死に、**番号を確かめられなくなって KILL を送れない**
+    # （TERM を無視する相手が残る）。実測: 起動から 2 ms 以内だと死ぬ。
+    # ⚠ 番人の起動を 0.5 秒遅らせて、締切 0.2 秒を先に来させる。
+    def test_exec_timeout_waits_for_the_keeper_before_term
+      nap = unique_sleep
+      events = []
+      restore = trace_process_calls(events)
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        args = [*args[0..1], "sleep 0.5; #{args[2]}"] if args[2].to_s.end_with?('read _')
+        spawn.call(*args, **options)
+      end
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.2)}
+
+      assert_equal(['TERM', 'KILL'], events.select {|event| event.first == :kill}.map {|event| event[1]})
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+    ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
+      restore&.call
+    end
+
+    # ⚠ コマンドが自分のグループへ TERM 以外を撒いても、番人は死なない（＝止められる）。
+    def test_exec_timeout_survives_signals_the_command_sends_to_its_group
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap '' INT TERM; kill -INT 0; #{nap}; #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+    end
+
+    # 🔴 **実行の最中にホストが fork しても、番人を残さない。**
+    # ⚠⚠ fork した子は、番人の標準入力の書く側を継ぐ。こちらが閉じても番人に EOF が届かず、
+    # fork した子が終わるまで番人が残る（長寿命の子を fork する常駐では溜まる）。
+    def test_exec_with_timeout_leaves_no_keeper_behind_a_fork
+      before = keepers
+      @command.args = ['sh', '-c', 'sleep 0.6; echo ok']
+      runner = Thread.new {@command.exec(timeout: 10)}
+      sleep(0.2)
+      bystander = fork {sleep(8) && exit!(0)}
+
+      assert_equal(0, runner.value)
+      remaining = []
+      20.times do
+        remaining = keepers - before
+        break if remaining.empty?
+        sleep(0.1)
+      end
+
+      assert_empty(remaining)
+    ensure
+      if bystander
+        Process.kill('KILL', bystander)
+        Process.wait(bystander)
+      end
+    end
+
+    # 🔴 **呼び出し側が中断不可の区間に居ても、上限（締切 ＋ 3 秒）で戻る。**
+    # ⚠⚠ 読み手のスレッドが中断不可を引き継ぐと `kill` が効かず、パイプを閉じる側が
+    # 読み手を待って、**止められなかった相手が終わるまで戻らない**。
+    def test_exec_timeout_returns_inside_an_uninterruptible_block
+      nap = unique_sleep
+      @command.args = ['sh', '-c', nap]
+      original = deny_group_signals
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) do
+        Thread.handle_interrupt(Object => :never) {@command.exec(timeout: 0.5)}
+      end
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5.5)
+    ensure
+      Process.define_singleton_method(:kill, original) if original
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
     # ⚠ 番人を残さない。締切で抜けても、間に合っても、コマンドを起こせなくても。
     def test_exec_with_timeout_leaves_no_keeper_behind
-      keepers = -> {`pgrep -f "^sh -c trap '' TERM; read _$"`.split}
-      before = keepers.call
+      before = keepers
       @command.args = ['sh', '-c', 'echo ok']
       @command.exec(timeout: 10)
       @command.args = ['sh', '-c', unique_sleep]
@@ -486,7 +571,7 @@ module Ginseng
       assert_raise(Errno::ENOENT) {@command.exec(timeout: 10)}
       remaining = []
       20.times do
-        remaining = keepers.call - before
+        remaining = keepers - before
         break if remaining.empty?
         sleep(0.1)
       end
