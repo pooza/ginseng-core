@@ -32,11 +32,23 @@ module Ginseng
       # 先頭の終了を見にいく間隔の上限（秒）。⚠ 1 ミリ秒から倍々で伸ばす。
       REAP_INTERVAL_MAX = 0.02
 
-      # 起こした子。⚠ **`status` が入っている ＝ 先頭を回収済み**（もうシグナルを送らない）。
+      # 起こした子。⚠ **`status` が入っている ＝ 先頭の番号を、もう押さえていない**
+      # （回収済みか `LOST`）。以後はシグナルを送らない。
       Child = Struct.new(:pid, :pipes, :status)
 
+      # 先頭を、ほかの誰かに回収された印 (#684 Codex P1)。
+      #
+      # 🔴 **回収するのが自分だけとは限らない。** ホストが `SIGCHLD` を無視していたり、
+      # 別のスレッドが `Process.wait(-1)` / `Process.waitall` を回していたりすると、先頭は
+      # 先に回収され、こちらの `wait2` は `Errno::ECHILD` になる。⚠⚠ **番号はもう空いている**ので、
+      # 「未回収」と読んで送ると、無関係なプロセスグループに届く。
+      # ⚠ 終了状態は分からない。間に合った実行も `Errno::ECHILD` で終わる。
+      # 🔴 **限界**: 横取りに気づけるのは、回収しにいったとき。**その前に送ったシグナルは
+      # 防げない** — そういうホストでは、締切つきの `exec` を使わないこと。
+      LOST = :lost
+
       # ⚠ **外へ約束しない。** 名前を変えると「名前が消える」＝メジャーになる。
-      private_constant :KILL_GRACE_SECONDS, :DRAIN_GRACE_SECONDS, :REAP_INTERVAL_MAX, :Child
+      private_constant :KILL_GRACE_SECONDS, :DRAIN_GRACE_SECONDS, :REAP_INTERVAL_MAX, :Child, :LOST
 
       private
 
@@ -55,7 +67,7 @@ module Ginseng
           expire!(child, readers, timeout)
         end
         @stdout, @stderr = readers.map(&:value)
-        @status = child.status
+        @status = exit_status(child)
       ensure
         # 🔴 **外から `Thread#kill` で中断されても、子を残さない。** ⚠ 締切の猶予の途中で
         # 外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
@@ -108,15 +120,29 @@ module Ginseng
 
       # 先頭を回収する。`deadline` までに終わらなければ nil（回収しない）。
       # ⚠ 回収と、`child.status` への記録は 1 つの区間（→ `uninterruptible`）。
+      # ⚠ 横取りされていたら `LOST` を記録して返す（例外にはしない — 締切の経路では、
+      # このあと `Timeout::Error` を上げる）。
       def reap(child, deadline)
         interval = 0.001
         loop do
-          uninterruptible {child.status = Process.wait2(child.pid, Process::WNOHANG)&.last}
+          uninterruptible {child.status = wait_leader(child.pid)}
           return child.status if child.status
           return nil if monotonic >= deadline
           sleep([interval, remaining(deadline)].min)
           interval = [interval * 2, REAP_INTERVAL_MAX].min
         end
+      end
+
+      def wait_leader(pid)
+        return Process.wait2(pid, Process::WNOHANG)&.last
+      rescue Errno::ECHILD
+        return LOST
+      end
+
+      # ⚠ 間に合ったのに終了状態が分からない（→ `LOST`）ときは、分からないと言う。
+      def exit_status(child)
+        return child.status unless child.status == LOST
+        raise Errno::ECHILD, "pid #{child.pid} was reaped by someone else"
       end
 
       # 締切を過ぎた子をプロセスグループごと止める。

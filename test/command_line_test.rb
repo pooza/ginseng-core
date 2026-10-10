@@ -363,6 +363,42 @@ module Ginseng
       restore&.call
     end
 
+    # 🔴🔴 **先頭を誰かに回収されていたら、グループへシグナルを送らない (#684 Codex P1)。**
+    # ⚠⚠ ホストが `SIGCHLD` を無視していたり、別のスレッドが `Process.wait(-1)` を回して
+    # いたりすると、こちらの回収は `Errno::ECHILD` になる。番号はもう空いているので、
+    # 「未回収」と読んで KILL すると、無関係なプロセスグループに届く。
+    # ⚠ 終了状態は分からないので、間に合った実行も `Errno::ECHILD` で終わる。
+    def test_leader_reaped_by_someone_else_is_never_signaled
+      events = []
+      restore = trace_process_calls(events)
+      traced = Process.method(:wait2)
+      Process.define_singleton_method(:wait2) do |*args|
+        traced.call(*args)&.then {raise Errno::ECHILD}
+      end
+      @command.args = ['sh', '-c', 'echo ok']
+
+      assert_raise(Errno::ECHILD) {@command.exec(timeout: 10)}
+      assert_equal([[:reaped]], events)
+    ensure
+      restore&.call
+    end
+
+    # ⚠ 締切の経路でも同じ。横取りに気づいたあとは送らず、`Timeout::Error` で終わる。
+    def test_expired_leader_reaped_by_someone_else_is_not_signaled_again
+      events = []
+      restore = trace_process_calls(events)
+      traced = Process.method(:wait2)
+      Process.define_singleton_method(:wait2) do |*args|
+        traced.call(*args)&.then {raise Errno::ECHILD}
+      end
+      @command.args = ['sh', '-c', unique_sleep]
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_equal([[:kill, 'TERM'], [:reaped]], events)
+    ensure
+      restore&.call
+    end
+
     # 🔴 **例外の文言にコマンドを載せない。** ⚠⚠ `secrets=` を使っていない利用側では、引数の
     # 資格情報がそのまま文言になる。文言はログと行き先が違う（通知・HTTP の応答）。
     # ⚠ コマンドは error の行に出し、`secrets` はそこでも伏せる (#642)。
