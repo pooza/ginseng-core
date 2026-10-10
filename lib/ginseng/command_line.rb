@@ -9,6 +9,9 @@ module Ginseng
   class CommandLine
     include Package
 
+    # ⚠ 締切つきの `exec` の中身は別ファイル (#684)。→ `Deadline`
+    include Deadline
+
     # サブプロセスへ引き継がせない環境変数。詳細は child_env のコメント (#480)。
     UNSET_ENV_KEYS = ['RBENV_VERSION'].freeze
 
@@ -89,17 +92,41 @@ module Ginseng
       end.join(' ')
     end
 
+    # 🔴🔴 **締切が来たら、子プロセスを止めてから `Timeout::Error` を上げる (#684)。**
+    #
+    # ⚠⚠ 以前は `Timeout.timeout { Open3.capture3(...) }` の形で、締切が来ても `capture3` の
+    # 後始末が**子プロセスの終了を待つ**ので、例外が上がるのは子が終わった後だった
+    # （`sleep 5` に 1 秒の締切で 5.0 秒後。Linux と FreeBSD 15.1 で実測）。
+    # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走していた
+    # （pooza/mulukhiya-toot-proxy#4794）。
+    #
+    # ⚠ 締切が来たら、プロセスグループへ TERM → 2 秒の猶予 → KILL。**締切までに出ていた
+    # 出力は `stdout` / `stderr` に残り**、`status` は nil、error を 1 行残す。
+    #
+    # 🔴 **止められない相手がいる。**
+    # - 別のユーザーへ降りた子（`user=` の `sudo` 経由、権限を落とす補助コマンド）。こちらから
+    #   シグナルを送れない（`EPERM`）
+    # - プロセスグループを抜けた子孫（`setsid` など）。グループ宛てのシグナルが届かない
+    # ⚠⚠ **そのときも締切で戻る**（`Timeout::Error`。文言に `still running` が入る）—
+    # 🔴 **相手は動き続ける**（出力へ書けば `SIGPIPE` を受ける）。止めたい利用側は、
+    # 止める手段を自分で持つこと。⚠ 戻るまでの上限は、締切 ＋ 3 秒（猶予 2 ＋ 見切り 1）。
+    # 🔴 **残っていると分かるのは、出力のパイプを握っている相手だけ。**
+    #
+    # ⚠ **締切つきの子は、別のプロセスグループになる。** 端末の Ctrl-C は届かず、
+    # 端末からの入力も読めない。
+    # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま（締切は効かない）。
+    # ⚠ **0 と nil は「締切なし」。** 負の数は従来どおり `Timeout.timeout` の `ArgumentError`。
+    # ⚠ 前の実行の結果は、始める前に消す（締切で抜けたときに、前回の成功が残らないように）。
     def exec(timeout: nil)
+      @stdout, @stderr, @status, @pid = nil
       secs = Time.elapse do
         Bundler.with_unbundled_env do
-          block = proc do
-            if @user
-              @stdout, @stderr, @status = Open3.capture3(sudo_command, chdir: dir)
-            else
-              @stdout, @stderr, @status = Open3.capture3(child_env, to_s, chdir: dir)
-            end
+          if deadline?(timeout) && !environment_class.win?
+            capture_until(timeout)
+          else
+            block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, chdir: dir)}
+            timeout ? Timeout.timeout(timeout, &block) : block.call
           end
-          timeout ? Timeout.timeout(timeout, &block) : block.call
         end
       end
       @pid = @status.pid
@@ -188,6 +215,10 @@ module Ginseng
     def masked_env
       return @env if secrets.empty?
       return @env.transform_values {|value| value.is_a?(String) ? masked(value) : value}
+    end
+
+    def spawn_args
+      return @user ? [sudo_command] : [child_env, to_s]
     end
 
     def sudo_command
