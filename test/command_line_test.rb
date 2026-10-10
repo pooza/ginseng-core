@@ -286,30 +286,454 @@ module Ginseng
       assert_equal("ok\n", @command.stdout)
     end
 
-    # 🔴🔴 **止められない子がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 別のユーザーへ降りた子
-    # （`sudo` 経由）へはシグナルが `EPERM` になる。`popen3` のブロック形式は出口で子を
-    # 待つので、そのままだと**子が終わるまで戻らない**（1 秒の締切に対して 6.0 秒・実測）。
+    # 🔴🔴 **止められない相手がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 出口で子の終了を
+    # 待つ形（`popen3` のブロック形式）だと、**相手が終わるまで戻らない**
+    # （`sleep 6` に 1 秒の締切で、戻るのは 6.0 秒後・実測）。
     # ⚠ 止めたことにしない — 文言と error の行で分かること。
-    def test_exec_timeout_returns_even_if_the_child_cannot_be_signaled
+    def test_exec_timeout_returns_even_if_the_child_cannot_be_stopped
       nap = unique_sleep
-      @command.args = ['sh', '-c', nap]
+      @command.args = escaping(nap)
       logger = Recorder.new
       @command.instance_variable_set(:@logger, logger)
-      original = deny_group_signals
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 1.5)}
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
-      assert_operator(elapsed, :<, 0.5 + CommandLine::KILL_GRACE_SECONDS +
-        CommandLine::REAP_GRACE_SECONDS + 2)
+      # ⚠ 上限は 締切 1.5 ＋ 猶予 2 ＋ 見切り 1。**数字で書く**（定数から作ると、定数を
+      # 変えても緑のままになる）。
+      assert_operator(elapsed, :<, 6.5)
       assert_match(/still running/, error.message)
       assert_equal([:error, 'timed out, but the child could not be stopped'],
         [logger.logs.last.first, logger.logs.last.last[:message]])
-      assert_not_empty(running?(nap))
+      assert_not_empty(running_now(nap))
     ensure
-      Process.define_singleton_method(:kill, original) if original
       `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴🔴 **Ruby の側からは、どのプロセスにもシグナルを送らない (#684)。**
+    #
+    # ⚠⚠ グループ宛てのシグナルは番号へ送る。番号の持ち主が回収されると番号が空き、
+    # 別のプロセスが引ける — そのあとで送ると、**無関係なプロセスグループへ TERM / KILL が
+    # 届く**（リリース前レビューで、番号の再利用を強制して実測した）。「送る前に確かめる」では
+    # 塞ぎきれなかったので、**グループの持ち主（番人）自身に送らせる**。
+    # ⚠ 4 つの形: 普通の締切／コマンドが先に終わり子孫がパイプを握る／TERM を無視する／
+    # 間に合う。⚠ 唯一の例外は、番人を起こす CONT（番人の pid 宛て）。
+    def test_ruby_never_signals_any_process_itself
+      [
+        ['sh', '-c', unique_sleep],
+        ['sh', '-c', "#{unique_sleep} &"],
+        ['sh', '-c', "trap '' TERM; #{unique_sleep}; #{unique_sleep}"],
+        ['sh', '-c', 'echo ok'],
+      ].each do |args|
+        events = []
+        restore = trace_process_calls(events)
+        @command.args = args
+        begin
+          @command.exec(timeout: 0.5)
+        rescue Timeout::Error
+          nil
+        end
+        restore.call
+
+        assert_only_wakes(events, args.last)
+      ensure
+        restore&.call
+      end
+    end
+
+    # 🔴 **グループごと STOP されても、締切で止める (#684 Codex P1)。**
+    # ⚠⚠ 番人も一緒に止まるので、命令を読めない。SIGSTOP は無視できないので、止まった番人を
+    # 起こしてから命じる。⚠ コマンドは止まったままでよい（KILL は止まっている相手にも効く）。
+    # 🔴 こちらから送るのは、**番人の pid 宛ての CONT だけ**（グループ宛て・TERM / KILL は無い）。
+    def test_exec_timeout_stops_a_group_that_was_stopped
+      nap = unique_sleep
+      before = keepers
+      events = []
+      restore = trace_process_calls(events)
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -STOP 0) & #{nap}"]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+      restore.call
+      kills = events.select {|event| event.first == :kill}
+
+      assert_no_match(/still running/, error.message)
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5.8)
+      assert_empty(running(nap))
+      assert_not_empty(kills)
+      assert_only_wakes(events)
+      assert_empty(keepers - before)
+    ensure
+      restore&.call
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **止まったという知らせを誰かに取られていても、起こす (#684 Codex P2)。**
+    # ⚠⚠ 止まった子の知らせは 1 回しか届かない。ホストの別の待ち手（`WUNTRACED`）が先に
+    # 受け取ると、こちらの `wait2` は nil（＝まだ動いている、と同じ答え）になる。
+    # ⚠ 「止まっている」という答えを nil に差し替えて測る。
+    def test_exec_timeout_wakes_the_keeper_without_the_stop_notice
+      nap = unique_sleep
+      wait2 = Process.method(:wait2)
+      Process.define_singleton_method(:wait2) do |*args|
+        result = wait2.call(*args)
+        result&.last&.stopped? ? nil : result
+      end
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -STOP 0) & #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+    ensure
+      Process.define_singleton_method(:wait2, wait2) if wait2
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **コマンドを起こせなかったときも、番人を残さない（ホストが fork していても）。**
+    # ⚠⚠ fork した子は番人の標準入力の書く側を継ぐので、こちらが閉じるだけでは番人に
+    # EOF が届かない (Codex P2)。⚠ コマンドを起こす直前に fork を挟んで測る。
+    def test_failed_spawn_leaves_no_keeper_behind_a_fork
+      before = keepers
+      bystander = nil
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        bystander ||= fork {sleep(8) && exit!(0)} unless args[2].to_s.include?('while read order')
+        spawn.call(*args, **options)
+      end
+      @command.args = ['no-such-command-for-ginseng-test']
+
+      assert_raise(Errno::ENOENT) {@command.exec(timeout: 10)}
+      remaining = []
+      20.times do
+        remaining = keepers - before
+        break if remaining.empty?
+        sleep(0.1)
+      end
+
+      assert_empty(remaining)
+    ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
+      if bystander
+        Process.kill('KILL', bystander)
+        Process.wait(bystander)
+      end
+    end
+
+    # ⚠ 端末まわりの「止める」シグナル（TSTP / TTIN / TTOU）では、番人は止まらない。
+    # 🔴 別のプロセスグループなので、端末を読もうとした子には TTIN がグループごと届く。
+    def test_exec_timeout_keeper_ignores_terminal_stop_signals
+      nap = unique_sleep
+      events = []
+      restore = trace_process_calls(events)
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -TSTP 0; kill -TTIN 0) & #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+      assert_only_wakes(events)
+    ensure
+      restore&.call
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **番人が居なくなっていたら、誰にも何も送らない。** ⚠⚠ 代わりにこちらから番号宛てに
+    # 送ると、空いたかもしれない番号へ飛ぶ。止められなかったことは、そのまま報告する。
+    # ⚠ 番人を 0.2 秒で終わらせて、締切 0.6 秒を迎えさせる。
+    def test_exec_timeout_sends_nothing_when_the_keeper_is_gone
+      nap = unique_sleep
+      events = []
+      restore = trace_process_calls(events)
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        args = [*args[0..1], 'sleep 0.2'] if args[2].to_s.include?('while read order')
+        spawn.call(*args, **options)
+      end
+      @command.args = ['sh', '-c', nap]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.6)}
+
+      assert_empty(events.select {|event| event.first == :kill})
+      assert_match(/still running/, error.message)
+      assert_not_empty(running_now(nap))
+    ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
+      restore&.call
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # ⚠ コマンドを誰かに回収されたら、終了状態は分からない。間に合った実行も
+    # `Errno::ECHILD` で終わる（成功にも失敗にもしない）。⚠ このときも送らない。
+    def test_command_reaped_by_someone_else_raises_echild
+      events = []
+      restore = trace_process_calls(events)
+      Process.define_singleton_method(:wait2) {|*| raise Errno::ECHILD}
+      @command.args = ['sh', '-c', 'echo ok']
+
+      error = assert_raise(Errno::ECHILD) {@command.exec(timeout: 10)}
+
+      assert_match(/reaped by someone else/, error.message)
+      assert_empty(events.select {|event| event.first == :kill})
+    ensure
+      restore&.call
+    end
+
+    # 🔴 **回収した直後に中断されても、終わった実行へ KILL を送らない (#684 Codex P1)。**
+    # ⚠⚠ 外からの `Thread#kill` は、回収が値を返してから記録されるまでの間にも届く。
+    # 記録が飛ぶと「終わっていない」と読んで、KILL する。
+    # ⚠ 回収が成功したその場で、実行中のスレッドを別スレッドから kill して測る。
+    def test_interruption_right_after_reaping_does_not_signal_the_group
+      events = []
+      restore = trace_process_calls(events)
+      traced = Process.method(:wait2)
+      target = nil
+      Process.define_singleton_method(:wait2) do |*args|
+        result = traced.call(*args)
+        Thread.new {target.kill}.join if result
+        result
+      end
+      @command.args = ['sh', '-c', 'echo ok']
+      target = Thread.new {@command.exec(timeout: 10)}
+      target.join(5)
+
+      assert_only_wakes(events)
+      assert_equal(1, events.count {|event| event.first == :reaped})
+    ensure
+      restore&.call
+    end
+
+    # 🔴🔴 **止められなかった子が居座っていても、ホストのプロセスは終了できる。**
+    #
+    # ⚠⚠ 回収用のスレッドを中断不可の区間で作ると、Ruby は終了時にそれを止められず、
+    # **相手が終わるまでプロセスが終わらない**（常駐の再起動が、子の完走を待つことになる）。
+    # ⚠ 別プロセスで測る — 測りたいのは「プロセスが終わるまでの時間」。
+    # ⚠ **こちらの直接の子**が残る形で測る（番人を先に終わらせて、誰にも何も送らせない）。
+    # 🔴 グループを抜けた子孫を残す形では測れない — 直接の子は止まって回収されるので、
+    # 回収用のスレッドが残らず、この欠陥の経路を通らない（実際に、そう書いて素通りさせた）。
+    def test_host_can_exit_while_an_unstoppable_child_remains
+      nap = unique_sleep
+      script = <<~RUBY
+        require 'ginseng'
+        spawn = Process.method(:spawn)
+        Process.define_singleton_method(:spawn) do |*args, **options|
+          args = [*args[0..1], 'sleep 0.2'] if args[2].to_s.include?('while read order')
+          spawn.call(*args, **options)
+        end
+        command = Ginseng::CommandLine.new(#{nap.split.inspect})
+        command.instance_variable_set(:@logger, Class.new {def error(*) = nil}.new)
+        begin
+          command.exec(timeout: 0.6)
+        rescue Timeout::Error
+          nil
+        end
+      RUBY
+      lib = File.expand_path('../lib', __dir__)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      host = Process.spawn(RbConfig.ruby, '-I', lib, '-e', script, out: File::NULL, err: File::NULL)
+      waiter = Thread.new {Process.wait2(host).last}
+
+      assert_not_nil(waiter.join(20), '子が終わるまでホストが終了しない')
+      assert_predicate(waiter.value, :success?)
+      # ⚠ 起動 ＋ 締切 0.6 ＋ 猶予 2 ＋ 見切り 1。子（30 秒）を待つと、ここを超える。
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 15)
+      assert_not_empty(running_now(nap))
+    ensure
+      Process.kill('KILL', host) if host && waiter&.alive?
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **こちらから送ってよいのは、番人を起こす CONT（正の pid 宛て）だけ。**
+    # ⚠ TERM / KILL と、グループ宛て（負の番号）は 1 つも無いこと。
+    def assert_only_wakes(events, message = nil)
+      kills = events.select {|event| event.first == :kill}
+
+      assert_empty(kills.reject {|_, signal, pid| signal == 'CONT' && pid.positive?}, message)
+    end
+
+    # いま居る番人の pid。
+    def keepers
+      return `pgrep -f '^/bin/sh -c .* while read order; do case'`.split
+    end
+
+    # 🔴 **番人の準備が遅れても、命令は順に届く。**
+    # ⚠⚠ `Process.spawn` が戻った時点では、シェルはまだ `trap` を実行していない。準備の前に
+    # グループへ TERM が飛ぶと番人が死に、KILL を送る者が居なくなる（TERM を無視する相手が
+    # 残る）。⚠ 番人が自分で送る形なら、`trap` は必ず先に済む。
+    # ⚠ 番人の起動を 0.5 秒遅らせて、締切 0.2 秒を先に来させる。
+    def test_exec_timeout_orders_reach_a_slow_keeper
+      nap = unique_sleep
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        args = [*args[0..1], "sleep 0.5; #{args[2]}"] if args[2].to_s.include?('while read order')
+        spawn.call(*args, **options)
+      end
+      @command.args = ['sh', '-c', "trap '' TERM; #{nap}; #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.2)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+    ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
+    end
+
+    # ⚠ コマンドが自分のグループへ TERM 以外を撒いても、番人は死なない（＝止められる）。
+    # ⚠⚠ **名前を並べて無視する形は漏れる (Codex P2)。** 相手が自分では無視してグループへ
+    # 撒いたシグナルで、番人だけが死ぬ。⚠ 並べ忘れやすいもの（XCPU / VTALRM / PROF）も測る。
+    def test_exec_timeout_survives_signals_the_command_sends_to_its_group
+      ['INT', 'HUP', 'USR1', 'XCPU', 'VTALRM', 'PROF'].each do |signal|
+        nap = unique_sleep
+        @command.args = ['sh', '-c', "trap '' #{signal} TERM; kill -#{signal} 0; #{nap}; #{nap}"]
+
+        error = assert_raise(Timeout::Error, signal) {@command.exec(timeout: 0.3)}
+
+        assert_no_match(/still running/, error.message, signal)
+        assert_empty(running(nap), signal)
+      end
+    end
+
+    # 🔴 **実行の最中にホストが fork しても、番人を残さない。**
+    # ⚠⚠ fork した子は、番人の標準入力の書く側を継ぐ。こちらが閉じても番人に EOF が届かず、
+    # fork した子が終わるまで番人が残る（長寿命の子を fork する常駐では溜まる）。
+    def test_exec_with_timeout_leaves_no_keeper_behind_a_fork
+      before = keepers
+      @command.args = ['sh', '-c', 'sleep 0.6; echo ok']
+      runner = Thread.new {@command.exec(timeout: 10)}
+      sleep(0.2)
+      bystander = fork {sleep(8) && exit!(0)}
+
+      assert_equal(0, runner.value)
+      remaining = []
+      20.times do
+        remaining = keepers - before
+        break if remaining.empty?
+        sleep(0.1)
+      end
+
+      assert_empty(remaining)
+    ensure
+      if bystander
+        Process.kill('KILL', bystander)
+        Process.wait(bystander)
+      end
+    end
+
+    # 🔴 **呼び出し側が中断不可の区間に居ても、上限（締切 ＋ 3 秒）で戻る。**
+    # ⚠⚠ 読み手のスレッドが中断不可を引き継ぐと `kill` が効かず、パイプを閉じる側が
+    # 読み手を待って、**止められなかった相手が終わるまで戻らない**。
+    def test_exec_timeout_returns_inside_an_uninterruptible_block
+      nap = unique_sleep
+      @command.args = escaping(nap)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) do
+        Thread.handle_interrupt(Object => :never) {@command.exec(timeout: 1.5)}
+      end
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 6.5)
+    ensure
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # ⚠ 番人を残さない。締切で抜けても、間に合っても、コマンドを起こせなくても。
+    def test_exec_with_timeout_leaves_no_keeper_behind
+      before = keepers
+      @command.args = ['sh', '-c', 'echo ok']
+      @command.exec(timeout: 10)
+      @command.args = ['sh', '-c', unique_sleep]
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      @command.args = ['no-such-command-for-ginseng-test']
+      assert_raise(Errno::ENOENT) {@command.exec(timeout: 10)}
+      remaining = []
+      20.times do
+        remaining = keepers - before
+        break if remaining.empty?
+        sleep(0.1)
+      end
+
+      assert_empty(remaining)
+    end
+
+    # 🔴 **例外の文言にコマンドを載せない。** ⚠⚠ `secrets=` を使っていない利用側では、引数の
+    # 資格情報がそのまま文言になる。文言はログと行き先が違う（通知・HTTP の応答）。
+    # ⚠ コマンドは error の行に出し、`secrets` はそこでも伏せる (#642)。
+    def test_exec_timeout_keeps_the_command_out_of_the_message
+      @command.args = ['sh', '-c', "#{unique_sleep} # https://example.com/push/TOKEN123"]
+      @command.secrets = ['TOKEN123']
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_equal('execution expired (0.5s)', error.message)
+      assert_match(/sleep/, logger.logs.last.last[:command])
+      assert_match(/\[FILTERED\]/, logger.logs.last.last[:command])
+      assert_no_match(/TOKEN123/, logger.logs.last.last.to_s)
+    end
+
+    # ⚠⚠ **TERM のあと、片付ける時間を残す。** 最初から KILL すると、相手は後始末を書けない。
+    # ⚠ **締切までに出ていた出力は捨てない** — 相手が TERM で書いた末尾も `stderr` に残る。
+    # 🔴 **止まったら、猶予を使い切らずに戻る。** ⚠⚠ 「グループが空か」で猶予を回すと、
+    # 回収されていない孤児（ゾンビ）のぶん、止まっているのに最大 2 秒待つ（実測）。
+    def test_exec_timeout_gives_the_child_time_to_clean_up
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "trap 'echo cleanup >&2; exit 0' TERM; echo begun; #{nap} & wait"]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_equal("begun\n", @command.stdout)
+      assert_equal("cleanup\n", @command.stderr)
+      assert_nil(@command.status)
+      assert_kind_of(Integer, @command.pid)
+      assert_operator(elapsed, :<, 2.0)
+      assert_empty(running(nap))
+    end
+
+    # ⚠ 標準エラー出力も、パイプのバッファ（64KB）を超えて詰まらない。
+    def test_exec_with_timeout_reads_large_stderr
+      @command.args = ['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" a >&2; echo ok']
+
+      assert_equal(0, @command.exec(timeout: 10))
+      assert_equal("ok\n", @command.stdout)
+      assert_equal(300_000, @command.stderr.bytesize)
+    end
+
+    # ⚠⚠ **締切で抜けたとき、前の実行の結果を残さない。** 同じオブジェクトを使い回すと、
+    # 締切になったのに `status` が 0、`stdout` が前回の出力のままだった。
+    def test_exec_timeout_does_not_keep_the_previous_result
+      flag = File.join(Dir.mktmpdir, 'slow')
+      @command.args = ['sh', '-c', "test -e #{flag} && exec #{unique_sleep}; echo first"]
+
+      assert_equal(0, @command.exec(timeout: 10))
+      assert_equal("first\n", @command.stdout)
+      previous = @command.pid
+      FileUtils.touch(flag)
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_nil(@command.status)
+      assert_equal('', @command.stdout)
+      assert_not_equal(previous, @command.pid)
+    end
+
+    # ⚠ 締切で抜けても、こちらの端のパイプを残さない。🔴 閉じ忘れると、止められなかった相手が
+    # 終わるまで（GC が拾うまで）fd が残る。
+    def test_exec_timeout_closes_its_pipes
+      open_ios = lambda do
+        ObjectSpace.each_object(IO).count do |io|
+          !io.closed?
+        rescue IOError
+          false
+        end
+      end
+      @command.args = ['sh', '-c', unique_sleep]
+      GC.start
+      before = open_ios.call
+
+      assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      assert_operator(open_ios.call, :<=, before)
     end
 
     # 🔴 **プロセスグループを抜けた子孫も、止めたことにしない (#684 Codex P2)。**
@@ -326,16 +750,15 @@ module Ginseng
       error = assert_raise(Timeout::Error) {@command.exec(timeout: 1.5)}
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
-      assert_operator(elapsed, :<, 1.5 + CommandLine::KILL_GRACE_SECONDS +
-        CommandLine::REAP_GRACE_SECONDS + 2)
+      assert_operator(elapsed, :<, 6.5)
       assert_match(/still running/, error.message)
       assert_equal(:error, logger.logs.last.first)
-      assert_not_empty(running?(nap))
+      assert_not_empty(running_now(nap))
     ensure
       `pkill -KILL -f '^#{nap}$'` if nap
     end
 
-    # ⚠ 止められたときは、止められなかったときの文言も error の行も出さない。
+    # ⚠ 止められたときは、止められなかったときの文言を出さない（error は 1 行・`timed out`）。
     # 🔴 **回収されない孫（ゾンビ）が残っていても同じ。** ⚠⚠ CI のコンテナは PID 1 が孤児を
     # 回収しないので、止めた孫がゾンビとしてグループに残る。グループで決めると、ここが
     # 「まだ動いている」になる（手元では出ず、CI でだけ落ちた）。
@@ -347,8 +770,9 @@ module Ginseng
 
       error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
 
-      assert_no_match(/still running/, error.message)
-      assert_empty(logger.logs)
+      assert_equal('execution expired (0.5s)', error.message)
+      assert_equal([[:error, 'timed out']],
+        logger.logs.map {|severity, message| [severity, message[:message]]})
       assert_empty(running(nap))
     end
 
@@ -359,23 +783,37 @@ module Ginseng
 
       error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
 
-      assert_no_match(/still running/, error.message)
-      assert_empty(logger.logs)
+      assert_equal('execution expired (0.5s)', error.message)
+      assert_equal([[:error, 'timed out']],
+        logger.logs.map {|severity, message| [severity, message[:message]]})
     end
 
-    # グループ宛て（負の番号）のシグナルを、全部 `EPERM` にする。元の実装を返す。
-    def deny_group_signals
-      original = Process.method(:kill)
-      Process.define_singleton_method(:kill) do |signal, *pids|
-        raise Errno::EPERM if pids.any?(&:negative?)
-        original.call(signal, *pids)
-      end
-      return original
+    # グループを抜けて居座る子孫（＝こちらからは止められない相手）を残すコマンド。
+    # ⚠ ruby が起動して `setsid` し終えるまで 1 秒ほど要る。締切は 1.5 秒以上で使う。
+    def escaping(nap)
+      escape = "Process.setsid; exec(*%w[#{nap}])"
+      return ['sh', '-c', "#{RbConfig.ruby} -e '#{escape}' & wait"]
     end
 
     # ⚠ `running` と違って、消えるのを待たない。
-    def running?(command)
+    def running_now(command)
       return `pgrep -f '^#{command}$'`.split
+    end
+
+    # `Process.kill`（宛先を問わず）と回収（`wait2`）を、番号つきで順に記録する。
+    # 元へ戻す手続きを返す。
+    def trace_process_calls(events)
+      originals = [:kill, :wait2].to_h {|name| [name, Process.method(name)]}
+      Process.define_singleton_method(:kill) do |signal, *pids|
+        pids.each {|pid| events.push([:kill, signal, pid])}
+        originals[:kill].call(signal, *pids)
+      end
+      Process.define_singleton_method(:wait2) do |pid, *args|
+        result = originals[:wait2].call(pid, *args)
+        events.push([:reaped, pid]) if result
+        result
+      end
+      return -> {originals.each {|name, impl| Process.define_singleton_method(name, impl)}}
     end
 
     def unique_sleep
