@@ -104,7 +104,8 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
-    # 🔴 **署名付き URL の署名が落ちること (#690)。** ⚠ 既定の一覧が署名系の名前を
+    # 🔴 **署名付き URL の署名が落ちること (#690)。** ⚠ 署名付き URL に限らない名前
+    # （`hm` / `jwt` / `authorization`。#693）も同じ表で見る。⚠ 既定の一覧が署名系の名前を
     # 1 つも持たず、第三者が渡す URL の署名が `url:` にも文中にも平文で残っていた。
     #
     # ⚠⚠ **設定ではなく既定（定数）で落ちること。** 利用側の設定は既定に足す形なので、
@@ -115,6 +116,10 @@ module Ginseng
       'x-goog-signature' => 'https://storage.googleapis.com/b/a.png?X-Goog-Credential=AKIDEXAMPLE&X-Goog-Signature=SECRET',
       'sig' => 'https://a.blob.core.windows.net/c/a.png?sv=AKIDEXAMPLE&sig=SECRET',
       'signature' => 'https://d.cloudfront.net/a.png?Key-Pair-Id=AKIDEXAMPLE&Signature=SECRET',
+      # ⚠ 署名付き URL に限らない名前（#693）。
+      'hm' => 'https://cdn.discordapp.com/attachments/1/2/a.png?ex=AKIDEXAMPLE&hm=SECRET',
+      'jwt' => 'https://private-user-images.githubusercontent.com/a.png?v=AKIDEXAMPLE&jwt=SECRET',
+      'authorization' => 'https://f000.backblazeb2.com/file/b/a.png?b=AKIDEXAMPLE&Authorization=SECRET',
     }.freeze
 
     def test_create_message_masks_signed_url_query
@@ -495,12 +500,17 @@ module Ginseng
       [
         :access_token, :api_key, :apikey, :authorization, :client_secret,
         :password, :refresh_token, :secret, :token,
+        # ⚠ クエリやヘッダの綴りのまま（文字列・大文字混じり）で来る (#693)。パース済みの
+        # クエリ（`params`）や `headers` を Hash のまま出したとき。
+        'X-Amz-Security-Token', 'X-Amz-Signature', 'X-Goog-Signature', :'x-amz-signature',
         # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
         :Authorization, :Access_Token, :TOKEN
       ].each do |key|
         message = @logger.create_message(probe: 'mask', key => 'S3CRET')
 
         assert_equal({probe: 'mask'}, message, key.to_s)
+        # ⚠ 設定ではなく既定（定数）に在ること。利用側へ届くのは定数のほう (#693)。
+        assert_include(Masking::MASK_FIELDS, key.to_s.downcase)
       end
     end
 
@@ -537,6 +547,11 @@ module Ginseng
       message = @logger.create_message(code: 404, key: 'name', i: 3)
 
       assert_equal({code: 404, key: 'name', i: 3}, message)
+
+      # ⚠ 署名系でも、汎用名はクエリ側にだけ置く (#690 / #693)。
+      generic = {sig: 'x', signature: 'footer', hm: 1, jwt: 'header'}
+
+      assert_equal(generic, @logger.create_message(generic))
     end
 
     # 🔴 **設定は既定を置き換えない。既定と合成する (#586)。**

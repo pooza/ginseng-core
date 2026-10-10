@@ -39,8 +39,8 @@ module Ginseng
     # ⚠⚠ **`code` / `i` / `key` は入れない。** クエリのパラメータ名としては
     # 資格情報だが、**Hash のキーとしては無関係な値が普通に入る**（`key` は
     # 汎用名、`code` はステータスコードやエラーコード）。クエリと同じ広さが
-    # 正しいとは限らない。⚠ 署名付き URL の名前（#690）もクエリ側にだけ在る
-    # （理由は `MASK_QUERY_PARAMS`）。
+    # 正しいとは限らない。⚠ `sig` / `signature` / `hm` / `jwt`（#690 / #693）も
+    # クエリ側にだけ在る（理由は `MASK_QUERY_PARAMS`）。
     MASK_FIELDS = [
       'access_token',
       'api_key',
@@ -52,6 +52,11 @@ module Ginseng
       'refresh_token',
       'secret',
       'token',
+      # ⚠ 署名付き URL の名前のうち、**Hash のキーとしても他の用途が無いもの**（#693）。
+      # `sig` / `signature` は入れない（無関係な値が普通に入る）。
+      'x-amz-security-token',
+      'x-amz-signature',
+      'x-goog-signature',
     ].freeze
 
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
@@ -64,9 +69,13 @@ module Ginseng
     #
     # ⚠ **鍵の識別子（`X-Amz-Credential` / `Key-Pair-Id`）は入れない。** 秘密ではなく、
     # どの鍵の URL かはログに残したい。
-    # ⚠⚠ **`MASK_FIELDS` には足さない。** `sig` / `signature` は Hash のキーとしては
+    # ⚠ **署名付き URL に限らない名前も足した (#693)。** `hm`（Discord 添付の HMAC）と
+    # `jwt`（GitHub の private 添付）は webhook の `image_url` に現実に来る。
+    # `authorization` は `MASK_FIELDS` に在るのにここに無かった（Backblaze B2 は
+    # クエリで受ける。#586 が塞いだ非対称の逆向き）。
+    # ⚠⚠ **`sig` / `signature` / `hm` / `jwt` は `MASK_FIELDS` に足さない。** Hash のキーとしては
     # 無関係な値が普通に入る（`code` / `key` と同じ判断）。⚠ `x-amz-*` / `x-goog-*` は
-    # Hash のキーとしても他の用途が無いが、**足すかどうかは決めていない**（#692）。
+    # Hash のキーとしても他の用途が無いので、あちらにも在る（#693）。
     #
     # ⚠⚠ **`HTTP::RedirectGuard` が同じ一覧を「資格情報か」の判定に使う。** ここへ足すと、
     # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わず、
@@ -76,9 +85,12 @@ module Ginseng
       'access_token',
       'api_key',
       'apikey',
+      'authorization',
       'client_secret',
       'code',
+      'hm',
       'i',
+      'jwt',
       'key',
       'password',
       'refresh_token',
