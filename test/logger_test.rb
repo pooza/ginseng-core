@@ -104,7 +104,8 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
-    # 🔴 **署名付き URL の署名が落ちること (#690)。** ⚠ 既定の一覧が署名系の名前を
+    # 🔴 **署名付き URL の署名が落ちること (#690)。** ⚠ 署名付き URL に限らない名前
+    # （`hm` / `jwt` / `authorization`。#693）も同じ表で見る。⚠ 既定の一覧が署名系の名前を
     # 1 つも持たず、第三者が渡す URL の署名が `url:` にも文中にも平文で残っていた。
     #
     # ⚠⚠ **設定ではなく既定（定数）で落ちること。** 利用側の設定は既定に足す形なので、
@@ -499,7 +500,8 @@ module Ginseng
       [
         :access_token, :api_key, :apikey, :authorization, :client_secret,
         :password, :refresh_token, :secret, :token,
-        # ⚠ ヘッダの綴りのまま（文字列・大文字混じり）で来る (#693)。
+        # ⚠ クエリやヘッダの綴りのまま（文字列・大文字混じり）で来る (#693)。パース済みの
+        # クエリ（`params`）や `headers` を Hash のまま出したとき。
         'X-Amz-Security-Token', 'X-Amz-Signature', 'X-Goog-Signature', :'x-amz-signature',
         # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
         :Authorization, :Access_Token, :TOKEN
