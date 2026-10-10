@@ -138,13 +138,15 @@ module Ginseng
       ensure
         # ⚠ 子へ渡した端は必ず閉じる — こちらが握ったままだと、読み手が EOF に達しない。
         [gate_r, out_w, err_w].each {|io| io&.close}
-        discard(keeper, [gate_w, out_r, err_r]) unless pid
+        discard(Child.new(keeper, gate_w, nil, [out_r, err_r])) unless pid
       end
 
       # ⚠ コマンドを起こせなかったとき（存在しないコマンド・無い `chdir` 先）の後始末。
-      def discard(keeper, pipes)
-        pipes.each {|io| io&.close}
-        forget(keeper) if keeper
+      # ⚠ ここでも番人に「終われ」と書く（閉じるだけに頼らない。→ `release`）。
+      def discard(child)
+        order(child, 'EXIT') if child.keeper
+        [child.gate, *child.pipes].each {|io| io&.close}
+        forget(child.keeper) if child.keeper
       end
 
       # 終わるのを待たずに手放す（回収だけ別スレッドに任せる）。
@@ -282,15 +284,19 @@ module Ginseng
       # 🔴 **グループごと STOP されると、番人も止まって命令を読めない**（コマンドが
       # `kill -STOP 0` を撒く・外から止められる）。⚠ SIGSTOP は無視も trap もできない。
       # ⚠⚠ **送るのは CONT を、番人の pid へだけ。** こちらから送る唯一のシグナル。
-      # - 送る前に、`wait2` に「止まっている子」を訊く（`WUNTRACED`）。止まった子は回収されない
-      #   ので、**自分の子が、いま止まっている**と確かめたうえで送れる
+      # - **番人が終わったと分かっていない限り、送る。** 動いている相手への CONT は何も
+      #   起こさない。🔴 「止まっていると分かったら送る」にしない — 止まったという知らせは
+      #   1 回しか届かず、ホストの別の待ち手（`WUNTRACED`）が先に受け取っていると、
+      #   止まっているのに分からない (Codex P2)
+      # - 送る前に `wait2` を訊く。終わっていた（いま回収した）・誰かに回収された（`ECHILD`）
+      #   なら送らない
       # - 万一番号を取り違えても、届くのは CONT（止まっていた誰かが動き出すだけ）
       # ⚠ コマンドの側は止まったままでよい — KILL は止まっている相手にも効く。
       def wake(child)
         uninterruptible do
           flags = Process::WNOHANG | Process::WUNTRACED
-          stopped = Process.wait2(child.keeper, flags)&.last&.stopped?
-          Process.kill('CONT', child.keeper) if stopped
+          status = Process.wait2(child.keeper, flags)&.last
+          Process.kill('CONT', child.keeper) if status.nil? || status.stopped?
         end
       rescue Errno::ECHILD, Errno::ESRCH
         return nil

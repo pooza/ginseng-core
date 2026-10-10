@@ -318,8 +318,7 @@ module Ginseng
     # 届く**（リリース前レビューで、番号の再利用を強制して実測した）。「送る前に確かめる」では
     # 塞ぎきれなかったので、**グループの持ち主（番人）自身に送らせる**。
     # ⚠ 4 つの形: 普通の締切／コマンドが先に終わり子孫がパイプを握る／TERM を無視する／
-    # 間に合う。どれも `Process.kill` を 1 回も呼ばないこと。
-    # ⚠ 唯一の例外（止められた番人を起こす CONT）は、番人が止められたときだけ。
+    # 間に合う。⚠ 唯一の例外は、番人を起こす CONT（番人の pid 宛て）。
     def test_ruby_never_signals_any_process_itself
       [
         ['sh', '-c', unique_sleep],
@@ -337,7 +336,7 @@ module Ginseng
         end
         restore.call
 
-        assert_empty(events.select {|event| event.first == :kill}, args.last)
+        assert_only_wakes(events, args.last)
       ensure
         restore&.call
       end
@@ -363,12 +362,63 @@ module Ginseng
       assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5.8)
       assert_empty(running(nap))
       assert_not_empty(kills)
-      assert_equal(['CONT'], kills.map {|event| event[1]}.uniq)
-      assert_predicate(kills.map(&:last).min, :positive?)
+      assert_only_wakes(events)
       assert_empty(keepers - before)
     ensure
       restore&.call
       `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **止まったという知らせを誰かに取られていても、起こす (#684 Codex P2)。**
+    # ⚠⚠ 止まった子の知らせは 1 回しか届かない。ホストの別の待ち手（`WUNTRACED`）が先に
+    # 受け取ると、こちらの `wait2` は nil（＝まだ動いている、と同じ答え）になる。
+    # ⚠ 「止まっている」という答えを nil に差し替えて測る。
+    def test_exec_timeout_wakes_the_keeper_without_the_stop_notice
+      nap = unique_sleep
+      wait2 = Process.method(:wait2)
+      Process.define_singleton_method(:wait2) do |*args|
+        result = wait2.call(*args)
+        result&.last&.stopped? ? nil : result
+      end
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -STOP 0) & #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+    ensure
+      Process.define_singleton_method(:wait2, wait2) if wait2
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **コマンドを起こせなかったときも、番人を残さない（ホストが fork していても）。**
+    # ⚠⚠ fork した子は番人の標準入力の書く側を継ぐので、こちらが閉じるだけでは番人に
+    # EOF が届かない (Codex P2)。⚠ コマンドを起こす直前に fork を挟んで測る。
+    def test_failed_spawn_leaves_no_keeper_behind_a_fork
+      before = keepers
+      bystander = nil
+      spawn = Process.method(:spawn)
+      Process.define_singleton_method(:spawn) do |*args, **options|
+        bystander ||= fork {sleep(8) && exit!(0)} unless args[2].to_s.include?('while read order')
+        spawn.call(*args, **options)
+      end
+      @command.args = ['no-such-command-for-ginseng-test']
+
+      assert_raise(Errno::ENOENT) {@command.exec(timeout: 10)}
+      remaining = []
+      20.times do
+        remaining = keepers - before
+        break if remaining.empty?
+        sleep(0.1)
+      end
+
+      assert_empty(remaining)
+    ensure
+      Process.define_singleton_method(:spawn, spawn) if spawn
+      if bystander
+        Process.kill('KILL', bystander)
+        Process.wait(bystander)
+      end
     end
 
     # ⚠ 端末まわりの「止める」シグナル（TSTP / TTIN / TTOU）では、番人は止まらない。
@@ -383,7 +433,7 @@ module Ginseng
 
       assert_no_match(/still running/, error.message)
       assert_empty(running(nap))
-      assert_empty(events.select {|event| event.first == :kill})
+      assert_only_wakes(events)
     ensure
       restore&.call
       `pkill -KILL -f '^#{nap}$'` if nap
@@ -448,7 +498,7 @@ module Ginseng
       target = Thread.new {@command.exec(timeout: 10)}
       target.join(5)
 
-      assert_empty(events.select {|event| event.first == :kill})
+      assert_only_wakes(events)
       assert_equal(1, events.count {|event| event.first == :reaped})
     ensure
       restore&.call
@@ -492,6 +542,14 @@ module Ginseng
     ensure
       Process.kill('KILL', host) if host && waiter&.alive?
       `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # 🔴 **こちらから送ってよいのは、番人を起こす CONT（正の pid 宛て）だけ。**
+    # ⚠ TERM / KILL と、グループ宛て（負の番号）は 1 つも無いこと。
+    def assert_only_wakes(events, message = nil)
+      kills = events.select {|event| event.first == :kill}
+
+      assert_empty(kills.reject {|_, signal, pid| signal == 'CONT' && pid.positive?}, message)
     end
 
     # いま居る番人の pid。
