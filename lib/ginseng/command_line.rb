@@ -92,7 +92,7 @@ module Ginseng
     # 締切で TERM を送ってから、KILL に切り替えるまでの猶予（秒）。
     KILL_GRACE_SECONDS = 2
 
-    # KILL を送ってから、グループが空になるのを待つ上限（秒）。⚠ 止められない相手
+    # KILL を送ってから、出力のパイプが閉じるのを待つ上限（秒）。⚠ 止められない相手
     # （下記）を見切るまでの時間でもある。
     REAP_GRACE_SECONDS = 1
 
@@ -104,11 +104,15 @@ module Ginseng
     # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走し、締切の後に間に合った子は
     # **成功しているのに `Timeout::Error`** になっていた（pooza/mulukhiya-toot-proxy#4794）。
     #
-    # 🔴 **止められない子がいる。** 別のユーザーへ降りた子（`user=` の `sudo` 経由、権限を
-    # 落とす補助コマンド）へは、こちらからシグナルを送れない（`EPERM`）。⚠⚠ **そのときも
-    # 締切で戻る**（`Timeout::Error`。メッセージに `still running` と入り、error を 1 行残す）
-    # — 🔴 **子は動き続ける**。止めたい利用側は、止める手段を自分で持つこと。
+    # 🔴 **止められない子がいる。**
+    # - 別のユーザーへ降りた子（`user=` の `sudo` 経由、権限を落とす補助コマンド）。こちらから
+    #   シグナルを送れない（`EPERM`）
+    # - プロセスグループを抜けた子孫（`setsid` など）。グループ宛てのシグナルが届かない
+    # ⚠⚠ **そのときも締切で戻る**（`Timeout::Error`。メッセージに `still running` と入り、
+    # error を 1 行残す）— 🔴 **子は動き続ける**。止めたい利用側は、止める手段を自分で持つこと。
     # ⚠ 戻るまでの上限は、締切 ＋ `KILL_GRACE_SECONDS` ＋ `REAP_GRACE_SECONDS`。
+    # 🔴 **残っていると分かるのは、出力のパイプを握っている相手だけ**（→ `drained?`）。
+    # 出力を閉じてから居座る相手は、止められていなくても分からない。
     # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま。
     # ⚠ **0 以下は「締切なし」**（`Timeout.timeout(0)` と同じ意味を保つ）。
     def exec(timeout: nil)
@@ -234,7 +238,7 @@ module Ginseng
       unless await(waiter, readers, deadline)
         terminate(waiter.pid)
         settled = true
-        expire!(waiter.pid, timeout, stopped: !group_alive?(waiter.pid))
+        expire!(waiter.pid, timeout, stopped: drained?(readers))
       end
       settled = true
       @stdout, @stderr = readers.map(&:value)
@@ -266,7 +270,7 @@ module Ginseng
       raise Timeout::Error, message if stopped
       @logger.error(command: masked(to_s), pgid:, timeout:,
         message: 'timed out, but the child could not be stopped')
-      raise Timeout::Error, "#{message} (still running: could not signal pgid #{pgid})"
+      raise Timeout::Error, "#{message} (still running: output still held, pgid #{pgid})"
     end
 
     def abandon(pgid)
@@ -280,27 +284,34 @@ module Ginseng
       pipes.compact.each {|io| io.close unless io.closed?}
     end
 
-    # 締切を過ぎた子をプロセスグループごと止める。⚠ 止まったかは、呼び出し側が
-    # `group_alive?` で見る（ここは答えない）。
+    # 締切を過ぎた子をプロセスグループごと止める。⚠ 止まったかは、ここでは答えない
+    # （→ `drained?`）。
     #
     # ⚠⚠ **先頭のプロセスが終わったことを「止まった」と読まない。**`to_s` がシェルを経由すると
     # 先頭はシェルで、TERM で先に死ぬ。TERM を無視する本体がグループに残るので、
     # **グループが空になったか**で見て、残っていれば KILL する。
-    # ⚠⚠ **シグナルが通ったかどうかでは決めない。** グループへの `kill` は、**1 つにでも
-    # 届けば成功を返す** — 先頭のシェルにだけ届き、別ユーザーへ降りた本体には届いていない、
-    # という形がある。🔴 見るのは最後まで「グループが空か」。
+    # ⚠ ここの「残っている」にはゾンビも入る（下記）。その場合は猶予いっぱい待ってから
+    # KILL を送ることになるが、害は無い。
     def terminate(pgid)
       signal_group('TERM', pgid)
-      return nil if gone_within?(pgid, KILL_GRACE_SECONDS)
-      signal_group('KILL', pgid)
-      gone_within?(pgid, REAP_GRACE_SECONDS)
-      return nil
+      deadline = monotonic + KILL_GRACE_SECONDS
+      sleep(0.05) while group_alive?(pgid) && monotonic < deadline
+      signal_group('KILL', pgid) if group_alive?(pgid)
     end
 
-    def gone_within?(pgid, seconds)
-      deadline = monotonic + seconds
-      sleep(0.05) while (alive = group_alive?(pgid)) && monotonic < deadline
-      return !alive
+    # 出力のパイプが両方とも閉じたか（＝書き手が 1 つも残っていないか）。
+    #
+    # 🔴🔴 **「止まったか」は、グループではなくパイプで決める (#684)。**
+    # - ⚠⚠ **グループはゾンビも数える。** 親に回収されない子（コンテナで PID 1 が回収しない
+    #   構成など）は、止めたあともグループに残り、`kill(0, -pgid)` が通る。🔴 グループで
+    #   決めると、**止めたものを「まだ動いている」と報告する**（CI のコンテナで実際に出た）
+    # - ⚠⚠ **グループを抜けた子孫は、グループからは見えない** (Codex P2)。`setsid` した
+    #   子孫は、グループが空になったあとも動き続ける
+    # ⚠ 生きている書き手が 1 つでもパイプを握っていれば、読み手は戻らない。ゾンビは握らない。
+    # 🔴 **限界**: 出力を閉じて（付け替えて）居座る相手は、ここからは見えない。
+    def drained?(readers)
+      deadline = monotonic + REAP_GRACE_SECONDS
+      return readers.all? {|reader| reader.join(remaining(deadline))}
     end
 
     def monotonic
@@ -308,8 +319,8 @@ module Ginseng
     end
 
     # ⚠ 送る直前に終わっていることがある（`ESRCH`）。そのときは何もしない。
-    # ⚠ 送れない（`EPERM`）も、ここでは何もしない — 止まったかは `terminate` が
-    # グループを見て決め、止められなければ `expire!` が 1 行だけ残す。
+    # ⚠ 送れない（`EPERM`）も、ここでは何もしない — 止まったかは `drained?` が
+    # パイプを見て決め、止められなければ `expire!` が 1 行だけ残す。
     def signal_group(signal, pgid)
       Process.kill(signal, -pgid)
     rescue Errno::ESRCH, Errno::EPERM

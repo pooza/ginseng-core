@@ -312,7 +312,46 @@ module Ginseng
       `pkill -KILL -f '^#{nap}$'` if nap
     end
 
+    # 🔴 **プロセスグループを抜けた子孫も、止めたことにしない (#684 Codex P2)。**
+    # ⚠⚠ `setsid` した子孫にはグループ宛てのシグナルが届かず、グループは空になる。
+    # 「グループが空か」で決めると、動き続けているのに普通の締切として報告する。
+    def test_exec_timeout_reports_a_descendant_that_left_the_group
+      nap = unique_sleep
+      escape = "Process.setsid; exec(*%w[#{nap}])"
+      @command.args = ['sh', '-c', "#{RbConfig.ruby} -e '#{escape}' & wait"]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 1.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 1.5 + CommandLine::KILL_GRACE_SECONDS +
+        CommandLine::REAP_GRACE_SECONDS + 2)
+      assert_match(/still running/, error.message)
+      assert_equal(:error, logger.logs.last.first)
+      assert_not_empty(running?(nap))
+    ensure
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
     # ⚠ 止められたときは、止められなかったときの文言も error の行も出さない。
+    # 🔴 **回収されない孫（ゾンビ）が残っていても同じ。** ⚠⚠ CI のコンテナは PID 1 が孤児を
+    # 回収しないので、止めた孫がゾンビとしてグループに残る。グループで決めると、ここが
+    # 「まだ動いている」になる（手元では出ず、CI でだけ落ちた）。
+    def test_exec_timeout_does_not_claim_still_running_for_killed_grandchildren
+      nap = unique_sleep
+      @command.args = ['sh', '-c', "(#{nap}; echo done) & (#{nap}) & wait"]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(logger.logs)
+      assert_empty(running(nap))
+    end
+
     def test_exec_timeout_does_not_claim_still_running_when_stopped
       @command.args = ['sh', '-c', unique_sleep]
       logger = Recorder.new
