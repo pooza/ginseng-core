@@ -319,6 +319,7 @@ module Ginseng
     # 塞ぎきれなかったので、**グループの持ち主（番人）自身に送らせる**。
     # ⚠ 4 つの形: 普通の締切／コマンドが先に終わり子孫がパイプを握る／TERM を無視する／
     # 間に合う。どれも `Process.kill` を 1 回も呼ばないこと。
+    # ⚠ 唯一の例外（止められた番人を起こす CONT）は、番人が止められたときだけ。
     def test_ruby_never_signals_any_process_itself
       [
         ['sh', '-c', unique_sleep],
@@ -340,6 +341,52 @@ module Ginseng
       ensure
         restore&.call
       end
+    end
+
+    # 🔴 **グループごと STOP されても、締切で止める (#684 Codex P1)。**
+    # ⚠⚠ 番人も一緒に止まるので、命令を読めない。SIGSTOP は無視できないので、止まった番人を
+    # 起こしてから命じる。⚠ コマンドは止まったままでよい（KILL は止まっている相手にも効く）。
+    # 🔴 こちらから送るのは、**番人の pid 宛ての CONT だけ**（グループ宛て・TERM / KILL は無い）。
+    def test_exec_timeout_stops_a_group_that_was_stopped
+      nap = unique_sleep
+      before = keepers
+      events = []
+      restore = trace_process_calls(events)
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -STOP 0) & #{nap}"]
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+      restore.call
+      kills = events.select {|event| event.first == :kill}
+
+      assert_no_match(/still running/, error.message)
+      assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5.8)
+      assert_empty(running(nap))
+      assert_not_empty(kills)
+      assert_equal(['CONT'], kills.map {|event| event[1]}.uniq)
+      assert_predicate(kills.map(&:last).min, :positive?)
+      assert_empty(keepers - before)
+    ensure
+      restore&.call
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # ⚠ 端末まわりの「止める」シグナル（TSTP / TTIN / TTOU）では、番人は止まらない。
+    # 🔴 別のプロセスグループなので、端末を読もうとした子には TTIN がグループごと届く。
+    def test_exec_timeout_keeper_ignores_terminal_stop_signals
+      nap = unique_sleep
+      events = []
+      restore = trace_process_calls(events)
+      @command.args = ['sh', '-c', "(sleep 0.2; kill -TSTP 0; kill -TTIN 0) & #{nap}"]
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.8)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(running(nap))
+      assert_empty(events.select {|event| event.first == :kill})
+    ensure
+      restore&.call
+      `pkill -KILL -f '^#{nap}$'` if nap
     end
 
     # 🔴 **番人が居なくなっていたら、誰にも何も送らない。** ⚠⚠ 代わりにこちらから番号宛てに

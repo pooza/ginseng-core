@@ -5,6 +5,7 @@ module Ginseng
     # 締切つきの `exec` (#684)。締切が来たら子プロセスをグループごと止める。
     #
     # 🔴🔴 **こちらからは、プロセスグループの番号へシグナルを送らない。** ここの芯。
+    # ⚠ 例外は 1 つだけ: 止められた番人を起こす CONT を、番人の pid へ（→ `wake`）。
     # ⚠⚠ グループ宛てのシグナルは**番号**へ送る。番号の持ち主が回収されると（グループに誰も
     # 残っていなければ）その番号は空き、**別のプロセスが引ける** — そのあとで送ると、
     # 🔴 **無関係なプロセスグループへ TERM / KILL が届く**（root の常駐なら、どのグループにも届く）。
@@ -49,10 +50,13 @@ module Ginseng
       # - それ以外・EOF: 終わる
       # - ⚠ TERM は自分では無視する（そうしないと、自分の TERM で死んで KILL を送れない）。
       #   コマンドが自分のグループへ撒きうるほかのシグナルも無視する（`kill -INT 0` など）
+      # - ⚠ **止めるシグナルも無視する**（TSTP / TTIN / TTOU）。🔴 別のプロセスグループなので、
+      #   端末を読もうとした子には TTIN がグループごと届く — 番人まで止まると、命令を読めない
+      # - 🔴 SIGSTOP は無視できない。→ `wake`
       # - ⚠ `trap` は命令を読む前に済む（＝準備の前に TERM が飛ぶことは無い）
       # - ⚠ `/bin/sh` を直に指す（`PATH` に依らない。Ruby がシェル経由の文字列に使うのと同じ）
       KEEPER_SCRIPT = <<~SH.tr("\n", ' ').strip.freeze
-        trap '' HUP INT QUIT TERM USR1 USR2 PIPE ALRM;
+        trap '' HUP INT QUIT TERM USR1 USR2 PIPE ALRM TSTP TTIN TTOU;
         while read order; do
           case "$order" in TERM|KILL) kill -s "$order" 0;; *) exit 0;; esac;
         done
@@ -267,8 +271,28 @@ module Ginseng
       # ⚠ 番人が居ない（KILL を命じたあと・誰かに殺された）ときは `EPIPE` になる。
       # そのときは何もしない — 🔴 **代わりにこちらから送らない**（冒頭）。
       def order(child, word)
+        wake(child)
         child.gate.syswrite("#{word}\n")
       rescue Errno::EPIPE, IOError
+        return nil
+      end
+
+      # 番人が止められていたら、起こす (#684 Codex P1)。
+      #
+      # 🔴 **グループごと STOP されると、番人も止まって命令を読めない**（コマンドが
+      # `kill -STOP 0` を撒く・外から止められる）。⚠ SIGSTOP は無視も trap もできない。
+      # ⚠⚠ **送るのは CONT を、番人の pid へだけ。** こちらから送る唯一のシグナル。
+      # - 送る前に、`wait2` に「止まっている子」を訊く（`WUNTRACED`）。止まった子は回収されない
+      #   ので、**自分の子が、いま止まっている**と確かめたうえで送れる
+      # - 万一番号を取り違えても、届くのは CONT（止まっていた誰かが動き出すだけ）
+      # ⚠ コマンドの側は止まったままでよい — KILL は止まっている相手にも効く。
+      def wake(child)
+        uninterruptible do
+          flags = Process::WNOHANG | Process::WUNTRACED
+          stopped = Process.wait2(child.keeper, flags)&.last&.stopped?
+          Process.kill('CONT', child.keeper) if stopped
+        end
+      rescue Errno::ECHILD, Errno::ESRCH
         return nil
       end
 
