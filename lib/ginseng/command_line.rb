@@ -92,6 +92,10 @@ module Ginseng
     # 締切で TERM を送ってから、KILL に切り替えるまでの猶予（秒）。
     KILL_GRACE_SECONDS = 2
 
+    # KILL を送ってから、グループが空になるのを待つ上限（秒）。⚠ 止められない相手
+    # （下記）を見切るまでの時間でもある。
+    REAP_GRACE_SECONDS = 1
+
     # 🔴🔴 **締切が来たら、子プロセスを止めてから `Timeout::Error` を上げる。**
     #
     # ⚠⚠ 以前は `Timeout.timeout { Open3.capture3(...) }` の形で、締切が来ても `capture3` の
@@ -100,6 +104,11 @@ module Ginseng
     # 🔴 **締切は一度も効いておらず**、超えた子は孤児のまま完走し、締切の後に間に合った子は
     # **成功しているのに `Timeout::Error`** になっていた（pooza/mulukhiya-toot-proxy#4794）。
     #
+    # 🔴 **止められない子がいる。** 別のユーザーへ降りた子（`user=` の `sudo` 経由、権限を
+    # 落とす補助コマンド）へは、こちらからシグナルを送れない（`EPERM`）。⚠⚠ **そのときも
+    # 締切で戻る**（`Timeout::Error`。メッセージに `still running` と入り、error を 1 行残す）
+    # — 🔴 **子は動き続ける**。止めたい利用側は、止める手段を自分で持つこと。
+    # ⚠ 戻るまでの上限は、締切 ＋ `KILL_GRACE_SECONDS` ＋ `REAP_GRACE_SECONDS`。
     # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま。
     # ⚠ **0 以下は「締切なし」**（`Timeout.timeout(0)` と同じ意味を保つ）。
     def exec(timeout: nil)
@@ -212,20 +221,29 @@ module Ginseng
     # ⚠⚠ **プロセスグループごと起こす。** `to_s` はシェルを経由しうるので、子の番号だけに
     # シグナルを送ると**シェルだけが死んで本体が残る**。
     # ⚠ 出力は別スレッドで読む — 待っているあいだにパイプのバッファが埋まると子が止まる。
+    #
+    # 🔴🔴 **`popen3` をブロック形式で使わない (#684 Codex P1)。** ブロック形式は出口で
+    # **子の終了を待つ**ので、止められなかった子（上記）がいると、`Timeout::Error` を
+    # 上げたあとでそこに掛かり、**子が終わるまで戻らない**（＝直す前と同じ）。
+    # ⚠ 回収は `waiter`（`Process.detach` のスレッド）に任せる — 待たなくてもゾンビは残らない。
     def capture_until(timeout)
       deadline = monotonic + timeout
-      Open3.popen3(*spawn_args, chdir: dir, pgroup: true) do |stdin, stdout, stderr, waiter|
-        stdin.close
-        readers = [stdout, stderr].map {|io| Thread.new {io.read}}
-        finished = await(waiter, readers, deadline)
-        expire!(waiter.pid, timeout) unless finished
-        @stdout, @stderr = readers.map(&:value)
-        @status = waiter.value
-      ensure
-        # 🔴 **外から `Thread#kill` で中断されても、子を残さない。**締切の猶予（TERM → KILL）の
-        # 途中で外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
-        abandon(waiter.pid, readers) unless finished
+      stdin, stdout, stderr, waiter = Open3.popen3(*spawn_args, chdir: dir, pgroup: true)
+      stdin.close
+      readers = [stdout, stderr].map {|io| Thread.new {io.read}}
+      unless await(waiter, readers, deadline)
+        terminate(waiter.pid)
+        settled = true
+        expire!(waiter.pid, timeout, stopped: !group_alive?(waiter.pid))
       end
+      settled = true
+      @stdout, @stderr = readers.map(&:value)
+      @status = waiter.value
+    ensure
+      # 🔴 **外から `Thread#kill` で中断されても、子を残さない。**締切の猶予（TERM → KILL）の
+      # 途中で外側の締切に切られると、後始末ごと飛ばされる。ここは待たずに KILL する。
+      abandon(waiter.pid) if waiter && !settled
+      close_pipes(readers, [stdout, stderr])
     end
 
     # 子の終了と、出力の読み切りを締切まで待つ。間に合えば true。
@@ -241,27 +259,48 @@ module Ginseng
       return [deadline - monotonic, 0].max
     end
 
-    def expire!(pgid, timeout)
-      terminate(pgid)
-      raise Timeout::Error, "execution expired (#{timeout}s): #{masked(to_s)}"
+    # ⚠⚠ **止められなかったことを、止めたことにしない (#684 Codex P1)。** 例外のクラスは
+    # 同じ（呼び出し側の `rescue Timeout::Error` を壊さない）だが、文言と error の行で分かる。
+    def expire!(pgid, timeout, stopped:)
+      message = "execution expired (#{timeout}s): #{masked(to_s)}"
+      raise Timeout::Error, message if stopped
+      @logger.error(command: masked(to_s), pgid:, timeout:,
+        message: 'timed out, but the child could not be stopped')
+      raise Timeout::Error, "#{message} (still running: could not signal pgid #{pgid})"
     end
 
-    def abandon(pgid, readers)
+    def abandon(pgid)
       signal_group('KILL', pgid) if group_alive?(pgid)
-      readers&.each(&:kill)
     end
 
-    # 締切を過ぎた子をプロセスグループごと止める。
+    # ⚠ 読み手を止めてから閉じる。🔴 こちらの端を閉じ忘れると、止められなかった子が
+    # 終わるまで読み手のスレッドとパイプが残る。⚠ 子の側は、次に書いたとき `EPIPE` を受ける。
+    def close_pipes(readers, pipes)
+      readers&.each {|reader| reader.kill if reader.alive?}
+      pipes.compact.each {|io| io.close unless io.closed?}
+    end
+
+    # 締切を過ぎた子をプロセスグループごと止める。⚠ 止まったかは、呼び出し側が
+    # `group_alive?` で見る（ここは答えない）。
     #
     # ⚠⚠ **先頭のプロセスが終わったことを「止まった」と読まない。**`to_s` がシェルを経由すると
     # 先頭はシェルで、TERM で先に死ぬ。TERM を無視する本体がグループに残るので、
     # **グループが空になったか**で見て、残っていれば KILL する。
-    # ⚠ 先頭の回収は `popen3` のブロックの出口が行う（ゾンビを残さない）。
+    # ⚠⚠ **シグナルが通ったかどうかでは決めない。** グループへの `kill` は、**1 つにでも
+    # 届けば成功を返す** — 先頭のシェルにだけ届き、別ユーザーへ降りた本体には届いていない、
+    # という形がある。🔴 見るのは最後まで「グループが空か」。
     def terminate(pgid)
       signal_group('TERM', pgid)
-      deadline = monotonic + KILL_GRACE_SECONDS
-      sleep(0.05) while group_alive?(pgid) && monotonic < deadline
-      signal_group('KILL', pgid) if group_alive?(pgid)
+      return nil if gone_within?(pgid, KILL_GRACE_SECONDS)
+      signal_group('KILL', pgid)
+      gone_within?(pgid, REAP_GRACE_SECONDS)
+      return nil
+    end
+
+    def gone_within?(pgid, seconds)
+      deadline = monotonic + seconds
+      sleep(0.05) while (alive = group_alive?(pgid)) && monotonic < deadline
+      return !alive
     end
 
     def monotonic
@@ -269,12 +308,12 @@ module Ginseng
     end
 
     # ⚠ 送る直前に終わっていることがある（`ESRCH`）。そのときは何もしない。
+    # ⚠ 送れない（`EPERM`）も、ここでは何もしない — 止まったかは `terminate` が
+    # グループを見て決め、止められなければ `expire!` が 1 行だけ残す。
     def signal_group(signal, pgid)
       Process.kill(signal, -pgid)
-    rescue Errno::ESRCH
+    rescue Errno::ESRCH, Errno::EPERM
       nil
-    rescue Errno::EPERM => e
-      @logger.error(error: e, command: masked(to_s), pgid:, signal:)
     end
 
     # ⚠ 触れない（`EPERM`）は「居る」。居ないと言い切れるのは `ESRCH` だけ。

@@ -286,6 +286,59 @@ module Ginseng
       assert_equal("ok\n", @command.stdout)
     end
 
+    # 🔴🔴 **止められない子がいても、締切で戻る (#684 Codex P1)。** ⚠⚠ 別のユーザーへ降りた子
+    # （`sudo` 経由）へはシグナルが `EPERM` になる。`popen3` のブロック形式は出口で子を
+    # 待つので、そのままだと**子が終わるまで戻らない**（1 秒の締切に対して 6.0 秒・実測）。
+    # ⚠ 止めたことにしない — 文言と error の行で分かること。
+    def test_exec_timeout_returns_even_if_the_child_cannot_be_signaled
+      nap = unique_sleep
+      @command.args = ['sh', '-c', nap]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      original = deny_group_signals
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+      assert_operator(elapsed, :<, 0.5 + CommandLine::KILL_GRACE_SECONDS +
+        CommandLine::REAP_GRACE_SECONDS + 2)
+      assert_match(/still running/, error.message)
+      assert_equal([:error, 'timed out, but the child could not be stopped'],
+        [logger.logs.last.first, logger.logs.last.last[:message]])
+      assert_not_empty(running?(nap))
+    ensure
+      Process.define_singleton_method(:kill, original) if original
+      `pkill -KILL -f '^#{nap}$'` if nap
+    end
+
+    # ⚠ 止められたときは、止められなかったときの文言も error の行も出さない。
+    def test_exec_timeout_does_not_claim_still_running_when_stopped
+      @command.args = ['sh', '-c', unique_sleep]
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+
+      error = assert_raise(Timeout::Error) {@command.exec(timeout: 0.5)}
+
+      assert_no_match(/still running/, error.message)
+      assert_empty(logger.logs)
+    end
+
+    # グループ宛て（負の番号）のシグナルを、全部 `EPERM` にする。元の実装を返す。
+    def deny_group_signals
+      original = Process.method(:kill)
+      Process.define_singleton_method(:kill) do |signal, *pids|
+        raise Errno::EPERM if pids.any?(&:negative?)
+        original.call(signal, *pids)
+      end
+      return original
+    end
+
+    # ⚠ `running` と違って、消えるのを待たない。
+    def running?(command)
+      return `pgrep -f '^#{command}$'`.split
+    end
+
     def unique_sleep
       return "sleep 30.#{SecureRandom.random_number(10**8).to_s.rjust(8, '0')}"
     end
