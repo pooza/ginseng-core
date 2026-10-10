@@ -36,8 +36,8 @@ module Ginseng
       error = assert_raise(TooLargeError) {@http.get(URL, max_bytes: 100)}
 
       assert_match(/exceeded 100 bytes/, error.message)
-      # ⚠⚠ **メッセージに URL を入れない**（pooza/mulukhiya-toot-proxy#4815）。🔴 文中の URL は
-      # マスクされず、クエリの資格情報が平文でログに残る。
+      # ⚠⚠ **メッセージに URL を入れない (#689)。** 🔴 メッセージはロガーの外へも運ばれ、
+      # そこでは `Masking` が掛からない。
       assert_not_include(error.message, URL)
     end
 
