@@ -121,12 +121,14 @@ module Ginseng
       SIGNED_URLS.each do |name, url|
         assert_include(Masking::MASK_QUERY_PARAMS, name)
         field = @logger.create_message(url:)[:url]
+        # ⚠ 文中の形は 2.4.0 までの `TooLargeError` のメッセージ（#689 で URL を外した）。
+        # 利用側の例外は今もこの形で URL を埋めるので、文中でも落ちることを見る。
         embedded = @logger.create_message(message: "Response body exceeded 100 bytes (#{url})")[:message]
 
         [field, embedded].each do |masked|
           assert_not_include(masked, 'SECRET', name)
           assert_include(masked, '[FILTERED]', name)
-          assert_include(masked, 'AKIDEXAMPLE', '鍵の識別子は残す')
+          assert_include(masked, 'AKIDEXAMPLE', '隣のパラメータ（鍵の識別子など）は残す')
         end
       end
     end

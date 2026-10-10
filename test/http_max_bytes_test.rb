@@ -41,6 +41,21 @@ module Ginseng
       assert_not_include(error.message, URL)
     end
 
+    # 🔴 **URL はログの行の `url:` に残ること (#689)。** ⚠⚠ メッセージから外したので、
+    # **どの URL で超えたかの手がかりはここだけ**になった。`host_validator` を渡した
+    # 経路も同じ。
+    def test_logs_the_url_in_its_own_field
+      WebMock.stub_request(:get, URL).to_return(status: 200, body: 'x' * 1000)
+
+      [{}, {host_validator: ->(_) {true}}].each do |options|
+        logged = []
+        @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+        assert_raise(TooLargeError) {@http.get(URL, max_bytes: 100, **options)}
+
+        assert_equal([URL], logged.map {|entry| entry[:url]}, options.keys.inspect)
+      end
+    end
+
     # ⚠ **再送しない。**相手が同じものを返す限り同じ場所で超えるだけで、
     # 再送のたびに上限ぶんの転送とメモリを食う。
     def test_does_not_retry_on_too_large

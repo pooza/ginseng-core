@@ -35,7 +35,8 @@ logger:
   # `/logger/mask_fields` は**この既定に足す**（減らせない。#586）。
   #
   # ⚠⚠ `code` / `i` / `key` は入れない — クエリのパラメータ名としては資格情報だが、
-  # **Hash のキーとしては無関係な値が普通に入る**（mask_query_params との差はここ）。
+  # **Hash のキーとしては無関係な値が普通に入る**。⚠ 署名付き URL の名前（`sig` /
+  # `signature` など。#690）も mask_query_params にだけ在る。
   mask_fields:
     - access_token
     - api_key

@@ -39,7 +39,8 @@ module Ginseng
     # ⚠⚠ **`code` / `i` / `key` は入れない。** クエリのパラメータ名としては
     # 資格情報だが、**Hash のキーとしては無関係な値が普通に入る**（`key` は
     # 汎用名、`code` はステータスコードやエラーコード）。クエリと同じ広さが
-    # 正しいとは限らない。
+    # 正しいとは限らない。⚠ 署名付き URL の名前（#690）もクエリ側にだけ在る
+    # （理由は `MASK_QUERY_PARAMS`）。
     MASK_FIELDS = [
       'access_token',
       'api_key',
@@ -63,11 +64,14 @@ module Ginseng
     #
     # ⚠ **鍵の識別子（`X-Amz-Credential` / `Key-Pair-Id`）は入れない。** 秘密ではなく、
     # どの鍵の URL かはログに残したい。
-    # ⚠⚠ **`MASK_FIELDS` には足さない。** `signature` は Hash のキーとしては無関係な値が
-    # 普通に入る（`code` / `key` と同じ判断）。
+    # ⚠⚠ **`MASK_FIELDS` には足さない。** `sig` / `signature` は Hash のキーとしては
+    # 無関係な値が普通に入る（`code` / `key` と同じ判断）。⚠ `x-amz-*` / `x-goog-*` は
+    # Hash のキーとしても他の用途が無いが、**足すかどうかは決めていない**（#692）。
     #
     # ⚠⚠ **`HTTP::RedirectGuard` が同じ一覧を「資格情報か」の判定に使う。** ここへ足すと、
-    # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わなくなる。
+    # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わず、
+    # 🔴 **3xx が `GatewayError` になる**。⚠ 呼び出し側が `follow_redirects:` を
+    # 明示していれば従来どおり。
     MASK_QUERY_PARAMS = [
       'access_token',
       'api_key',
