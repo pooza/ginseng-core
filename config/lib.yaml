@@ -60,4 +60,9 @@ logger:
     - password
     - refresh_token
     - secret
+    - sig
+    - signature
     - token
+    - x-amz-security-token
+    - x-amz-signature
+    - x-goog-signature

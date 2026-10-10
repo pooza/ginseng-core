@@ -104,6 +104,33 @@ module Ginseng
       assert_include(message[:url], 'wss://example.com/api/v1/streaming', 'ホストとパスは残す')
     end
 
+    # 🔴 **署名付き URL の署名が落ちること (#690)。** ⚠ 既定の一覧が署名系の名前を
+    # 1 つも持たず、第三者が渡す URL の署名が `url:` にも文中にも平文で残っていた。
+    #
+    # ⚠⚠ **設定ではなく既定（定数）で落ちること。** 利用側の設定は既定に足す形なので、
+    # 🔴 この gem の `config/lib.yaml` だけに足しても利用側には届かない。
+    SIGNED_URLS = {
+      'x-amz-signature' => 'https://b.s3.amazonaws.com/a.png?X-Amz-Credential=AKIDEXAMPLE&X-Amz-Signature=SECRET',
+      'x-amz-security-token' => 'https://b.s3.amazonaws.com/a.png?X-Amz-Credential=AKIDEXAMPLE&X-Amz-Security-Token=SECRET',
+      'x-goog-signature' => 'https://storage.googleapis.com/b/a.png?X-Goog-Credential=AKIDEXAMPLE&X-Goog-Signature=SECRET',
+      'sig' => 'https://a.blob.core.windows.net/c/a.png?sv=AKIDEXAMPLE&sig=SECRET',
+      'signature' => 'https://d.cloudfront.net/a.png?Key-Pair-Id=AKIDEXAMPLE&Signature=SECRET',
+    }.freeze
+
+    def test_create_message_masks_signed_url_query
+      SIGNED_URLS.each do |name, url|
+        assert_include(Masking::MASK_QUERY_PARAMS, name)
+        field = @logger.create_message(url:)[:url]
+        embedded = @logger.create_message(message: "Response body exceeded 100 bytes (#{url})")[:message]
+
+        [field, embedded].each do |masked|
+          assert_not_include(masked, 'SECRET', name)
+          assert_include(masked, '[FILTERED]', name)
+          assert_include(masked, 'AKIDEXAMPLE', '鍵の識別子は残す')
+        end
+      end
+    end
+
     # 🔴 **URL の userinfo に埋まったパスワードが落ちること (#589)。**
     #
     # ⚠⚠ **同じ URL のクエリは落ちるのに、隣にあるパスワードは平文で残っていた。**

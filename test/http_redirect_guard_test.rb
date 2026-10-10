@@ -525,6 +525,17 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE)
     end
 
+    # ⚠⚠ **署名付き URL も「資格情報を運ぶ要求」に数えること (#690)。** `Masking` と一覧を
+    # 共有しているので、既定に足した署名系の名前はここにも効く。
+    def test_signed_url_query_is_not_followed
+      stub_request(:get, @url).with(query: {'X-Amz-Signature' => 'secret'})
+        .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {HTTP.new.guard_redirects!.get("#{@url}?X-Amz-Signature=secret")}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
     # ⚠ **シンボルで返す logger を差されても効くこと。** 🔴 正規化を片方の枝でしか
     # していなかった間は、クエリの検出が丸ごと無効になっていた。
     def test_symbol_query_names_are_normalized

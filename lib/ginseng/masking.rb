@@ -55,6 +55,19 @@ module Ginseng
 
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
     # config の `/logger/mask_query_params` で**足せる**（⚠ 減らせない）。
+    #
+    # 🔴 **署名付き URL の名前を持っていなかった (#690)。** 第三者が渡す URL
+    # （webhook の `image_url` など）は署名付きのことがあり、**署名はその 1 オブジェクトへの
+    # 期限付きの持参人払い**。⚠ 照合は小文字化して行うので、`X-Amz-Signature` も
+    # CloudFront の `Signature` もここの綴りで一致する。
+    #
+    # ⚠ **鍵の識別子（`X-Amz-Credential` / `Key-Pair-Id`）は入れない。** 秘密ではなく、
+    # どの鍵の URL かはログに残したい。
+    # ⚠⚠ **`MASK_FIELDS` には足さない。** `signature` は Hash のキーとしては無関係な値が
+    # 普通に入る（`code` / `key` と同じ判断）。
+    #
+    # ⚠⚠ **`HTTP::RedirectGuard` が同じ一覧を「資格情報か」の判定に使う。** ここへ足すと、
+    # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わなくなる。
     MASK_QUERY_PARAMS = [
       'access_token',
       'api_key',
@@ -66,7 +79,12 @@ module Ginseng
       'password',
       'refresh_token',
       'secret',
+      'sig',
+      'signature',
       'token',
+      'x-amz-security-token',
+      'x-amz-signature',
+      'x-goog-signature',
     ].freeze
 
     # URL の**パス**に現れたら次の 1 セグメントを落とす接頭辞の既定値。
