@@ -569,6 +569,17 @@ module Ginseng
       chain.each {|e| assert_not_include(e.message, 'SECRET', e.class.to_s)}
     end
 
+    # 🔴 **名前が不正な UTF-8 の URL でも `GatewayError` に包み、`cause` に平文を残さない**
+    # （3.0.0 リリース前レビュー）。以前は `Encoding::CompatibilityError` がすり抜けていた。
+    def test_undecodable_query_name_in_the_message
+      stub_request(:get, @url).to_raise(IOError.new('fail https://h.example/?a%FF=1&token=SECRET'))
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+
+      assert_not_include(error.message, 'SECRET')
+      assert_nil(error.cause)
+    end
+
     # ⚠ **伏せるものが無ければ、`cause` は従来どおり元の例外**（診断に要る）。
     def test_cause_is_kept_when_nothing_is_masked
       stub_request(:get, @url).to_raise(SocketError.new('getaddrinfo'))

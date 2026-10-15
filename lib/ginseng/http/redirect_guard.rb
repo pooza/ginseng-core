@@ -187,7 +187,8 @@ module Ginseng
         # ⚠ `;` でも切る (#700)。`&amp;` も `amp` と次の名前に分かれる。切りすぎて困るのは
         # 「資格情報あり」に倒れる側だけ。
         return query.split(/[&;]/).map {|pair| decode_query_key(pair.split('=').first)}
-      rescue ArgumentError
+      # ⚠ 復号した名前が不正な UTF-8 だと `EncodingError` になる。これも安全側へ。
+      rescue ArgumentError, EncodingError
         return nil
       end
 
