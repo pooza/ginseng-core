@@ -12,6 +12,9 @@ module Ginseng
     # (pooza/tomato-shrieker の retry_not_found)。**module に移しても
     # サブクラスの定義が勝ち、`super` も従来どおり効く。**
     module RetryMethods
+      # URL をメッセージに載せる例外 (#703)。⚠ `::URI` と書く（素の `URI` は `Ginseng::URI`）。
+      URI_ERRORS = [HTTParty::UnsupportedURIScheme, ::URI::InvalidURIError, Addressable::URI::InvalidURIError].freeze
+
       private
 
       def repeat(method, uri, start, quiet: nil)
@@ -19,8 +22,10 @@ module Ginseng
         yield
       rescue Net::ReadTimeout => e
         log_retry_error(e, method, uri, start)
-        raise gateway_error(e)
+        raise_gateway_error(e, e)
       rescue => e
+        original = e
+        e = redact_uri_error(e)
         cnt += 1
         seconds = retry_after(e)
         gave_up = give_up_reason(e, cnt, seconds)
@@ -29,7 +34,7 @@ module Ginseng
         unless quiet_failure?(e, gave_up, quiet)
           log_retry_error(e, method, uri, start, count: cnt, retry_after: seconds, gave_up:)
         end
-        raise gateway_error(e) if gave_up
+        raise_gateway_error(e, original) if gave_up
         sleep(seconds || retry_seconds)
         retry
       end
@@ -109,6 +114,85 @@ module Ginseng
       # 区別できない**（前者も `count: 1` の 1 本で終わる）。
       #
       # ⚠ `count` は nil でもキーごと出す（従来の形。`Net::ReadTimeout` の行は持たない）。
+      # ⚠⚠ **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** HTTParty の
+      # `UnsupportedURIScheme` は `'<URL>' Must be HTTP, HTTPS or Generic`、`URI::InvalidURIError` は
+      # `bad URI (is not URI?): "<URL>"`。🔴 ログのマスクは `scheme://` の形で**読める** URL しか
+      # 伏せないので、`myapp:/callback?code=SECRET` のような `Location` も、読めない URL も
+      # **ログの行と包み直した `GatewayError` の両方に平文で出ていた**。
+      #
+      # ⚠ **スキームとホストだけ残す。** 要求先の URL はログの `url:` に（伏せた形で）残るので、
+      # 診断に要るのは「どんな形の URL だったか」まで。⚠ 同じクラスで作り直す（`retryable?` と
+      # 利用側の `rescue` がクラスで見ている）。
+      def redact_uri_error(error)
+        return error unless URI_ERRORS.any? {|klass| error.is_a?(klass)}
+        redacted = error.class.new(redact_uri_message(error.message))
+        redacted.set_backtrace(error.backtrace)
+        return redacted
+      rescue ArgumentError
+        # ⚠ 引数の違う独自の例外クラスでも、URL を載せたまま返さない。
+        redacted = GatewayError.new("#{error.class}: #{Masking::FILTERED}")
+        redacted.set_backtrace(error.backtrace)
+        return redacted
+      end
+
+      # ⚠ 引用符の中を丸ごと縮める。**最後の同じ引用符まで**取る（URL の中に引用符が
+      # あっても途中で切らない）。引用符が無ければ、メッセージごと伏せる。
+      def redact_uri_message(message)
+        message = message.to_s.scrub('?')
+        return Masking::FILTERED unless match = message.match(/(['"])(.*)\1/m)
+        quote = match[1]
+        return "#{match.pre_match}#{quote}#{uri_origin(match[2])}#{quote}#{match.post_match}"
+      end
+
+      # `scheme:` と、読めるホストだけを残す。⚠ userinfo とポート以外の後ろは全部落とす。
+      def uri_origin(src)
+        scheme = src[/\A[a-z][a-z0-9+.-]*:/i]
+        return Masking::FILTERED unless scheme
+        host = src.delete_prefix(scheme)[%r{\A//([^/?#\\]*)}, 1]
+        # ⚠ `@` の前（userinfo）は落とす。ホストの形をしていなければホストも出さない
+        # （`//user:pa/ss@h` のように、区切りが崩れた形でパスワードの断片を出さないため）。
+        host = host&.split('@')&.last
+        host = nil unless host&.match?(/\A(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?\z/i)
+        origin = host ? "#{scheme}//#{host}" : scheme
+        return origin == src ? origin : "#{origin}#{Masking::FILTERED}"
+      end
+
+      # 包み直して投げる。⚠⚠ **`cause` には伏せた形のものだけを付ける (#703 Codex P1)。**
+      # 🔴 `rescue` の中の `raise` は、**捕まえた元の例外を自動で `cause` に付ける**ので、
+      # メッセージを伏せても `cause` から平文の URL が読めた（Sentry は `cause` を辿る）。
+      # - URI の例外: 縮めた複製を `cause` にする（クラスとバックトレースは同じ）
+      # - その他: **連鎖のどこかに伏せるものがあれば** `cause` を付けない（元の例外は作り直せない）。
+      #   🔴 外側のメッセージだけ見ていると、無害な例外の `cause` に入れ子になった URI の例外が
+      #   そのまま残った（Codex P1・2 巡目）。何も無ければ従来どおり元の例外
+      #
+      # ⚠ **GatewayError はそのまま投げ直す**（`response` と派生クラスを保つため）。⚠⚠ 既に付いた
+      # `cause` は `raise e, cause: nil` でも `dup` でも外せない（実測）。この gem の GatewayError は
+      # `rescue` の中では投げていないので、`cause` は `nil` になっている。**`rescue` の中で
+      # 投げる箇所を足すときは、ここが効かないことに注意。**
+      def raise_gateway_error(error, original)
+        wrapped = gateway_error(error)
+        raise wrapped if wrapped.equal?(original)
+        raise wrapped, cause: error unless error.equal?(original)
+        raise wrapped, cause: (safe_cause?(original) ? original : nil)
+      end
+
+      # 例外の連鎖を残してよいか。⚠ 循環に備えて、同じ例外は 2 度見ない。
+      def safe_cause?(error)
+        seen = Set.new
+        while error && seen.add?(error.object_id)
+          return false if URI_ERRORS.any? {|klass| error.is_a?(klass)}
+          return false unless masked_message?(error.message.to_s)
+          error = error.cause
+        end
+        return true
+      end
+
+      # ⚠ マスクを掛けても変わらない（＝伏せるものが無い）メッセージか。
+      def masked_message?(message)
+        return true unless @logger.respond_to?(:mask_urls_in)
+        return @logger.mask_urls_in(message) == message
+      end
+
       def log_retry_error(error, method, uri, start, **detail)
         entry = {error:, method: method.upcase.to_sym, url: uri.to_s, start:, count: detail[:count]}
         entry.merge!(detail.except(:count).compact)

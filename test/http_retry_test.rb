@@ -469,6 +469,116 @@ module Ginseng
       assert_equal(1, logged.size)
     end
 
+    # 🔴🔴 **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** ログのマスクは
+    # `scheme://` の形で読める URL しか伏せないので、**ログの行にも、包み直した例外にも**
+    # 秘密が平文で出ていた。⚠ 3 つの形を、ログの行（実際に書き出す形）と例外の両方で見る。
+    def test_uri_errors_do_not_carry_the_url
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => 'myapp:/callback?code=SECRET'})
+      {
+        'ftp://h.example/a?sig=SECRET' => "'ftp://h.example[FILTERED]' Must be HTTP, HTTPS or Generic",
+        'https://[::1/a?sig=SECRET' => 'bad URI (is not URI?): "https:[FILTERED]"',
+        '/api' => "'myapp:[FILTERED]' Must be HTTP, HTTPS or Generic",
+      }.each do |url, expected|
+        error = nil
+        logged = capture_log {error = assert_raise(GatewayError, url) {@http.get(url)}}
+
+        assert_equal(expected, error.message, url)
+        assert_not_empty(logged, url)
+        logged.each do |entry|
+          assert_not_include(@http.instance_variable_get(:@logger).create_message(entry)[:error].to_s, 'SECRET', url)
+        end
+      end
+    end
+
+    # ⚠ **`host_validator` を渡した経路も `repeat` を通る**ので、同じく縮める。
+    # ⚠⚠ 読めない URL で見ること — ftp の形は `gateway_error` のマスクでも伏せられるので、
+    # 縮める処理を外しても緑のままだった（実測）。
+    def test_uri_errors_do_not_carry_the_url_with_host_validator
+      error = assert_raise(GatewayError) do
+        @http.get('https://[::1/a?sig=SECRET', {host_validator: ->(_host) {true}})
+      end
+
+      assert_not_include(error.message, 'SECRET')
+    end
+
+    # ⚠ 残すのはスキームと、ホストの形をしたものだけ。🔴 区切りの崩れた userinfo の断片を
+    # ホストとして出さないこと。
+    def test_uri_origin
+      {
+        'ftp://h.example/a?sig=SECRET' => 'ftp://h.example[FILTERED]',
+        'ftp://h.example:21' => 'ftp://h.example:21',
+        'ftp://user:pass@h.example/a' => 'ftp://h.example[FILTERED]',
+        'ftp://user:pa/ss@h.example/a' => 'ftp:[FILTERED]',
+        'myapp:/callback?code=SECRET' => 'myapp:[FILTERED]',
+        'https://[::1]/a' => 'https://[::1][FILTERED]',
+        'not a uri' => '[FILTERED]',
+      }.each do |src, expected|
+        assert_equal(expected, @http.send(:uri_origin, src), src)
+      end
+    end
+
+    # ⚠⚠ **URI 以外の例外も、包み直したメッセージにログと同じマスクを掛ける (#703)。**
+    # 例外は呼び出し側の `rescue` や Sentry へ、ログのマスクを通らずに渡る。
+    def test_wrapped_error_message_is_masked
+      stub_request(:get, @url).to_raise(SocketError.new('failed https://h.example/a?access_token=SECRET'))
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+
+      assert_not_include(error.message, 'SECRET')
+      assert_include(error.message, 'https://h.example/a?access_token=[FILTERED]')
+    end
+
+    # 🔴🔴 **`cause` にも平文を残さない (#703 Codex P1)。** `rescue` の中の `raise` は元の例外を
+    # 自動で `cause` に付けるので、メッセージを伏せても `cause` から読めた（Sentry は辿る）。
+    def test_cause_chain_does_not_carry_the_secret
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => 'myapp:/callback?code=SECRET'})
+      stub_request(:get, 'https://example.com/socket').to_raise(SocketError.new('failed https://h.example/?access_token=SECRET'))
+      ['ftp://h.example/a?sig=SECRET', 'https://[::1/a?sig=SECRET', '/api', '/socket'].each do |url|
+        error = assert_raise(GatewayError, url) {@http.get(url)}
+        chain = []
+        while error
+          chain.push(error)
+          error = error.cause
+        end
+
+        chain.each {|e| assert_not_include(e.message, 'SECRET', "#{url}: #{e.class}")}
+      end
+    end
+
+    # 🔴🔴 **入れ子になった `cause` も見る（Codex P1・2 巡目）。** 外側のメッセージが無害でも、
+    # その `cause` が URL を丸ごと持つ URI の例外なら、連鎖ごと残さない。
+    def test_nested_cause_does_not_carry_the_secret
+      nested = begin
+        begin
+          raise ::URI::InvalidURIError, 'bad URI (is not URI?): "https://[::1/a?sig=SECRET"'
+        rescue ::URI::InvalidURIError
+          raise SocketError, 'connection failed'
+        end
+      rescue SocketError => e
+        e
+      end
+      stub_request(:get, @url).to_raise(nested)
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+      chain = []
+      while error
+        chain.push(error)
+        error = error.cause
+      end
+
+      chain.each {|e| assert_not_include(e.message, 'SECRET', e.class.to_s)}
+    end
+
+    # ⚠ **伏せるものが無ければ、`cause` は従来どおり元の例外**（診断に要る）。
+    def test_cause_is_kept_when_nothing_is_masked
+      stub_request(:get, @url).to_raise(SocketError.new('getaddrinfo'))
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+
+      assert_kind_of(SocketError, error.cause)
+      assert_equal('getaddrinfo', error.cause.message)
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。

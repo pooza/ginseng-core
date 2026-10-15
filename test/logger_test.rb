@@ -120,7 +120,97 @@ module Ginseng
       'hm' => 'https://cdn.discordapp.com/attachments/1/2/a.png?ex=AKIDEXAMPLE&hm=SECRET',
       'jwt' => 'https://private-user-images.githubusercontent.com/a.png?v=AKIDEXAMPLE&jwt=SECRET',
       'authorization' => 'https://f000.backblazeb2.com/file/b/a.png?b=AKIDEXAMPLE&Authorization=SECRET',
+      # ⚠ #701 で足した名前。Alibaba OSS / Tencent COS / Akamai / ほか。
+      'x-oss-signature' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-signature=SECRET',
+      'x-oss-security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-security-token=SECRET',
+      'security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&security-token=SECRET',
+      'q-signature' => 'https://b.cos.ap-tokyo.myqcloud.com/a.png?q-ak=AKIDEXAMPLE&q-signature=SECRET',
+      'x-cos-security-token' => 'https://b.cos.ap-tokyo.myqcloud.com/a.png?q-ak=AKIDEXAMPLE&x-cos-security-token=SECRET',
+      'hdnts' => 'https://a.akamaized.net/a.m3u8?id=AKIDEXAMPLE&hdnts=SECRET',
+      '__token__' => 'https://a.akamaized.net/a.m3u8?id=AKIDEXAMPLE&__token__=SECRET',
+      'api-key' => 'https://api.example.com/v1?client=AKIDEXAMPLE&api-key=SECRET',
+      'x-api-key' => 'https://api.example.com/v1?client=AKIDEXAMPLE&x-api-key=SECRET',
+      'id_token' => 'https://app.example.com/cb?state=AKIDEXAMPLE&id_token=SECRET',
+      'auth' => 'https://p.firebaseio.com/a.json?print=AKIDEXAMPLE&auth=SECRET',
+      'hmac' => 'https://shop.example.com/cb?shop=AKIDEXAMPLE&hmac=SECRET',
     }.freeze
+
+    # 🔴🔴 **走査が途中で切れたり、パースに失敗したりすると、後ろのクエリが丸ごと素通りする (#700)。**
+    # ⚠ `url:` 欄（まるごと URL）と文中の両方で見る。⚠⚠ 部分一致で見ること — `sig=SEC|RET` は
+    # `SECRET` を含まなくても `RET` が漏れている。
+    SCAN_BREAKING_URLS = [
+      'https://b.s3.amazonaws.com/a?X-Amz-Date=1&amp;X-Amz-Signature=SECRET',
+      'https://h.example/a?x=1\\&sig=SECRET',
+      'https://h.example/a?x=^&sig=SECRET',
+      'https://h.example/a?x={1}&sig=SECRET',
+      'https://h.example/a?sig=SEC|RET',
+      'https://h.example/a?sig=SEC{RET',
+      'https://h.example/a?sig=SEC[RET',
+      'https://h.example/a?sig[]=SECRET',
+      'https://h.example/a?sig[0]=SECRET',
+      'https://h.example/a?a=1;sig=SECRET',
+      'https://h.example/a#sig=SECRET',
+      'https://h.example/a#access_token=SECRET&token_type=bearer',
+      'https://h.example/cb?redirect=https://x.example/?token=SECRET',
+      # 🔴 `;` / `?` は値の中にも現れる。次に `名前=` が続かなければ値の一部（Codex P1）。
+      'https://h.example/a?token=SEC;RET',
+      'https://h.example/a?token=SEC?RET&x=1',
+      # ⚠ Addressable が読めない形（閉じていない IPv6 の `[`）。
+      'https://[::1/a?sig=SECRET',
+    ].freeze
+
+    # ⚠ 文中では空白・引用符・`<>` が URL の終わりの目印なので、`url:` 欄でだけ見る形。
+    WHOLE_URL_ONLY = [
+      'https://h.example/a?x=<1>&sig=SECRET',
+      'https://h.example/a?x="1"&sig=SECRET',
+      'https://h.example/a?x=a b&sig=SECRET',
+      'https://b.s3.amazonaws.com/a.png?response-content-disposition=attachment; filename="a.png"&X-Amz-Signature=SECRET',
+    ].freeze
+
+    def test_create_message_masks_scan_breaking_urls
+      SCAN_BREAKING_URLS.each do |url|
+        field = @logger.create_message(url:)[:url]
+        embedded = @logger.create_message(message: "failed (#{url}). retry")[:message]
+
+        [field, embedded].each do |masked|
+          # ⚠ `RET` も見る（`sig=SEC|RET` は途中から漏れていた）。
+          assert_not_include(masked, 'RET', url)
+          assert_include(masked, '[FILTERED]', url)
+        end
+        assert_true(embedded.end_with?('). retry'), "後ろの文を食わないこと: #{embedded}")
+      end
+      WHOLE_URL_ONLY.each do |url|
+        assert_not_include(@logger.create_message(url:)[:url], 'SECRET', url)
+      end
+    end
+
+    # ⚠⚠ **伏せないところは 1 バイトも変えない (#700)。** パースして組み直していたころは、
+    # 伏せるたびに隣のパラメータが正規化されていた（`a+b` → `a%20b`、`(bar)?…)` の `)` →
+    # `%29`）。
+    def test_create_message_keeps_the_rest_of_the_url
+      {
+        'https://h.example/s?q=a+b&i=SECRET' => 'https://h.example/s?q=a+b&i=[FILTERED]',
+        'https://h.example/s?access%5Ftoken=SECRET&x=%E3%81%82' => 'https://h.example/s?access%5Ftoken=[FILTERED]&x=%E3%81%82',
+        'https://h.example/s?token=' => 'https://h.example/s?token=[FILTERED]',
+        'https://h.example/s?flag&token=SECRET' => 'https://h.example/s?flag&token=[FILTERED]',
+      }.each do |url, expected|
+        assert_equal(expected, @logger.create_message(url:)[:url], url)
+      end
+      assert_equal(
+        'error (https://h.example/wiki/Foo_(bar)?a=1&token=[FILTERED]&b=2). retry',
+        @logger.create_message(message: 'error (https://h.example/wiki/Foo_(bar)?a=1&token=SECRET&b=2). retry')[:message],
+      )
+      # ⚠ URL で始まって文が続く文字列で、パスのマスクが後ろの文を食わないこと（Codex P2）。
+      assert_equal(
+        'https://h.example/mulukhiya/webhook/[FILTERED] failed afterward',
+        @logger.create_message(message: 'https://h.example/mulukhiya/webhook/SECRET failed afterward')[:message],
+      )
+      # ⚠ Markdown の括りは従来どおり食わない。
+      assert_equal(
+        '[https://h.example/?token=[FILTERED]](https://h.example/?token=[FILTERED])',
+        @logger.create_message(message: '[https://h.example/?token=SECRET](https://h.example/?token=SECRET)')[:message],
+      )
+    end
 
     def test_create_message_masks_signed_url_query
       SIGNED_URLS.each do |name, url|
@@ -503,6 +593,9 @@ module Ginseng
         # ⚠ クエリやヘッダの綴りのまま（文字列・大文字混じり）で来る (#693)。パース済みの
         # クエリ（`params`）や `headers` を Hash のまま出したとき。
         'X-Amz-Security-Token', 'X-Amz-Signature', 'X-Goog-Signature', :'x-amz-signature',
+        # ⚠ #701 で足した名前。
+        'X-Api-Key', 'Api-Key', :id_token, 'Security-Token', 'q-signature',
+        'x-cos-security-token', 'x-oss-security-token', 'x-oss-signature',
         # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
         :Authorization, :Access_Token, :TOKEN
       ].each do |key|

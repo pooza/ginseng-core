@@ -46,8 +46,16 @@ module Ginseng
     # （`X-Idempotency-Key` のような資格情報でない名前を巻き込むため）。
     # ⚠ 利用側の custom ヘッダは実測で `X-Mulukhiya` / `X-Trace` の 2 つだけで、
     # どちらも当たらない。
-    CREDENTIAL_HEADER_PATTERN =
-      /authorization|authentication|credential|password|secret|token|api[-_]?key/i
+    #
+    # 🔴 **よく知られた名前を取りこぼしていた (#701)。** `X-Auth-Key`（Cloudflare）/
+    # `Ocp-Apim-Subscription-Key`（Azure）/ `X-Hub-Signature` / `X-Session` / `Cookie2` が
+    # 当たらず、2.0.0 の時点の実測で `X-Auth-Key` が別ホストの 302 先へ届いた。
+    # ⚠ `auth` は `authorization` / `authentication` を含む。`key` は
+    # `api` / `access` / `secret` / `subscription` が前に付くときだけ見る。
+    CREDENTIAL_HEADER_PATTERN = /
+      auth | cookie | credential | password | secret | session | signature | token |
+      (?:access|api|subscription)[-_]?key
+    /ix
 
     # ⚠ **オリジンをまたいで持ち出してはいけないヘッダか。** `RedirectGuard`（追わない）
     # と `HostValidationMethods#redirect_options`（落として追う）が同じ判断を使う。
@@ -325,9 +333,15 @@ module Ginseng
 
     # 既に GatewayError ならそのまま投げ直す。包み直すと response（上流ボディ）が
     # 落ちる (mulukhiya-toot-proxy#4480)。
+    #
+    # ⚠⚠ **包み直したメッセージはログのマスクを通らずに外へ出る (#703)。** 例外は
+    # 呼び出し側の `rescue` や Sentry へそのまま渡るので、**ここでログと同じマスクを掛ける**。
+    # ⚠ URI の例外は `repeat` の入口で縮め済み（`redact_uri_error`）。これはその他の例外の分。
     def gateway_error(error)
       return error if error.is_a?(GatewayError)
-      wrapped = GatewayError.new(error.message)
+      message = error.message.to_s
+      message = @logger.mask_urls_in(message) if @logger.respond_to?(:mask_urls_in)
+      wrapped = GatewayError.new(message)
       wrapped.set_backtrace(error.backtrace)
       return wrapped
     end

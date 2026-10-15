@@ -121,8 +121,9 @@ module Ginseng
       # が平文で syslog に出ていた（2026-08-25 の当日ログで 22 行）。
       #
       # ⚠ **伏せるのは接頭辞の次の 1 セグメントだけ。** 以降のパスは残す。
-      def masked_url_path(uri)
-        path = uri.path
+      #
+      # ⚠ 受けるのは**パスの文字列**（#700 で URL をパースしなくなった）。
+      def masked_url_path(path)
         ranges = mask_url_secret_ranges(path)
         return nil if ranges.empty?
         masked = path.dup

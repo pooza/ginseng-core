@@ -18,12 +18,6 @@ module Ginseng
     include UrlPath
 
     FILTERED = '[FILTERED]'
-    # query_values= が値に使う encode 規則。encode_component の既定の
-    # charclass では角括弧が残ってしまい、実際の出力と一致しない。
-    FILTERED_ENCODED = Addressable::URI.encode_component(
-      FILTERED,
-      Addressable::URI::CharacterClasses::UNRESERVED,
-    ).freeze
 
     # Hash のキーに現れたら値ごと落とす資格情報の既定値。
     # config の `/logger/mask_fields` で**足せる**（⚠ 減らせない。masking_list 参照）。
@@ -57,6 +51,17 @@ module Ginseng
       'x-amz-security-token',
       'x-amz-signature',
       'x-goog-signature',
+      # ⚠ 同じ判断で足した名前（#701）。ヘッダの綴り（`X-Api-Key`）・OIDC の `id_token`・
+      # Alibaba OSS / Tencent COS の署名。⚠⚠ `auth` / `hmac` は入れない（Hash のキーとしては
+      # 設定値やアルゴリズム名が普通に入る）。
+      'api-key',
+      'id_token',
+      'q-signature',
+      'security-token',
+      'x-api-key',
+      'x-cos-security-token',
+      'x-oss-security-token',
+      'x-oss-signature',
     ].freeze
 
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
@@ -81,26 +86,43 @@ module Ginseng
     # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わず、
     # 🔴 **3xx が `GatewayError` になる**。⚠ 呼び出し側が `follow_redirects:` を
     # 明示していれば従来どおり。
+    #
+    # ⚠ **#701 で足した名前:** `api-key` / `x-api-key` / `auth`（Firebase など）/ `id_token`（OIDC）/
+    # `hmac`、Alibaba OSS（`security-token` / `x-oss-*`）、Tencent COS（`q-signature` /
+    # `x-cos-security-token`）、Akamai（`hdnts` / `__token__`）。⚠⚠ `s`（imgix）/ `t`（Slack）/
+    # `oh`（Facebook）は汎用すぎるので入れない。
     MASK_QUERY_PARAMS = [
+      '__token__',
       'access_token',
+      'api-key',
       'api_key',
       'apikey',
+      'auth',
       'authorization',
       'client_secret',
       'code',
+      'hdnts',
       'hm',
+      'hmac',
       'i',
+      'id_token',
       'jwt',
       'key',
       'password',
+      'q-signature',
       'refresh_token',
       'secret',
+      'security-token',
       'sig',
       'signature',
       'token',
       'x-amz-security-token',
       'x-amz-signature',
+      'x-api-key',
+      'x-cos-security-token',
       'x-goog-signature',
+      'x-oss-security-token',
+      'x-oss-signature',
     ].freeze
 
     # URL の**パス**に現れたら次の 1 セグメントを落とす接頭辞の既定値。
@@ -119,10 +141,29 @@ module Ginseng
 
     URL_PATTERN = %r{\A[a-z][a-z0-9+.-]*://}i
 
-    # userinfo にパスワードを持つ URL (#589)。⚠ `://` から最初の `/` までの間に
-    # `:` と `@` が並ぶ形だけを見る。`https://user@example.com`（パスワード無し）と
-    # `http://example.com:8080/`（ポート）を巻き込まないため。
-    URL_USERINFO_PATTERN = %r{\A[a-z][a-z0-9+.-]*://[^/?\#@]*:[^/?\#@]*@}i
+    # URL を `scheme://` / authority / パス / 残り（クエリとフラグメント）に分ける (#700)。
+    # ⚠ **必ず一致する**（`URL_PATTERN` に当たった文字列なら）。パースではないので、
+    # 読めない URL という状態が無い。
+    #
+    # ⚠⚠ **authority とパスは空白で終える（Codex P2）。** `url:` 欄以外にも、URL で始まって
+    # 文が続く文字列がある。🔴 パスを空白の先まで取ると、`…/webhook/SECRET failed afterward`
+    # の**後ろの文ごと**伏字になっていた（パスのマスクは次の `/` までを落とす）。
+    # ⚠ クエリは残り（`rest`）に入るので、値の中の空白（`?x=a b&sig=`）は従来どおり越える。
+    URL_PARTS_PATTERN = %r{
+      \A (?<scheme>[a-z][a-z0-9+.-]*://) (?<authority>[^/?\#\s]*) (?<path>[^?\#\s]*) (?<rest>.*) \z
+    }mix
+
+    # クエリとフラグメントの `名前=値` 1 つ (#700)。区切りは `masked_url_params` を見る。
+    #
+    # 🔴🔴 **`;` と `?` は、次に `名前=` が続くときだけ区切りとみなす（Codex P1）。** どちらも
+    # 値の中に普通に現れる文字なので、無条件に切ると `token=SEC;RET` が `token=[FILTERED];RET`
+    # になり、**資格情報の後ろ半分が残っていた**（パースしていたころは値ごと落ちていた）。
+    # ⚠ `&amp;X-Amz-Signature=` / `a=1;sig=` / `redirect=https://x/?token=` は、後ろに
+    # `名前=` が続くので従来どおり切れる。
+    URL_PARAM_PATTERN = /
+      (?<=[?&;\#]) (?<name>[^?&;\#=\s]*) =
+      (?: [^?&;\#\s] | [?;] (?![^?&;\#=\s]*=) )*
+    /x
 
     # IPv6 リテラルの zone id (#609)。⚠ RFC 6874 の綴りは `%25eth0` だが、
     # **生の `%eth0` もログには出る**（アプリが文字列として組み立てるため）。
@@ -132,13 +173,6 @@ module Ginseng
     # **区切りの後にもパーセントが来る**（Codex P1）。unreserved だけを許すと
     # 2 つ目の `%` で切れ、**走査が当たらず素通りする**（実測でトークンが残った）。
     URL_ZONE_ID_PATTERN = /%(?:25)?(?:[0-9a-z._~-]|%[0-9a-f]{2})+/i
-
-    # ホストが zone id 付きの IPv6 リテラルである URL (#609)。
-    # ⚠ `mask_url` は URL 全体を受けるので `\A` に錨を置く。
-    URL_ZONE_ID_HOST_PATTERN = %r{
-      \A [a-z][a-z0-9+.-]*:// (?:[^/?\#]*@)?
-      (?<host>\[[0-9a-f:.]+) (?<zone>#{URL_ZONE_ID_PATTERN}) \]
-    }ix
 
     # 文字列の**途中**に埋まった URL を拾う (#582)。⚠ URL_PATTERN と違って錨が
     # 無い。アプリは `"Invalid feed #{id} (#{uri}) ..."` のように例外メッセージへ
@@ -153,15 +187,33 @@ module Ginseng
     # 角括弧を要求すると、`https://user:pass@[::1]/?token=SECRET` は
     # **`https://user:pass@` だけ**に一致して `[` で切れ、**クエリが mask_url に
     # 届かない**（実測でトークンが残った）。
+    #
+    # 🔴🔴 **クエリの途中で切れると、その後ろが丸ごと素通りする (#700)。** `\` `^` `{` `}` `|`
+    # で切っていたため `?x=^&sig=SECRET` は `sig` に届かず、`sig=SEC|RET` は `RET` が残った。
+    # ⚠ **クエリとフラグメントでだけ**それらを許す（パスは従来どおり）。⚠⚠ 角括弧は
+    # **対になった `[...]`（`sig[]=`）か、閉じない `[`** だけ — 閉じ括弧を一律に許すと
+    # Markdown の `[url](...)` や `[url]` を食う（上記）。⚠ 閉じていない IPv6 の `[`
+    # （`https://[::1/a?sig=`）もホストとして受ける。
+    # ⚠ 空白・引用符・`<>` では従来どおり切る（文中の URL の終わりの目印なので）。
+    # まるごと URL の文字列は `mask_urls_in` が走査せずに受ける。
     URL_IN_TEXT_PATTERN = %r{
       [a-z][a-z0-9+.-]*://
       (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
-      (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\] | [^\s<>"'`\\^{}|\[\]])
-      [^\s<>"'`\\^{}|\[\]]*
+      (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\]? | [^\s<>"'`\\^{}|\[\]])
+      [^\s<>"'`\\^{}|\[\]?\#]*
+      (?: [?\#] (?: \[[^\[\]\s<>"'`]*\] | [^\s<>"'`\]] )* )?
     }ix
 
     # URL の末尾に付きがちで、URL 本体ではないことが多い文字。
     TRAILING_PUNCTUATION = /[).,;:!?]+\z/
+
+    # クエリの名前を、サーバーが読む形に揃える (#700)。⚠ `RedirectGuard` と共有する
+    # （「マスクの対象か」と「資格情報か」は同じ判断）。
+    # ⚠ 復号できない名前は `ArgumentError` を上げる。**呼び出し側で安全側へ倒す。**
+    def self.query_param_name(key)
+      name = ::URI.decode_www_form_component(key.to_s).strip
+      return name.sub(/(?:\[[^\]]*\])+\z/, '').downcase
+    end
 
     # ログ出力用にマスクした複製を返す。
     #
@@ -192,7 +244,32 @@ module Ginseng
     # のような**例外メッセージ**は素通りしていた。ログにも Sentry にも同じ形で
     # 出る（pooza/tomato-shrieker#1467）。
     def mask_urls_in(text)
-      # ⚠⚠ **ASCII 非互換なエンコーディングは `include?` の時点で落ちる (#591)。**
+      text = utf8_compatible(text)
+      # ⚠ HTTP#log は毎リクエスト通る。当たらない文字列で走査しない。
+      return text unless text.include?('://')
+      # ⚠⚠ **不正なバイト列は gsub の時点で ArgumentError を上げる (#518 / #587)。**
+      # ここで落とすと利用側が rescue を書くことになり、**マスクの正本を 1 か所に
+      # 保つ**という #580 の前提が崩れる（pooza/tomato-shrieker に実際に rescue が
+      # 生えていた）。
+      #
+      # 🔴 **「rescue して元の文字列を返す」にしないこと。**
+      # それだと URL の資格情報が平文で残る（v1.20.0 が実際にそうだった）。
+      # **scrub してからマスクする** — ログ経路（create_entry）と同じ倒し方。
+      text = text.scrub('?') unless text.valid_encoding?
+      # ⚠⚠ **まるごと 1 つの URL なら走査しない (#700)。** `url:` 欄は URL そのものなので、
+      # 文中の URL の終わりの目印（空白・引用符・`<>`）で切る理由が無い。🔴 切ると
+      # `?x="1"&sig=SECRET` の `sig` が素通りしていた。
+      return mask_url(text) if whole_url?(text)
+      return text.gsub(URL_IN_TEXT_PATTERN) do |url|
+        core, trailing = split_trailing_punctuation(url)
+        "#{mask_url(core)}#{trailing}"
+      end
+    end
+
+    private
+
+    # ⚠⚠ **ASCII 非互換なエンコーディングは `include?` の時点で落ちる (#591)。**
+    def utf8_compatible(text)
       # UTF-16 / UTF-32 は `Encoding::CompatibilityError` を上げるので、走査より
       # 先に UTF-8 へ寄せる（`Logger#scrub` と同じ倒し方）。
       #
@@ -211,24 +288,14 @@ module Ginseng
           text.dup.force_encoding(Encoding::UTF_8).scrub('?')
         end
       end
-      # ⚠ HTTP#log は毎リクエスト通る。当たらない文字列で走査しない。
-      return text unless text.include?('://')
-      # ⚠⚠ **不正なバイト列は gsub の時点で ArgumentError を上げる (#518 / #587)。**
-      # ここで落とすと利用側が rescue を書くことになり、**マスクの正本を 1 か所に
-      # 保つ**という #580 の前提が崩れる（pooza/tomato-shrieker に実際に rescue が
-      # 生えていた）。
-      #
-      # 🔴 **mask_url のように「rescue して元の文字列を返す」にしないこと。**
-      # それだと URL の資格情報が平文で残る（v1.20.0 が実際にそうだった）。
-      # **scrub してからマスクする** — ログ経路（create_entry）と同じ倒し方。
-      text = text.scrub('?') unless text.valid_encoding?
-      return text.gsub(URL_IN_TEXT_PATTERN) do |url|
-        core, trailing = split_trailing_punctuation(url)
-        "#{mask_url(core)}#{trailing}"
-      end
+      return text
     end
 
-    private
+    # `scheme://` で始まり、ほかに URL を含まない文字列か (#700)。
+    # ⚠ 後ろに文が続いてもよい（値は空白で終わるので、文までは伏せない）。
+    def whole_url?(text)
+      return text.match?(URL_PATTERN) && text.index('://', text.index('://') + 3).nil?
+    end
 
     # 設定のリストを引く。⚠⚠ **設定は既定を置き換えない。既定と合成する (#586)。**
     #
@@ -303,103 +370,46 @@ module Ginseng
       return masking_list('/logger/mask_fields', MASK_FIELDS) {|v| v.to_set {|e| e.to_s.downcase}}
     end
 
-    # URL のクエリに埋まった資格情報を落とす
-    # (pooza/mulukhiya-toot-proxy#4511)。
+    # URL に埋まった資格情報を落とす（クエリ・フラグメント／userinfo のパスワード／
+    # 申告されたパスの接頭辞の次のセグメント）。
     #
     # mask_field? はキー名でしか判定できないため、`url: "...?access_token=xxx"`
     # のように**値の文字列の中に埋まった**トークンは素通りしていた。実際に
     # mulukhiya の listener がフルスコープのボットトークンを平文で syslog へ
-    # 書き続けていた。HTTP#log も毎リクエスト url: を出すので、局所対処では
-    # なく Logger 側に置く。
+    # 書き続けていた (pooza/mulukhiya-toot-proxy#4511)。HTTP#log も毎リクエスト
+    # url: を出すので、局所対処ではなく Logger 側に置く。
     #
     # ⚠ 判定は URL のクエリに限ること。`i` は Misskey のトークンパラメータだが
     # 汎用名すぎるので、Hash のキーや素の文字列にまで広げると無関係な値まで
     # 落としてしまう。
     #
-    # 🔴 **zone id 付きの IPv6 リテラルは Addressable がパースできない (#609)。**
-    # `Addressable::URI.parse('https://[fe80::1%25eth0]/?token=SECRET')` は
-    # `InvalidURIError` を上げ、下の rescue が**元の文字列をそのまま返す** ＝
-    # クエリのトークンが平文で残っていた。⚠⚠ **走査（URL_IN_TEXT_PATTERN）に
-    # zone id を通すだけでは出力が 1 文字も変わらない**（実測）。
+    # 🔴🔴 **URL をパースして組み直さない (#700)。** 以前は Addressable で読んでから
+    # `query_values=` で書き戻していたが、
+    # - **読めない URL は rescue で元の文字列をそのまま返していた**（`\` / `^` / `<>` / `"` /
+    #   閉じていない `[`・zone id 付きの IPv6 は #609 で迂回を足した）
+    # - 読めても `&amp;` / `sig[]=` / `;` 区切り / フラグメントは、名前として当たらなかった
     #
-    # ⚠ **zone id を外してからマスクし、戻す。** 「パースできない文字列を
-    # 正規表現で書き換える」経路は新設しない（行き過ぎて食う回帰が怖い）。
+    # ⚠⚠ **区切りを文字列のまま見て、値の範囲だけを差し替える。** 読めないという状態が
+    # 無くなり、**伏せないところは 1 バイトも変わらない**（正規化で URL が化けない）。
     def mask_url(value)
-      zoned = zoned_url_host(value)
-      return mask_parsed_url(value) unless zoned
-      return mask_zoned_url(value, zoned)
-    end
-
-    # ホストの zone id を捕まえる。無ければ false (#609)。
-    #
-    # ⚠⚠ **ここでも #518 を塞ぐこと。** 不正なバイト列と ASCII 非互換な
-    # エンコーディングは**正規表現の時点で**上がるので、mask_parsed_url の
-    # rescue までは届かない。⚠ 上げると `create_message` の rescue まで飛び、
-    # **mask ごと素通りして mask_fields のキーまで平文で出る**。
-    #
-    # ⚠ HTTP#log は毎リクエスト url: を出す。`%` を含まない URL では
-    # 正規表現を走らせない。
-    def zoned_url_host(value)
-      return false unless value.include?('%')
-      return URL_ZONE_ID_HOST_PATTERN.match(value)
-    rescue ArgumentError, Encoding::CompatibilityError
-      return false
-    end
-
-    # zone id を外した URL をマスクし、外した zone id を戻す (#609)。
-    #
-    # ⚠⚠ **落とすものが無ければ 1 バイトも変わらないこと。** 戻す位置がずれると
-    # ここで壊れる（`test_create_message_keeps_untouched_zone_id_url_identical`）。
-    def mask_zoned_url(value, zoned)
-      stripped = value.dup
-      stripped[zoned.begin(:zone)...zoned.end(:zone)] = ''
-      masked = mask_parsed_url(stripped).dup
-      # ⚠ ホストより**手前**は長さが変わる（userinfo のパスワードを伏せる）ので、
-      # 元の位置では戻せない。**ホストの綴りで探す。** ⚠⚠ `://` より後ろから。
-      host = "#{zoned[:host]}]"
-      index = masked.index(host, masked.index('://'))
-      # ⚠ 見つからないなら zone id は戻せない。**それでも元の文字列は返さない**
-      # （伏せたものが平文に戻る）。⚠⚠ **落とすのは zone id のほう。**
-      return masked unless index
-      masked[(index + zoned[:host].length), 0] = zoned[:zone]
-      return masked
-    end
-
-    # Addressable がパースできる形の URL をマスクする。
-    def mask_parsed_url(value)
+      value = utf8_compatible(value.to_s)
+      value = value.scrub('?') unless value.valid_encoding?
       return value unless mask_url_candidate?(value)
-      uri = Addressable::URI.parse(value)
-      # ⚠ **どれか一つでも当たれば書き出す。** 当たらなければ元の文字列を
-      # そのまま返す。正規化で URL が化ける後退を入れないため。
-      path = masked_url_path(uri)
-      query = masked_url_query(uri)
-      password = masked_url_password(uri)
-      return value unless path || query || password
-      uri.path = path if path
-      uri.query_values = query if query
-      uri.password = password if password
-      # path= / query_values= は値を percent-encode するので、目印の角括弧が
-      # `%5BFILTERED%5D` になってログが読みにくい。自分で入れた目印だけ戻す。
-      return uri.to_s.gsub(FILTERED_ENCODED, FILTERED)
-    # ⚠⚠ **不正なバイト列は正規表現の時点で ArgumentError を上げる (#518)。**
-    # ここで受けないと create_message の rescue まで飛び、**mask ごと素通りして
-    # mask_fields のキーまで平文で出る**。⚠ ログ経路は create_entry が先に scrub
-    # するのでここへは来ないが、create_message を直接呼ぶ利用側のために塞ぐ。
-    rescue Addressable::URI::InvalidURIError, ArgumentError, Encoding::CompatibilityError
-      return value
+      parts = URL_PARTS_PATTERN.match(value)
+      path = masked_url_path(parts[:path]) || parts[:path]
+      authority = masked_url_authority(parts[:authority])
+      return "#{parts[:scheme]}#{authority}#{path}#{masked_url_params(parts[:rest])}"
     end
 
-    # parse する前の足切り。⚠ **HTTP#log は毎リクエスト url: を出す**ので、
-    # どのルールにも当たらない URL で Addressable のパースを走らせない。
+    # ⚠ HTTP#log は毎リクエスト url: を出す。どのルールにも当たりえない URL では
+    # 何もしない。
     def mask_url_candidate?(value)
       return false unless value.match?(URL_PATTERN)
-      return true if value.include?('?')
-      # ⚠ `@` を含む URL は珍しいので、`include?` で足切りしてから正規表現へ (#589)。
-      return true if value.include?('@') && value.match?(URL_USERINFO_PATTERN)
+      return true if value.include?('?') || value.include?('#') || value.include?('@')
       return mask_url_prefixes(value).any?
     end
 
-    # userinfo に埋まったパスワードを落とす。無ければ nil (#589)。
+    # userinfo に埋まったパスワードを落とす (#589)。
     #
     # 🔴 **同じ URL のクエリは落ちるのに、隣にあるパスワードが平文で残っていた。**
     # `postgres://app:S3CRET@db/mydb` のような DSN は例外メッセージに載る
@@ -407,21 +417,39 @@ module Ginseng
     #
     # ⚠⚠ **ユーザ名は落とさない。** ユーザ名は診断に要るうえ、資格情報はパスワードの
     # ほう。⚠ `redis://:S3CRET@redis:6379/0` のように**ユーザ名が空**の形も拾う。
-    def masked_url_password(uri)
-      return nil if uri.password.blank?
-      return FILTERED
+    # ⚠ userinfo は**最後の** `@` まで（パスワードに `@` があっても丸ごと落とす）。
+    def masked_url_authority(authority)
+      at = authority.rindex('@')
+      return authority unless at
+      colon = authority.index(':')
+      return authority unless colon && colon < at - 1
+      return "#{authority[..colon]}#{FILTERED}#{authority[at..]}"
     end
 
-    # クエリに埋まった資格情報を落とした query 配列を返す。無ければ nil。
-    def masked_url_query(uri)
-      query = uri.query_values(Array)
-      return nil if query.blank?
-      return nil unless query.any? {|k, _| mask_query_param?(k)}
-      return query.map {|k, v| [k, mask_query_param?(k) ? FILTERED : v]}
+    # クエリとフラグメントの `名前=値` のうち、名前が当たる値を落とす。
+    #
+    # ⚠ **区切りは `?` `&` `;` `#`。** `;` を入れると `&amp;` も `amp` と次の名前に
+    # 分かれる（HTML やフィードから来た URL）。⚠ フラグメントも見る — OAuth の implicit
+    # flow は `#access_token=` で返す。⚠ 値の中の `?` でも切る（`redirect=https://x/?token=`
+    # の内側も伏せる）。いずれも**切りすぎて困るのは「伏せすぎ」の側**だけ。
+    # ⚠ 値は空白でも終わる（`url:` に空白の混じった URL が来たとき、後ろの文まで伏せない）。
+    def masked_url_params(rest)
+      return rest if rest.empty?
+      return rest.gsub(URL_PARAM_PATTERN) do
+        match = Regexp.last_match
+        # ⚠ 値が空でも `[FILTERED]` にする（#700 より前と同じ形）。
+        next match[0] unless mask_query_param?(match[:name])
+        "#{match[:name]}=#{FILTERED}"
+      end
     end
 
+    # ⚠⚠ **名前は復号し、配列の添字を外してから照合する (#700)。** `access%5Ftoken` も
+    # `sig[]` もサーバー側では `access_token` / `sig` として読まれる。🔴 復号できない名前は
+    # 伏せる側に倒す（`RedirectGuard` と同じ）。
     def mask_query_param?(key)
-      return mask_query_params.include?(key.to_s.downcase)
+      return mask_query_params.include?(Masking.query_param_name(key))
+    rescue ArgumentError
+      return true
     end
 
     # ⚠ 設定は既定と**合成**する。**マスクしない方向へは倒さない**

@@ -363,7 +363,12 @@ module Ginseng
     # 落とすのは `basic_auth` から作った `Authorization` だけで、素の headers は
     # 別ホストへもそのまま撃ち直される（実測）。
     def test_custom_credential_headers_are_detected
-      ['X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token'].each do |name|
+      [
+        'X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token',
+        # ⚠ 2.4.2 まで素通りしていた名前 (#701)。
+        'X-Auth-Key', 'X-Auth-Email', 'X-Access-Key', 'Access-Key', 'Ocp-Apim-Subscription-Key',
+        'Signature', 'X-Signature', 'X-Hub-Signature', 'X-Session', 'Cookie2'
+      ].each do |name|
         WebMock.reset!
         redirect(:get, 302)
 
@@ -379,7 +384,10 @@ module Ginseng
     def test_benign_custom_headers_still_follow
       redirect(:get, 302)
 
-      assert_equal(200, @http.get('/api', {headers: {'X-Trace' => 'abc', 'X-Mulukhiya' => '1'}}).code)
+      # ⚠ `key` を単体では見ないこと（`X-Idempotency-Key` は資格情報ではない。#701）。
+      headers = {'X-Trace' => 'abc', 'X-Mulukhiya' => '1', 'X-Idempotency-Key' => 'k', 'X-Request-Id' => 'r'}
+
+      assert_equal(200, @http.get('/api', {headers:}).code)
       assert_requested(:get, ELSEWHERE)
     end
 
@@ -527,6 +535,20 @@ module Ginseng
 
     # ⚠⚠ **署名付き URL も「資格情報を運ぶ要求」に数えること (#690)。** `Masking` と一覧を
     # 共有しているので、既定に足した署名系の名前はここにも効く。
+    # ⚠⚠ **名前の揃え方はマスクと同じ (#700)。** `sig[]=` はサーバー側では `sig` と読まれ、
+    # `;` を区切りに読むサーバーもある。🔴 生の字面と `&` だけで見ていたので、どちらも
+    # 「資格情報なし」に落ちて追従していた。
+    def test_array_and_semicolon_query_is_not_followed
+      ['sig[]=secret', 'a=1;sig=secret'].each do |query|
+        WebMock.reset!
+        stub_request(:get, /example/).to_return(status: 302, headers: {'Location' => ELSEWHERE})
+        stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+        assert_raise(GatewayError, query) {HTTP.new.guard_redirects!.get("#{@url}?#{query}")}
+        assert_not_requested(:get, ELSEWHERE)
+      end
+    end
+
     def test_signed_url_query_is_not_followed
       stub_request(:get, @url).with(query: {'X-Amz-Signature' => 'secret'})
         .to_return(status: 302, headers: {'Location' => ELSEWHERE})
@@ -534,6 +556,19 @@ module Ginseng
 
       assert_raise(GatewayError) {HTTP.new.guard_redirects!.get("#{@url}?X-Amz-Signature=secret")}
       assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ #701 で足した名前も、同じ一覧からガードに効く。
+    def test_added_query_names_are_not_followed
+      ['hdnts', 'x-oss-signature', 'id_token'].each do |name|
+        WebMock.reset!
+        stub_request(:get, @url).with(query: {name => 'secret'})
+          .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+        stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+        assert_raise(GatewayError, name) {HTTP.new.guard_redirects!.get("#{@url}?#{name}=secret")}
+        assert_not_requested(:get, ELSEWHERE)
+      end
     end
 
     # ⚠ **シンボルで返す logger を差されても効くこと。** 🔴 正規化を片方の枝でしか
