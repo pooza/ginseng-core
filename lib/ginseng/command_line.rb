@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'open3'
+require 'securerandom'
 require 'shellwords'
 require 'timeout'
 require 'facets/time'
@@ -70,12 +71,12 @@ module Ginseng
     # ⚠⚠ **shellescape した形も伏せる** — `to_s` はエスケープ済みの文字列を返すので、
     # 生の形だけ見ていると**クォートされたときに黙って漏れる**。
     # ⚠ 伏字は `Masking::FILTERED` — 🔴 **利用側で同じ文字列を定義し直さない**ため。
-    def masked(text)
+    def masked(text, marker = Masking::FILTERED)
       return secrets.inject(text.to_s) do |dest, secret|
         mask_patterns(secret, dest.encoding).inject(dest) do |masked, pattern|
           # ⚠ **ブロック形式で渡す**。置換文字列にすると `\\1` などが
           # 後方参照として食われる。
-          masked.gsub(pattern) {Masking::FILTERED}
+          masked.gsub(pattern) {marker}
         end
       end
     end
@@ -227,10 +228,14 @@ module Ginseng
       return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
     end
 
+    # 🔴🔴 **秘密の伏字が、URL の走査を途中で切らないこと（Codex P1）。** `[FILTERED]` を先に
+    # 入れると、その `[` で走査が止まり、`https://h/api/s3cret?token=Q` の `token` が平文で残った。
+    # ⚠ 順序を逆にすると、秘密が URL まるごとのときにマスク後の文字列に秘密が現れず、パスが残る。
+    # ⚠⚠ **英数字だけの目印に替えてから URL のマスクを掛け、最後に伏字へ戻す。**
     def masked_arg(arg)
-      arg = masked(arg)
-      return arg unless @logger.respond_to?(:mask_urls_in)
-      return @logger.mask_urls_in(arg)
+      return masked(arg) unless @logger.respond_to?(:mask_urls_in)
+      marker = "GINSENGMASKED#{SecureRandom.hex(8)}"
+      return @logger.mask_urls_in(masked(arg, marker)).gsub(marker, Masking::FILTERED)
     end
 
     def log_exec(secs, success:)

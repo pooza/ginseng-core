@@ -79,6 +79,19 @@ module Ginseng
       assert_include(logs.last[:command], '[FILTERED]', '伏字はエスケープしない形で出す')
     end
 
+    # 🔴🔴 **秘密の伏字が URL の走査を切らないこと（Codex P1）。** 秘密が URL まるごとの形も見る。
+    def test_exec_masks_secrets_and_url_credentials_in_one_argument
+      logger = Logger.new
+      logs = []
+      logger.define_singleton_method(:info) {|message| logs.push(logger.create_message(message))}
+      @command.instance_variable_set(:@logger, logger)
+      @command.args = ['echo', 'https://h.example/api/s3cret?token=QUERYTOKEN', 'https://h.example/push/WHOLE?token=T1']
+      @command.secrets = ['s3cret', 'https://h.example/push/WHOLE?token=T1']
+      @command.exec
+
+      ['s3cret', 'QUERYTOKEN', 'WHOLE', 'GINSENGMASKED'].each {|v| assert_not_include(logs.last[:command], v)}
+    end
+
     # 🔴🔴 **`inspect` に `secrets` を出さない (#702)。** 既定の `#inspect` は ivar を並べるので、
     # `p command` や例外のダンプで平文が出ていた。
     def test_inspect_does_not_show_secrets
