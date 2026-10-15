@@ -90,6 +90,21 @@ module Ginseng
       @command.exec
 
       ['s3cret', 'QUERYTOKEN', 'WHOLE', 'GINSENGMASKED'].each {|v| assert_not_include(logs.last[:command], v)}
+      # ⚠ ふつうの形は引数ごとには伏せない（パスの残りとクエリの名前は読める）。
+      assert_include(logs.last[:command], 'https://h.example/api/[FILTERED]')
+    end
+
+    # 🔴🔴 **秘密が URL の構文と重なっても、値を残さないこと（Codex P1・2 巡目）。**
+    def test_exec_masks_a_secret_that_overlaps_url_syntax
+      logger = Logger.new
+      logs = []
+      logger.define_singleton_method(:info) {|message| logs.push(logger.create_message(message))}
+      @command.instance_variable_set(:@logger, logger)
+      @command.args = ['echo', 'https://h.example/?token=OTHERSECRET']
+      @command.secrets = ['token']
+      @command.exec
+
+      assert_not_include(logs.last[:command], 'OTHERSECRET')
     end
 
     # 🔴🔴 **`inspect` に `secrets` を出さない (#702)。** 既定の `#inspect` は ivar を並べるので、

@@ -231,11 +231,18 @@ module Ginseng
     # 🔴🔴 **秘密の伏字が、URL の走査を途中で切らないこと（Codex P1）。** `[FILTERED]` を先に
     # 入れると、その `[` で走査が止まり、`https://h/api/s3cret?token=Q` の `token` が平文で残った。
     # ⚠ 順序を逆にすると、秘密が URL まるごとのときにマスク後の文字列に秘密が現れず、パスが残る。
-    # ⚠⚠ **英数字だけの目印に替えてから URL のマスクを掛け、最後に伏字へ戻す。**
+    # 🔴🔴 **目印に替えるだけでも足りない（Codex P1・2 巡目）。** 秘密が URL の構文と重なると
+    # （`secrets = ['token']` と `?token=OTHER`）、目印に替えた時点でパラメータの名前が消え、
+    # URL のマスクが値を伏せなくなる。
+    # ⚠⚠ **両方の順序で計算し、一致すればそれを使う。食い違えば引数ごと伏せる。** どちらの順序にも
+    # 漏れる形があり、食い違いはその合図。ふつうの形（パスの秘密＋クエリの資格情報、URL まるごとの
+    # 秘密）では一致するので、引数ごと伏せるのは秘密が構文と重なるときだけ。
     def masked_arg(arg)
       return masked(arg) unless @logger.respond_to?(:mask_urls_in)
       marker = "GINSENGMASKED#{SecureRandom.hex(8)}"
-      return @logger.mask_urls_in(masked(arg, marker)).gsub(marker, Masking::FILTERED)
+      secrets_first = @logger.mask_urls_in(masked(arg, marker)).gsub(marker, Masking::FILTERED)
+      return secrets_first if secrets_first == masked(@logger.mask_urls_in(arg))
+      return Masking::FILTERED
     end
 
     def log_exec(secs, success:)
