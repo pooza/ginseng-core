@@ -124,6 +124,10 @@ module Ginseng
       @command.secrets = 's3cret'
 
       assert_equal(['s3cret'], @command.secrets)
+      # ⚠ `to_a` を持つ集まり（`Set` など）は中身を取り出す（`Kernel#Array` は `to_a` を呼ぶ）。
+      @command.secrets = Set['s3cret']
+
+      assert_equal(['s3cret'], @command.secrets)
     end
 
     # ⚠⚠ **2 段のエスケープも伏せる (#702)。** `sudo_command` は `to_s` をさらに shellescape する。
