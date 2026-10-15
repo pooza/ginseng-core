@@ -139,6 +139,9 @@ module Ginseng
       'https://h.example/a#sig=SECRET',
       'https://h.example/a#access_token=SECRET&token_type=bearer',
       'https://h.example/cb?redirect=https://x.example/?token=SECRET',
+      # 🔴 `;` / `?` は値の中にも現れる。次に `名前=` が続かなければ値の一部（Codex P1）。
+      'https://h.example/a?token=SEC;RET',
+      'https://h.example/a?token=SEC?RET&x=1',
       # ⚠ Addressable が読めない形（閉じていない IPv6 の `[`）。
       'https://[::1/a?sig=SECRET',
     ].freeze
@@ -183,6 +186,11 @@ module Ginseng
       assert_equal(
         'error (https://h.example/wiki/Foo_(bar)?a=1&token=[FILTERED]&b=2). retry',
         @logger.create_message(message: 'error (https://h.example/wiki/Foo_(bar)?a=1&token=SECRET&b=2). retry')[:message],
+      )
+      # ⚠ URL で始まって文が続く文字列で、パスのマスクが後ろの文を食わないこと（Codex P2）。
+      assert_equal(
+        'https://h.example/mulukhiya/webhook/[FILTERED] failed afterward',
+        @logger.create_message(message: 'https://h.example/mulukhiya/webhook/SECRET failed afterward')[:message],
       )
       # ⚠ Markdown の括りは従来どおり食わない。
       assert_equal(
