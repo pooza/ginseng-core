@@ -12,6 +12,9 @@ module Ginseng
     # (pooza/tomato-shrieker の retry_not_found)。**module に移しても
     # サブクラスの定義が勝ち、`super` も従来どおり効く。**
     module RetryMethods
+      # URL をメッセージに載せる例外 (#703)。⚠ `::URI` と書く（素の `URI` は `Ginseng::URI`）。
+      URI_ERRORS = [HTTParty::UnsupportedURIScheme, ::URI::InvalidURIError, Addressable::URI::InvalidURIError].freeze
+
       private
 
       def repeat(method, uri, start, quiet: nil)
@@ -21,6 +24,7 @@ module Ginseng
         log_retry_error(e, method, uri, start)
         raise gateway_error(e)
       rescue => e
+        e = redact_uri_error(e)
         cnt += 1
         seconds = retry_after(e)
         gave_up = give_up_reason(e, cnt, seconds)
@@ -109,6 +113,49 @@ module Ginseng
       # 区別できない**（前者も `count: 1` の 1 本で終わる）。
       #
       # ⚠ `count` は nil でもキーごと出す（従来の形。`Net::ReadTimeout` の行は持たない）。
+      # ⚠⚠ **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** HTTParty の
+      # `UnsupportedURIScheme` は `'<URL>' Must be HTTP, HTTPS or Generic`、`URI::InvalidURIError` は
+      # `bad URI (is not URI?): "<URL>"`。🔴 ログのマスクは `scheme://` の形で**読める** URL しか
+      # 伏せないので、`myapp:/callback?code=SECRET` のような `Location` も、読めない URL も
+      # **ログの行と包み直した `GatewayError` の両方に平文で出ていた**。
+      #
+      # ⚠ **スキームとホストだけ残す。** 要求先の URL はログの `url:` に（伏せた形で）残るので、
+      # 診断に要るのは「どんな形の URL だったか」まで。⚠ 同じクラスで作り直す（`retryable?` と
+      # 利用側の `rescue` がクラスで見ている）。
+      def redact_uri_error(error)
+        return error unless URI_ERRORS.any? {|klass| error.is_a?(klass)}
+        redacted = error.class.new(redact_uri_message(error.message))
+        redacted.set_backtrace(error.backtrace)
+        return redacted
+      rescue ArgumentError
+        # ⚠ 引数の違う独自の例外クラスでも、URL を載せたまま返さない。
+        redacted = GatewayError.new("#{error.class}: #{Masking::FILTERED}")
+        redacted.set_backtrace(error.backtrace)
+        return redacted
+      end
+
+      # ⚠ 引用符の中を丸ごと縮める。**最後の同じ引用符まで**取る（URL の中に引用符が
+      # あっても途中で切らない）。引用符が無ければ、メッセージごと伏せる。
+      def redact_uri_message(message)
+        message = message.to_s.scrub('?')
+        return Masking::FILTERED unless match = message.match(/(['"])(.*)\1/m)
+        quote = match[1]
+        return "#{match.pre_match}#{quote}#{uri_origin(match[2])}#{quote}#{match.post_match}"
+      end
+
+      # `scheme:` と、読めるホストだけを残す。⚠ userinfo とポート以外の後ろは全部落とす。
+      def uri_origin(src)
+        scheme = src[/\A[a-z][a-z0-9+.-]*:/i]
+        return Masking::FILTERED unless scheme
+        host = src.delete_prefix(scheme)[%r{\A//([^/?#\\]*)}, 1]
+        # ⚠ `@` の前（userinfo）は落とす。ホストの形をしていなければホストも出さない
+        # （`//user:pa/ss@h` のように、区切りが崩れた形でパスワードの断片を出さないため）。
+        host = host&.split('@')&.last
+        host = nil unless host&.match?(/\A(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?\z/i)
+        origin = host ? "#{scheme}//#{host}" : scheme
+        return origin == src ? origin : "#{origin}#{Masking::FILTERED}"
+      end
+
       def log_retry_error(error, method, uri, start, **detail)
         entry = {error:, method: method.upcase.to_sym, url: uri.to_s, start:, count: detail[:count]}
         entry.merge!(detail.except(:count).compact)

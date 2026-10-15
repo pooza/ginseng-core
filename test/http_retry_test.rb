@@ -469,6 +469,65 @@ module Ginseng
       assert_equal(1, logged.size)
     end
 
+    # 🔴🔴 **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** ログのマスクは
+    # `scheme://` の形で読める URL しか伏せないので、**ログの行にも、包み直した例外にも**
+    # 秘密が平文で出ていた。⚠ 3 つの形を、ログの行（実際に書き出す形）と例外の両方で見る。
+    def test_uri_errors_do_not_carry_the_url
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => 'myapp:/callback?code=SECRET'})
+      {
+        'ftp://h.example/a?sig=SECRET' => "'ftp://h.example[FILTERED]' Must be HTTP, HTTPS or Generic",
+        'https://[::1/a?sig=SECRET' => 'bad URI (is not URI?): "https:[FILTERED]"',
+        '/api' => "'myapp:[FILTERED]' Must be HTTP, HTTPS or Generic",
+      }.each do |url, expected|
+        error = nil
+        logged = capture_log {error = assert_raise(GatewayError, url) {@http.get(url)}}
+
+        assert_equal(expected, error.message, url)
+        assert_not_empty(logged, url)
+        logged.each do |entry|
+          assert_not_include(@http.instance_variable_get(:@logger).create_message(entry)[:error].to_s, 'SECRET', url)
+        end
+      end
+    end
+
+    # ⚠ **`host_validator` を渡した経路も `repeat` を通る**ので、同じく縮める。
+    # ⚠⚠ 読めない URL で見ること — ftp の形は `gateway_error` のマスクでも伏せられるので、
+    # 縮める処理を外しても緑のままだった（実測）。
+    def test_uri_errors_do_not_carry_the_url_with_host_validator
+      error = assert_raise(GatewayError) do
+        @http.get('https://[::1/a?sig=SECRET', {host_validator: ->(_host) {true}})
+      end
+
+      assert_not_include(error.message, 'SECRET')
+    end
+
+    # ⚠ 残すのはスキームと、ホストの形をしたものだけ。🔴 区切りの崩れた userinfo の断片を
+    # ホストとして出さないこと。
+    def test_uri_origin
+      {
+        'ftp://h.example/a?sig=SECRET' => 'ftp://h.example[FILTERED]',
+        'ftp://h.example:21' => 'ftp://h.example:21',
+        'ftp://user:pass@h.example/a' => 'ftp://h.example[FILTERED]',
+        'ftp://user:pa/ss@h.example/a' => 'ftp:[FILTERED]',
+        'myapp:/callback?code=SECRET' => 'myapp:[FILTERED]',
+        'https://[::1]/a' => 'https://[::1][FILTERED]',
+        'not a uri' => '[FILTERED]',
+      }.each do |src, expected|
+        assert_equal(expected, @http.send(:uri_origin, src), src)
+      end
+    end
+
+    # ⚠⚠ **URI 以外の例外も、包み直したメッセージにログと同じマスクを掛ける (#703)。**
+    # 例外は呼び出し側の `rescue` や Sentry へ、ログのマスクを通らずに渡る。
+    def test_wrapped_error_message_is_masked
+      stub_request(:get, @url).to_raise(SocketError.new('failed https://h.example/a?access_token=SECRET'))
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+
+      assert_not_include(error.message, 'SECRET')
+      assert_include(error.message, 'https://h.example/a?access_token=[FILTERED]')
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。
