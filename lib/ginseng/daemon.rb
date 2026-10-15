@@ -47,7 +47,10 @@ module Ginseng
         daemon: app_name,
         version: package_class.version,
         message: 'start',
-        command: command.to_s,
+        # ⚠⚠ **ログには伏せた形を出す (#702)。** `exec` は `CommandLine#log_exec` を通らないので、
+        # `secrets` も引数の URL のマスクも効いていなかった。⚠ 文字列を返す `command` は
+        # 従来どおり（`Logger` の URL のマスクだけが効く）。
+        command: command.respond_to?(:masked_to_s) ? command.masked_to_s : command.to_s,
       )
       exec(command.to_s)
     end

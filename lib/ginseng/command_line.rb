@@ -15,6 +15,9 @@ module Ginseng
     # サブプロセスへ引き継がせない環境変数。詳細は child_env のコメント (#480)。
     UNSET_ENV_KEYS = ['RBENV_VERSION'].freeze
 
+    # shellescape した伏字（`\[FILTERED\]`）。ログでは読める形へ戻す (#702)。
+    FILTERED_ESCAPED = Masking::FILTERED.shellescape.freeze
+
     attr_reader :args, :stdout, :stderr, :status, :pid, :env, :secrets
     attr_accessor :dir, :user
 
@@ -49,8 +52,13 @@ module Ginseng
     #
     # ⚠ **文字列も複写する** — 🔴 `to_s` は String に対して**自分を返す**ので、
     # 呼び出し側があとから書き換えると**伏せる値がずれて黙って漏れる**。
+    #
+    # 🔴 **Hash は受けない (#702)。** `to_a` が `[[キー, 値]]` になり、`"[:push_url, \"…\"]"` という
+    # 本文に現れない文字列を伏せる値にして、**何も伏せずに黙って通っていた**。⚠ 文字列 1 つは
+    # 1 要素として受ける。
     def secrets=(values)
-      @secrets = values.to_a.compact.map {|value| value.to_s.dup.freeze}
+      raise ArgumentError, 'secrets must be an Array of strings, not a Hash' if values.is_a?(Hash)
+      @secrets = Array(values).compact.map {|value| value.to_s.dup.freeze}
         .reject(&:blank?).uniq.sort_by {|secret| -secret.length}.freeze
     end
 
@@ -84,6 +92,27 @@ module Ginseng
       @stdout = nil
       @stderr = nil
       @status = nil
+    end
+
+    # ⚠⚠ **`secrets` は出さない (#702)。** 既定の `#inspect` は ivar を並べるので、`p command` や
+    # 例外のダンプで `@secrets=["s3cret"]` がそのまま出ていた。
+    def inspect
+      detail = "dir=#{dir.inspect} user=#{user.inspect} secrets=#{secrets.size}"
+      return "#<#{self.class} #{masked_to_s} #{detail}>"
+    end
+
+    # ログに出す形のコマンド行 (#702)。`secrets` と、**引数の中の URL の資格情報**を伏せる。
+    #
+    # 🔴 **`to_s` を丸ごと伏せるだけでは URL のクエリに届かない。** `to_s` は shellescape するので
+    # `?token=X` が `\?token\=X` になり、`Logger` の URL のマスクが読めなかった（`secrets=` を
+    # 渡していない利用側の話）。⚠ **エスケープする前に、引数 1 つずつに掛ける。**
+    # ⚠ 複数の引数にまたがる秘密もあるので、最後に全体へも `masked` を掛ける。
+    def masked_to_s
+      line = args.map do |arg|
+        next arg if arg.is_a?(Symbol)
+        masked_arg(arg.to_s).shellescape.gsub(FILTERED_ESCAPED, Masking::FILTERED)
+      end
+      return masked(line.join(' '))
     end
 
     def to_s
@@ -164,8 +193,13 @@ module Ginseng
     #
     # ⚠ **その符号化で表せない秘密は、本文に現れようが無い** — 当てずに飛ばしてよい
     # （🔴 伏せ損ねにはならない）。
+    #
+    # ⚠⚠ **2 段のエスケープも伏せる (#702)。** `sudo_command` は `to_s`（1 段）をさらに
+    # shellescape するので、`sudo` の経路のコマンド行や、それを写した例外メッセージでは
+    # 1 段の形では当たらなかった。
     def mask_patterns(secret, encoding)
-      return [secret, secret.shellescape].uniq.filter_map do |pattern|
+      escaped = secret.shellescape
+      return [secret, escaped, escaped.shellescape].uniq.filter_map do |pattern|
         convert_encoding(pattern, encoding)
       end
     end
@@ -193,9 +227,15 @@ module Ginseng
       return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
     end
 
+    def masked_arg(arg)
+      arg = masked(arg)
+      return arg unless @logger.respond_to?(:mask_urls_in)
+      return @logger.mask_urls_in(arg)
+    end
+
     def log_exec(secs, success:)
       params = {
-        command: masked(to_s), dir:, env: masked_env, user: @user,
+        command: masked_to_s, dir:, env: masked_env, user: @user,
         status: @status, seconds: secs.round(3)
       }
       success ? @logger.info(params) : @logger.error(params)
@@ -221,6 +261,9 @@ module Ginseng
       return @user ? [sudo_command] : [child_env, to_s]
     end
 
+    # 🔴🔴 **`env` の値は argv に載り、同じホストの誰でも `ps` で読める (#708)。** ログの経路
+    # ではないので `secrets=` では伏せられない。⚠ `user=` と一緒に使うときは、`env` に資格情報を
+    # 置かないこと。
     def sudo_command
       parts = ['sudo', '-u', @user, 'env']
       UNSET_ENV_KEYS.each {|key| parts.push('-u', key)}

@@ -65,6 +65,48 @@ module Ginseng
       assert_equal('echo https://example.com/api/push/[FILTERED]', logger.logs.last.last[:command])
     end
 
+    # 🔴 **`secrets=` を渡していなくても、引数の URL の資格情報は伏せる (#702)。** `to_s` は
+    # shellescape するので `?token=` が `\\?token\\=` になり、`Logger` の URL のマスクが読めなかった。
+    def test_exec_masks_url_credentials_without_secrets
+      logger = Logger.new
+      logs = []
+      logger.define_singleton_method(:info) {|message| logs.push(logger.create_message(message))}
+      @command.instance_variable_set(:@logger, logger)
+      @command.args = ['echo', 'https://h.example/a?token=QUERYTOKEN', 'https://user:PASSWORD@h.example/']
+      @command.exec
+
+      ['QUERYTOKEN', 'PASSWORD'].each {|secret| assert_not_include(logs.last[:command], secret)}
+      assert_include(logs.last[:command], '[FILTERED]', '伏字はエスケープしない形で出す')
+    end
+
+    # 🔴🔴 **`inspect` に `secrets` を出さない (#702)。** 既定の `#inspect` は ivar を並べるので、
+    # `p command` や例外のダンプで平文が出ていた。
+    def test_inspect_does_not_show_secrets
+      @command.args = ['curl', 'https://push.example/api/push/s3cret']
+      @command.secrets = ['s3cret']
+
+      assert_not_include(@command.inspect, 's3cret')
+      assert_include(@command.inspect, 'secrets=1')
+    end
+
+    # 🔴 **Hash を黙って受けない (#702)。** `to_a` が `[[キー, 値]]` になり、何も伏せずに通っていた。
+    # ⚠ 文字列 1 つは 1 要素として受ける。
+    def test_secrets_rejects_a_hash
+      assert_raise(ArgumentError) {@command.secrets = {push_url: 'https://h.example/s3cret'}}
+      @command.secrets = 's3cret'
+
+      assert_equal(['s3cret'], @command.secrets)
+    end
+
+    # ⚠⚠ **2 段のエスケープも伏せる (#702)。** `sudo_command` は `to_s` をさらに shellescape する。
+    def test_masked_covers_the_doubly_escaped_form
+      @command.args = ['echo', "s3cr'et"]
+      @command.secrets = ["s3cr'et"]
+      @command.user = 'nobody'
+
+      assert_not_include(@command.masked(@command.send(:sudo_command)), 's3cr')
+    end
+
     # ⚠⚠ **shellescape した形も伏せる (#642)。** `to_s` はエスケープ済みの文字列を返すので、
     # 🔴 生の形だけ見ていると**クォートされたときに黙って漏れる**。
     def test_masked_covers_the_escaped_form
