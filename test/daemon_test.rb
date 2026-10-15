@@ -58,9 +58,10 @@ module Ginseng
 
     # 引数に資格情報を持つ常駐。⚠ `exec` は置き換えず、渡された引数を覚えるだけ。
     class SecretStub < Stub
-      attr_reader :exec_args
+      attr_reader :exec_args, :command_calls
 
       def command
+        @command_calls = @command_calls.to_i + 1
         command = CommandLine.new(['puma', 'https://push.example/api/push/s3cret', 'https://h.example/?token=QUERYTOKEN'])
         command.secrets = ['s3cret']
         return command
@@ -211,6 +212,7 @@ module Ginseng
       assert_not_include(logged[:command], 's3cret')
       assert_not_include(logged[:command], 'QUERYTOKEN')
       assert_include(daemon.exec_args.first, 's3cret')
+      assert_equal(1, daemon.command_calls, 'command は 1 度だけ呼ぶ')
     end
 
     # ⚠ **起動できていない pid ファイルを残さない (#637)。**

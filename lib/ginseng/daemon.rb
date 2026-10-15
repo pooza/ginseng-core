@@ -43,6 +43,9 @@ module Ginseng
 
     def start(args = [])
       save_config
+      # ⚠ **`command` は 1 度だけ呼ぶ（Codex P2）。** 上書きが状態から組み立てると、ログに出した
+      # コマンド行と実行するコマンド行がずれうる。
+      command = self.command
       @logger.info(
         daemon: app_name,
         version: package_class.version,
