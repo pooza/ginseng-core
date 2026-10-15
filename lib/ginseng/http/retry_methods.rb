@@ -161,13 +161,36 @@ module Ginseng
       # 🔴 `rescue` の中の `raise` は、**捕まえた元の例外を自動で `cause` に付ける**ので、
       # メッセージを伏せても `cause` から平文の URL が読めた（Sentry は `cause` を辿る）。
       # - URI の例外: 縮めた複製を `cause` にする（クラスとバックトレースは同じ）
-      # - その他: マスクでメッセージが変わったなら `cause` を付けない（元の例外は作り直せない）。
-      #   変わらなければ従来どおり元の例外
+      # - その他: **連鎖のどこかに伏せるものがあれば** `cause` を付けない（元の例外は作り直せない）。
+      #   🔴 外側のメッセージだけ見ていると、無害な例外の `cause` に入れ子になった URI の例外が
+      #   そのまま残った（Codex P1・2 巡目）。何も無ければ従来どおり元の例外
+      #
+      # ⚠ **GatewayError はそのまま投げ直す**（`response` と派生クラスを保つため）。⚠⚠ 既に付いた
+      # `cause` は `raise e, cause: nil` でも `dup` でも外せない（実測）。この gem の GatewayError は
+      # `rescue` の中では投げていないので、`cause` は `nil` になっている。**`rescue` の中で
+      # 投げる箇所を足すときは、ここが効かないことに注意。**
       def raise_gateway_error(error, original)
         wrapped = gateway_error(error)
         raise wrapped if wrapped.equal?(original)
         raise wrapped, cause: error unless error.equal?(original)
-        raise wrapped, cause: (wrapped.message == original.message ? original : nil)
+        raise wrapped, cause: (safe_cause?(original) ? original : nil)
+      end
+
+      # 例外の連鎖を残してよいか。⚠ 循環に備えて、同じ例外は 2 度見ない。
+      def safe_cause?(error)
+        seen = Set.new
+        while error && seen.add?(error.object_id)
+          return false if URI_ERRORS.any? {|klass| error.is_a?(klass)}
+          return false unless masked_message?(error.message.to_s)
+          error = error.cause
+        end
+        return true
+      end
+
+      # ⚠ マスクを掛けても変わらない（＝伏せるものが無い）メッセージか。
+      def masked_message?(message)
+        return true unless @logger.respond_to?(:mask_urls_in)
+        return @logger.mask_urls_in(message) == message
       end
 
       def log_retry_error(error, method, uri, start, **detail)

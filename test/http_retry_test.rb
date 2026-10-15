@@ -545,6 +545,30 @@ module Ginseng
       end
     end
 
+    # 🔴🔴 **入れ子になった `cause` も見る（Codex P1・2 巡目）。** 外側のメッセージが無害でも、
+    # その `cause` が URL を丸ごと持つ URI の例外なら、連鎖ごと残さない。
+    def test_nested_cause_does_not_carry_the_secret
+      nested = begin
+        begin
+          raise ::URI::InvalidURIError, 'bad URI (is not URI?): "https://[::1/a?sig=SECRET"'
+        rescue ::URI::InvalidURIError
+          raise SocketError, 'connection failed'
+        end
+      rescue SocketError => e
+        e
+      end
+      stub_request(:get, @url).to_raise(nested)
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+      chain = []
+      while error
+        chain.push(error)
+        error = error.cause
+      end
+
+      chain.each {|e| assert_not_include(e.message, 'SECRET', e.class.to_s)}
+    end
+
     # ⚠ **伏せるものが無ければ、`cause` は従来どおり元の例外**（診断に要る）。
     def test_cause_is_kept_when_nothing_is_masked
       stub_request(:get, @url).to_raise(SocketError.new('getaddrinfo'))
