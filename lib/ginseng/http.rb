@@ -46,8 +46,16 @@ module Ginseng
     # （`X-Idempotency-Key` のような資格情報でない名前を巻き込むため）。
     # ⚠ 利用側の custom ヘッダは実測で `X-Mulukhiya` / `X-Trace` の 2 つだけで、
     # どちらも当たらない。
-    CREDENTIAL_HEADER_PATTERN =
-      /authorization|authentication|credential|password|secret|token|api[-_]?key/i
+    #
+    # 🔴 **よく知られた名前を取りこぼしていた (#701)。** `X-Auth-Key`（Cloudflare）/
+    # `Ocp-Apim-Subscription-Key`（Azure）/ `X-Hub-Signature` / `X-Session` / `Cookie2` が
+    # 当たらず、2.0.0 の時点の実測で `X-Auth-Key` が別ホストの 302 先へ届いた。
+    # ⚠ `auth` は `authorization` / `authentication` を含む。`key` は
+    # `api` / `access` / `secret` / `subscription` が前に付くときだけ見る。
+    CREDENTIAL_HEADER_PATTERN = /
+      auth | cookie | credential | password | secret | session | signature | token |
+      (?:access|api|subscription)[-_]?key
+    /ix
 
     # ⚠ **オリジンをまたいで持ち出してはいけないヘッダか。** `RedirectGuard`（追わない）
     # と `HostValidationMethods#redirect_options`（落として追う）が同じ判断を使う。

@@ -1,5 +1,5 @@
 package:
-  version: 2.4.2
+  version: 2.5.0
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -50,26 +50,46 @@ logger:
     - x-amz-security-token
     - x-amz-signature
     - x-goog-signature
+    - api-key
+    - id_token
+    - q-signature
+    - security-token
+    - x-api-key
+    - x-cos-security-token
+    - x-oss-security-token
+    - x-oss-signature
   # URL のクエリに現れたら [FILTERED] へ落とすパラメータ
   # (pooza/mulukhiya-toot-proxy#4511)。mask_fields はキー名でしか判定できないので、
   # 値の文字列に埋まった資格情報はこちらで落とす。
   mask_query_params:
+    - __token__
     - access_token
+    - api-key
     - api_key
     - apikey
+    - auth
     - authorization
     - client_secret
     - code
+    - hdnts
     - hm
+    - hmac
     - i
+    - id_token
     - jwt
     - key
     - password
+    - q-signature
     - refresh_token
     - secret
+    - security-token
     - sig
     - signature
     - token
     - x-amz-security-token
     - x-amz-signature
+    - x-api-key
+    - x-cos-security-token
     - x-goog-signature
+    - x-oss-security-token
+    - x-oss-signature
