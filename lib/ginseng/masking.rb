@@ -57,6 +57,17 @@ module Ginseng
       'x-amz-security-token',
       'x-amz-signature',
       'x-goog-signature',
+      # ⚠ 同じ判断で足した名前（#701）。ヘッダの綴り（`X-Api-Key`）・OIDC の `id_token`・
+      # Alibaba OSS / Tencent COS の署名。⚠⚠ `auth` / `hmac` は入れない（Hash のキーとしては
+      # 設定値やアルゴリズム名が普通に入る）。
+      'api-key',
+      'id_token',
+      'q-signature',
+      'security-token',
+      'x-api-key',
+      'x-cos-security-token',
+      'x-oss-security-token',
+      'x-oss-signature',
     ].freeze
 
     # URL のクエリに現れたら落とす資格情報パラメータの既定値。
@@ -81,26 +92,43 @@ module Ginseng
     # ガードを挿した口では、その名前をクエリに持つ GET / HEAD がリダイレクトを追わず、
     # 🔴 **3xx が `GatewayError` になる**。⚠ 呼び出し側が `follow_redirects:` を
     # 明示していれば従来どおり。
+    #
+    # ⚠ **#701 で足した名前:** `api-key` / `x-api-key` / `auth`（Firebase など）/ `id_token`（OIDC）/
+    # `hmac`、Alibaba OSS（`security-token` / `x-oss-*`）、Tencent COS（`q-signature` /
+    # `x-cos-security-token`）、Akamai（`hdnts` / `__token__`）。⚠⚠ `s`（imgix）/ `t`（Slack）/
+    # `oh`（Facebook）は汎用すぎるので入れない。
     MASK_QUERY_PARAMS = [
+      '__token__',
       'access_token',
+      'api-key',
       'api_key',
       'apikey',
+      'auth',
       'authorization',
       'client_secret',
       'code',
+      'hdnts',
       'hm',
+      'hmac',
       'i',
+      'id_token',
       'jwt',
       'key',
       'password',
+      'q-signature',
       'refresh_token',
       'secret',
+      'security-token',
       'sig',
       'signature',
       'token',
       'x-amz-security-token',
       'x-amz-signature',
+      'x-api-key',
+      'x-cos-security-token',
       'x-goog-signature',
+      'x-oss-security-token',
+      'x-oss-signature',
     ].freeze
 
     # URL の**パス**に現れたら次の 1 セグメントを落とす接頭辞の既定値。

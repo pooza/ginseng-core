@@ -120,6 +120,19 @@ module Ginseng
       'hm' => 'https://cdn.discordapp.com/attachments/1/2/a.png?ex=AKIDEXAMPLE&hm=SECRET',
       'jwt' => 'https://private-user-images.githubusercontent.com/a.png?v=AKIDEXAMPLE&jwt=SECRET',
       'authorization' => 'https://f000.backblazeb2.com/file/b/a.png?b=AKIDEXAMPLE&Authorization=SECRET',
+      # ⚠ #701 で足した名前。Alibaba OSS / Tencent COS / Akamai / ほか。
+      'x-oss-signature' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-signature=SECRET',
+      'x-oss-security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-security-token=SECRET',
+      'security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&security-token=SECRET',
+      'q-signature' => 'https://b.cos.ap-tokyo.myqcloud.com/a.png?q-ak=AKIDEXAMPLE&q-signature=SECRET',
+      'x-cos-security-token' => 'https://b.cos.ap-tokyo.myqcloud.com/a.png?q-ak=AKIDEXAMPLE&x-cos-security-token=SECRET',
+      'hdnts' => 'https://a.akamaized.net/a.m3u8?id=AKIDEXAMPLE&hdnts=SECRET',
+      '__token__' => 'https://a.akamaized.net/a.m3u8?id=AKIDEXAMPLE&__token__=SECRET',
+      'api-key' => 'https://api.example.com/v1?client=AKIDEXAMPLE&api-key=SECRET',
+      'x-api-key' => 'https://api.example.com/v1?client=AKIDEXAMPLE&x-api-key=SECRET',
+      'id_token' => 'https://app.example.com/cb?state=AKIDEXAMPLE&id_token=SECRET',
+      'auth' => 'https://p.firebaseio.com/a.json?print=AKIDEXAMPLE&auth=SECRET',
+      'hmac' => 'https://shop.example.com/cb?shop=AKIDEXAMPLE&hmac=SECRET',
     }.freeze
 
     def test_create_message_masks_signed_url_query
@@ -503,6 +516,9 @@ module Ginseng
         # ⚠ クエリやヘッダの綴りのまま（文字列・大文字混じり）で来る (#693)。パース済みの
         # クエリ（`params`）や `headers` を Hash のまま出したとき。
         'X-Amz-Security-Token', 'X-Amz-Signature', 'X-Goog-Signature', :'x-amz-signature',
+        # ⚠ #701 で足した名前。
+        'X-Api-Key', 'Api-Key', :id_token, 'Security-Token', 'q-signature',
+        'x-cos-security-token', 'x-oss-security-token', 'x-oss-signature',
         # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
         :Authorization, :Access_Token, :TOKEN
       ].each do |key|

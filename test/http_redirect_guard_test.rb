@@ -363,7 +363,12 @@ module Ginseng
     # 落とすのは `basic_auth` から作った `Authorization` だけで、素の headers は
     # 別ホストへもそのまま撃ち直される（実測）。
     def test_custom_credential_headers_are_detected
-      ['X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token'].each do |name|
+      [
+        'X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token',
+        # ⚠ 2.4.2 まで素通りしていた名前 (#701)。
+        'X-Auth-Key', 'X-Auth-Email', 'X-Access-Key', 'Access-Key', 'Ocp-Apim-Subscription-Key',
+        'Signature', 'X-Signature', 'X-Hub-Signature', 'X-Session', 'Cookie2'
+      ].each do |name|
         WebMock.reset!
         redirect(:get, 302)
 
@@ -379,7 +384,10 @@ module Ginseng
     def test_benign_custom_headers_still_follow
       redirect(:get, 302)
 
-      assert_equal(200, @http.get('/api', {headers: {'X-Trace' => 'abc', 'X-Mulukhiya' => '1'}}).code)
+      # ⚠ `key` を単体では見ないこと（`X-Idempotency-Key` は資格情報ではない。#701）。
+      headers = {'X-Trace' => 'abc', 'X-Mulukhiya' => '1', 'X-Idempotency-Key' => 'k', 'X-Request-Id' => 'r'}
+
+      assert_equal(200, @http.get('/api', {headers:}).code)
       assert_requested(:get, ELSEWHERE)
     end
 
@@ -534,6 +542,19 @@ module Ginseng
 
       assert_raise(GatewayError) {HTTP.new.guard_redirects!.get("#{@url}?X-Amz-Signature=secret")}
       assert_not_requested(:get, ELSEWHERE)
+    end
+
+    # ⚠ #701 で足した名前も、同じ一覧からガードに効く。
+    def test_added_query_names_are_not_followed
+      ['hdnts', 'x-oss-signature', 'id_token'].each do |name|
+        WebMock.reset!
+        stub_request(:get, @url).with(query: {name => 'secret'})
+          .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+        stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+        assert_raise(GatewayError, name) {HTTP.new.guard_redirects!.get("#{@url}?#{name}=secret")}
+        assert_not_requested(:get, ELSEWHERE)
+      end
     end
 
     # ⚠ **シンボルで返す logger を差されても効くこと。** 🔴 正規化を片方の枝でしか
