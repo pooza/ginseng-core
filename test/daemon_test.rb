@@ -56,6 +56,26 @@ module Ginseng
       end
     end
 
+    # 引数に資格情報を持つ常駐。⚠ `exec` は置き換えず、渡された引数を覚えるだけ。
+    class SecretStub < Stub
+      attr_reader :exec_args, :command_calls
+
+      def command
+        @command_calls = @command_calls.to_i + 1
+        command = CommandLine.new(['puma', 'https://push.example/api/push/s3cret', 'https://h.example/?token=QUERYTOKEN'])
+        command.secrets = ['s3cret']
+        return command
+      end
+
+      def exec(*args)
+        @exec_args = args
+      end
+
+      # ⚠ 設定のキャッシュは別のテスト（daemon_config_cache_test）が見る。
+      def save_config
+      end
+    end
+
     def setup
       @dir = Dir.mktmpdir
       FileUtils.mkdir_p(File.join(@dir, 'tmp/pids'))
@@ -179,6 +199,20 @@ module Ginseng
       assert_equal('start failed', daemon.logs.last.last[:reason])
       assert_equal('Errno::ENOENT', daemon.logs.last.last[:error])
       assert_not_empty(output)
+    end
+
+    # 🔴🔴 **`start` の行にも伏せた形を出す (#702)。** `exec` は `CommandLine#log_exec` を
+    # 通らないので、`secrets` も引数の URL のマスクも効かず、常駐のコマンド行が素のまま出ていた。
+    # ⚠ `exec` に渡すのは**伏せていない**コマンド行（伏せたもので起動しない）。
+    def test_start_logs_the_masked_command
+      daemon = SecretStub.new({application: 'GinsengDaemonTest', working_dir: @dir})
+      daemon.start
+      logged = daemon.logs.find {|_, entry| entry.is_a?(Hash) && entry[:message] == 'start'}.last
+
+      assert_not_include(logged[:command], 's3cret')
+      assert_not_include(logged[:command], 'QUERYTOKEN')
+      assert_include(daemon.exec_args.first, 's3cret')
+      assert_equal(1, daemon.command_calls, 'command は 1 度だけ呼ぶ')
     end
 
     # ⚠ **起動できていない pid ファイルを残さない (#637)。**
