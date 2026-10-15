@@ -549,6 +549,15 @@ module Ginseng
       end
     end
 
+    # ⚠ 復号した名前が不正な UTF-8 でも上げず、「資格情報あり」に倒す（3.0.0 リリース前レビュー）。
+    def test_undecodable_query_name_is_not_followed
+      stub_request(:get, /example/).to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      assert_raise(GatewayError) {HTTP.new.guard_redirects!.get("#{@url}?a%FF=1")}
+      assert_not_requested(:get, ELSEWHERE)
+    end
+
     def test_signed_url_query_is_not_followed
       stub_request(:get, @url).with(query: {'X-Amz-Signature' => 'secret'})
         .to_return(status: 302, headers: {'Location' => ELSEWHERE})

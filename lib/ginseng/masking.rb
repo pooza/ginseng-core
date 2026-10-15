@@ -196,8 +196,14 @@ module Ginseng
     # （`https://[::1/a?sig=`）もホストとして受ける。
     # ⚠ 空白・引用符・`<>` では従来どおり切る（文中の URL の終わりの目印なので）。
     # まるごと URL の文字列は `mask_urls_in` が走査せずに受ける。
+    #
+    # 🔴🔴 **スキームは英数字の連続の先頭からだけ探す（3.0.0 リリース前レビュー）。** 錨が無いと、
+    # 長い英数字の連続の中で開始位置をずらすたびに連続の終わりまで読み直し、**入力長の 2 乗**かかった
+    # （8 万字で 74 秒。悪意あるサーバーの 20KB の応答行で GET 1 回が 8.9 秒）。⚠ 連続の先頭の数字や
+    # `+.-`（`1http://`）は `lead` に取り、`mask_urls_in` で外して扱う（以前はスキームの位置から拾えていた）。
+    # ⚠ スキームの残りは独占的に取る — 後ろに `://` が無ければ、その連続は 1 回で諦める。
     URL_IN_TEXT_PATTERN = %r{
-      [a-z][a-z0-9+.-]*://
+      (?<![a-z0-9+.-]) (?<lead>[0-9+.-]*) [a-z][a-z0-9+.-]*+ ://
       (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
       (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\]? | [^\s<>"'`\\^{}|\[\]])
       [^\s<>"'`\\^{}|\[\]?\#]*
@@ -261,8 +267,9 @@ module Ginseng
       # `?x="1"&sig=SECRET` の `sig` が素通りしていた。
       return mask_url(text) if whole_url?(text)
       return text.gsub(URL_IN_TEXT_PATTERN) do |url|
-        core, trailing = split_trailing_punctuation(url)
-        "#{mask_url(core)}#{trailing}"
+        lead = Regexp.last_match[:lead]
+        core, trailing = split_trailing_punctuation(url.delete_prefix(lead))
+        "#{lead}#{mask_url(core)}#{trailing}"
       end
     end
 
@@ -446,9 +453,11 @@ module Ginseng
     # ⚠⚠ **名前は復号し、配列の添字を外してから照合する (#700)。** `access%5Ftoken` も
     # `sig[]` もサーバー側では `access_token` / `sig` として読まれる。🔴 復号できない名前は
     # 伏せる側に倒す（`RedirectGuard` と同じ）。
+    # 🔴 **`EncodingError` も受ける（3.0.0 リリース前レビュー）。** 復号した名前が不正な UTF-8 だと
+    # `Encoding::CompatibilityError` が上がり、包み直した例外のクラスが変わって `cause` に平文が残った。
     def mask_query_param?(key)
       return mask_query_params.include?(Masking.query_param_name(key))
-    rescue ArgumentError
+    rescue ArgumentError, EncodingError
       return true
     end
 

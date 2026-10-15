@@ -107,13 +107,6 @@ module Ginseng
         return status >= 500
       end
 
-      # ⚠⚠ **429 は、なぜ待った・諦めたかを行に残す (#662)。** 読めた待ちの秒数
-      # （`retry_after`）と、あれば `X-RateLimit-Reset` の値（窓の明ける時刻）を添える。
-      # ⚠ 諦めた回は `gave_up` に理由を添える。🔴 **待ちが長すぎて諦めた回
-      # （`retry_after_too_long`）と `retry_limit` を使い切った回は、`count` だけでは
-      # 区別できない**（前者も `count: 1` の 1 本で終わる）。
-      #
-      # ⚠ `count` は nil でもキーごと出す（従来の形。`Net::ReadTimeout` の行は持たない）。
       # ⚠⚠ **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** HTTParty の
       # `UnsupportedURIScheme` は `'<URL>' Must be HTTP, HTTPS or Generic`、`URI::InvalidURIError` は
       # `bad URI (is not URI?): "<URL>"`。🔴 ログのマスクは `scheme://` の形で**読める** URL しか
@@ -193,6 +186,13 @@ module Ginseng
         return @logger.mask_urls_in(message) == message
       end
 
+      # ⚠⚠ **429 は、なぜ待った・諦めたかを行に残す (#662)。** 読めた待ちの秒数
+      # （`retry_after`）と、あれば `X-RateLimit-Reset` の値（窓の明ける時刻）を添える。
+      # ⚠ 諦めた回は `gave_up` に理由を添える。🔴 **待ちが長すぎて諦めた回
+      # （`retry_after_too_long`）と `retry_limit` を使い切った回は、`count` だけでは
+      # 区別できない**（前者も `count: 1` の 1 本で終わる）。
+      #
+      # ⚠ `count` は nil でもキーごと出す（従来の形。`Net::ReadTimeout` の行は持たない）。
       def log_retry_error(error, method, uri, start, **detail)
         entry = {error:, method: method.upcase.to_sym, url: uri.to_s, start:, count: detail[:count]}
         entry.merge!(detail.except(:count).compact)

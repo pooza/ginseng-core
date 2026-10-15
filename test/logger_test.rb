@@ -212,6 +212,41 @@ module Ginseng
       )
     end
 
+    # 🔴🔴 **長い英数字の連続で、走査が入力長の 2 乗にならないこと（3.0.0 リリース前レビュー）。**
+    # 以前は 8 万字で 74 秒かかった。⚠ 上限は CI の揺れを見込んで緩めに置く（直した形は 0.01 秒）。
+    def test_mask_urls_in_is_linear_on_long_runs
+      ['A' * 80_000, '1a' * 40_000].each do |run|
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        masked = @logger.mask_urls_in("curl -d #{run} https://h.example/?token=SECRET")
+
+        assert_operator(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2)
+        assert_not_include(masked, 'SECRET')
+      end
+    end
+
+    # ⚠ スキームの前に数字や `+.-` が付いた形も、従来どおり拾う。
+    def test_mask_urls_in_masks_urls_after_a_leading_digit
+      {
+        '1http://h.example/?token=SECRET x' => '1http://h.example/?token=[FILTERED] x',
+        'id=12https://h.example/?token=SECRET' => 'id=12https://h.example/?token=[FILTERED]',
+        'see Ahttps://h.example/?token=SECRET' => 'see Ahttps://h.example/?token=[FILTERED]',
+      }.each do |text, expected|
+        assert_equal(expected, @logger.mask_urls_in(text), text)
+      end
+    end
+
+    # 🔴 **復号した名前が不正な UTF-8 でも上げず、伏せる側に倒す（3.0.0 リリース前レビュー）。**
+    def test_mask_urls_in_survives_an_undecodable_name
+      ['https://h.example/?token%FF=1&access_token=SECRET', 'see https://h.example/?a%FF=1&token=SECRET ok'].each do |text|
+        assert_not_include(@logger.mask_urls_in(text), 'SECRET', text)
+      end
+    end
+
+    # ⚠ userinfo は**最後の** `@` まで。パスワードに `@` があっても丸ごと落とす。
+    def test_mask_url_masks_a_password_containing_at_sign
+      assert_equal('https://user:[FILTERED]@h.example/', @logger.mask_url('https://user:p@ss@h.example/'))
+    end
+
     def test_create_message_masks_signed_url_query
       SIGNED_URLS.each do |name, url|
         assert_include(Masking::MASK_QUERY_PARAMS, name)
@@ -460,12 +495,11 @@ module Ginseng
       end
     end
 
-    # 🔴 **zone id の検出でも #518 を塞ぐこと (#609)。**
+    # 🔴 **壊れたバイト列でも `mask_url` が上げないこと (#609 / #518)。**
     #
-    # ⚠⚠ **検出は `mask_parsed_url` の rescue より手前**なので、そこで上げると
-    # `create_message` の rescue まで飛び、**mask ごと素通りして mask_fields の
-    # キーまで平文で出る**。⚠ `mask_url` は public で、利用側が直接呼ぶ
-    # （Sentry の `before_send`）。
+    # ⚠⚠ `mask_url` で上げると `create_message` の rescue まで飛び、**mask ごと素通りして
+    # mask_fields のキーまで平文で出る**。⚠ `mask_url` は public で、利用側が直接呼ぶ
+    # （Sentry の `before_send`）。#700 でパースをやめた後も、正規表現の時点で上がりうるので固定しておく。
     def test_mask_url_survives_broken_bytes
       [
         "https://x.example/?token=SECRET#{BROKEN_BYTES}",
