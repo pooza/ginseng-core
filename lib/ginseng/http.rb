@@ -333,9 +333,15 @@ module Ginseng
 
     # 既に GatewayError ならそのまま投げ直す。包み直すと response（上流ボディ）が
     # 落ちる (mulukhiya-toot-proxy#4480)。
+    #
+    # ⚠⚠ **包み直したメッセージはログのマスクを通らずに外へ出る (#703)。** 例外は
+    # 呼び出し側の `rescue` や Sentry へそのまま渡るので、**ここでログと同じマスクを掛ける**。
+    # ⚠ URI の例外は `repeat` の入口で縮め済み（`redact_uri_error`）。これはその他の例外の分。
     def gateway_error(error)
       return error if error.is_a?(GatewayError)
-      wrapped = GatewayError.new(error.message)
+      message = error.message.to_s
+      message = @logger.mask_urls_in(message) if @logger.respond_to?(:mask_urls_in)
+      wrapped = GatewayError.new(message)
       wrapped.set_backtrace(error.backtrace)
       return wrapped
     end
