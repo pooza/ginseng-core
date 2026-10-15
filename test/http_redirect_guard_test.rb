@@ -527,6 +527,20 @@ module Ginseng
 
     # ⚠⚠ **署名付き URL も「資格情報を運ぶ要求」に数えること (#690)。** `Masking` と一覧を
     # 共有しているので、既定に足した署名系の名前はここにも効く。
+    # ⚠⚠ **名前の揃え方はマスクと同じ (#700)。** `sig[]=` はサーバー側では `sig` と読まれ、
+    # `;` を区切りに読むサーバーもある。🔴 生の字面と `&` だけで見ていたので、どちらも
+    # 「資格情報なし」に落ちて追従していた。
+    def test_array_and_semicolon_query_is_not_followed
+      ['sig[]=secret', 'a=1;sig=secret'].each do |query|
+        WebMock.reset!
+        stub_request(:get, /example/).to_return(status: 302, headers: {'Location' => ELSEWHERE})
+        stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+        assert_raise(GatewayError, query) {HTTP.new.guard_redirects!.get("#{@url}?#{query}")}
+        assert_not_requested(:get, ELSEWHERE)
+      end
+    end
+
     def test_signed_url_query_is_not_followed
       stub_request(:get, @url).with(query: {'X-Amz-Signature' => 'secret'})
         .to_return(status: 302, headers: {'Location' => ELSEWHERE})

@@ -184,14 +184,17 @@ module Ginseng
         return query.keys.map {|key| decode_query_key(key)} if query.is_a?(Hash)
         return query.map {|pair| decode_query_key(Array(pair).first)} if query.is_a?(Array)
         return [] unless query.is_a?(String)
-        return query.split('&').map {|pair| decode_query_key(pair.split('=').first)}
+        # ⚠ `;` でも切る (#700)。`&amp;` も `amp` と次の名前に分かれる。切りすぎて困るのは
+        # 「資格情報あり」に倒れる側だけ。
+        return query.split(/[&;]/).map {|pair| decode_query_key(pair.split('=').first)}
       rescue ArgumentError
         return nil
       end
 
-      # ⚠ `::URI` と書く。素の `URI` はこの gem の `Ginseng::URI` に解決される。
+      # ⚠⚠ **名前の揃え方は `Masking` と共有する (#700)。** 🔴 `sig[]=` はサーバー側では
+      # `sig` として読まれるのに、生の字面で比べると一致しなかった。
       def decode_query_key(key)
-        return ::URI.decode_www_form_component(key.to_s).strip.downcase
+        return Masking.query_param_name(key)
       end
 
       # ⚠ 判断は `HTTP.credential_header?` に寄せる — `host_validator` の経路

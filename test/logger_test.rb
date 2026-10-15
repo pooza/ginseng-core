@@ -122,6 +122,75 @@ module Ginseng
       'authorization' => 'https://f000.backblazeb2.com/file/b/a.png?b=AKIDEXAMPLE&Authorization=SECRET',
     }.freeze
 
+    # 🔴🔴 **走査が途中で切れたり、パースに失敗したりすると、後ろのクエリが丸ごと素通りする (#700)。**
+    # ⚠ `url:` 欄（まるごと URL）と文中の両方で見る。⚠⚠ 部分一致で見ること — `sig=SEC|RET` は
+    # `SECRET` を含まなくても `RET` が漏れている。
+    SCAN_BREAKING_URLS = [
+      'https://b.s3.amazonaws.com/a?X-Amz-Date=1&amp;X-Amz-Signature=SECRET',
+      'https://h.example/a?x=1\\&sig=SECRET',
+      'https://h.example/a?x=^&sig=SECRET',
+      'https://h.example/a?x={1}&sig=SECRET',
+      'https://h.example/a?sig=SEC|RET',
+      'https://h.example/a?sig=SEC{RET',
+      'https://h.example/a?sig=SEC[RET',
+      'https://h.example/a?sig[]=SECRET',
+      'https://h.example/a?sig[0]=SECRET',
+      'https://h.example/a?a=1;sig=SECRET',
+      'https://h.example/a#sig=SECRET',
+      'https://h.example/a#access_token=SECRET&token_type=bearer',
+      'https://h.example/cb?redirect=https://x.example/?token=SECRET',
+      # ⚠ Addressable が読めない形（閉じていない IPv6 の `[`）。
+      'https://[::1/a?sig=SECRET',
+    ].freeze
+
+    # ⚠ 文中では空白・引用符・`<>` が URL の終わりの目印なので、`url:` 欄でだけ見る形。
+    WHOLE_URL_ONLY = [
+      'https://h.example/a?x=<1>&sig=SECRET',
+      'https://h.example/a?x="1"&sig=SECRET',
+      'https://h.example/a?x=a b&sig=SECRET',
+      'https://b.s3.amazonaws.com/a.png?response-content-disposition=attachment; filename="a.png"&X-Amz-Signature=SECRET',
+    ].freeze
+
+    def test_create_message_masks_scan_breaking_urls
+      SCAN_BREAKING_URLS.each do |url|
+        field = @logger.create_message(url:)[:url]
+        embedded = @logger.create_message(message: "failed (#{url}). retry")[:message]
+
+        [field, embedded].each do |masked|
+          # ⚠ `RET` も見る（`sig=SEC|RET` は途中から漏れていた）。
+          assert_not_include(masked, 'RET', url)
+          assert_include(masked, '[FILTERED]', url)
+        end
+        assert_true(embedded.end_with?('). retry'), "後ろの文を食わないこと: #{embedded}")
+      end
+      WHOLE_URL_ONLY.each do |url|
+        assert_not_include(@logger.create_message(url:)[:url], 'SECRET', url)
+      end
+    end
+
+    # ⚠⚠ **伏せないところは 1 バイトも変えない (#700)。** パースして組み直していたころは、
+    # 伏せるたびに隣のパラメータが正規化されていた（`a+b` → `a%20b`、`(bar)?…)` の `)` →
+    # `%29`）。
+    def test_create_message_keeps_the_rest_of_the_url
+      {
+        'https://h.example/s?q=a+b&i=SECRET' => 'https://h.example/s?q=a+b&i=[FILTERED]',
+        'https://h.example/s?access%5Ftoken=SECRET&x=%E3%81%82' => 'https://h.example/s?access%5Ftoken=[FILTERED]&x=%E3%81%82',
+        'https://h.example/s?token=' => 'https://h.example/s?token=[FILTERED]',
+        'https://h.example/s?flag&token=SECRET' => 'https://h.example/s?flag&token=[FILTERED]',
+      }.each do |url, expected|
+        assert_equal(expected, @logger.create_message(url:)[:url], url)
+      end
+      assert_equal(
+        'error (https://h.example/wiki/Foo_(bar)?a=1&token=[FILTERED]&b=2). retry',
+        @logger.create_message(message: 'error (https://h.example/wiki/Foo_(bar)?a=1&token=SECRET&b=2). retry')[:message],
+      )
+      # ⚠ Markdown の括りは従来どおり食わない。
+      assert_equal(
+        '[https://h.example/?token=[FILTERED]](https://h.example/?token=[FILTERED])',
+        @logger.create_message(message: '[https://h.example/?token=SECRET](https://h.example/?token=SECRET)')[:message],
+      )
+    end
+
     def test_create_message_masks_signed_url_query
       SIGNED_URLS.each do |name, url|
         assert_include(Masking::MASK_QUERY_PARAMS, name)
