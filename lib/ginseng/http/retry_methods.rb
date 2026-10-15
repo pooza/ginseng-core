@@ -22,8 +22,9 @@ module Ginseng
         yield
       rescue Net::ReadTimeout => e
         log_retry_error(e, method, uri, start)
-        raise gateway_error(e)
+        raise_gateway_error(e, e)
       rescue => e
+        original = e
         e = redact_uri_error(e)
         cnt += 1
         seconds = retry_after(e)
@@ -33,7 +34,7 @@ module Ginseng
         unless quiet_failure?(e, gave_up, quiet)
           log_retry_error(e, method, uri, start, count: cnt, retry_after: seconds, gave_up:)
         end
-        raise gateway_error(e) if gave_up
+        raise_gateway_error(e, original) if gave_up
         sleep(seconds || retry_seconds)
         retry
       end
@@ -154,6 +155,19 @@ module Ginseng
         host = nil unless host&.match?(/\A(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?\z/i)
         origin = host ? "#{scheme}//#{host}" : scheme
         return origin == src ? origin : "#{origin}#{Masking::FILTERED}"
+      end
+
+      # 包み直して投げる。⚠⚠ **`cause` には伏せた形のものだけを付ける (#703 Codex P1)。**
+      # 🔴 `rescue` の中の `raise` は、**捕まえた元の例外を自動で `cause` に付ける**ので、
+      # メッセージを伏せても `cause` から平文の URL が読めた（Sentry は `cause` を辿る）。
+      # - URI の例外: 縮めた複製を `cause` にする（クラスとバックトレースは同じ）
+      # - その他: マスクでメッセージが変わったなら `cause` を付けない（元の例外は作り直せない）。
+      #   変わらなければ従来どおり元の例外
+      def raise_gateway_error(error, original)
+        wrapped = gateway_error(error)
+        raise wrapped if wrapped.equal?(original)
+        raise wrapped, cause: error unless error.equal?(original)
+        raise wrapped, cause: (wrapped.message == original.message ? original : nil)
       end
 
       def log_retry_error(error, method, uri, start, **detail)

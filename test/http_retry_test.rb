@@ -528,6 +528,33 @@ module Ginseng
       assert_include(error.message, 'https://h.example/a?access_token=[FILTERED]')
     end
 
+    # 🔴🔴 **`cause` にも平文を残さない (#703 Codex P1)。** `rescue` の中の `raise` は元の例外を
+    # 自動で `cause` に付けるので、メッセージを伏せても `cause` から読めた（Sentry は辿る）。
+    def test_cause_chain_does_not_carry_the_secret
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => 'myapp:/callback?code=SECRET'})
+      stub_request(:get, 'https://example.com/socket').to_raise(SocketError.new('failed https://h.example/?access_token=SECRET'))
+      ['ftp://h.example/a?sig=SECRET', 'https://[::1/a?sig=SECRET', '/api', '/socket'].each do |url|
+        error = assert_raise(GatewayError, url) {@http.get(url)}
+        chain = []
+        while error
+          chain.push(error)
+          error = error.cause
+        end
+
+        chain.each {|e| assert_not_include(e.message, 'SECRET', "#{url}: #{e.class}")}
+      end
+    end
+
+    # ⚠ **伏せるものが無ければ、`cause` は従来どおり元の例外**（診断に要る）。
+    def test_cause_is_kept_when_nothing_is_masked
+      stub_request(:get, @url).to_raise(SocketError.new('getaddrinfo'))
+
+      error = assert_raise(GatewayError) {@http.get('/api')}
+
+      assert_kind_of(SocketError, error.cause)
+      assert_equal('getaddrinfo', error.cause.message)
+    end
+
     private
 
     # sleep を捕まえる。⚠ 実際に待つとテストが retry_limit 倍の時間を食う。
