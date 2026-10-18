@@ -344,7 +344,8 @@ module Ginseng
       secrets = ['RETb', 'SECRET']
       # ⚠ 引用符・`<>`・バッククォートも同じ（Codex P1・2 巡目）。
       urls = ['https://h.example/x?token=SEC RETb', 'https://u:p ssSECRET@h.example/']
-      ["'", '"', '<', '>', '`', '|', '{'].each do |char|
+      # ⚠ 改行は `'\n'` の形になる（Codex P1・3 巡目）。
+      ["'", '"', '<', '>', '`', '|', '{', "\n", "\t"].each do |char|
         urls.push("https://h.example/x?token=SEC#{char}RETb", "https://u:pSEC#{char}SECRET@h.example/")
       end
       urls.each do |url|

@@ -213,12 +213,14 @@ module Ginseng
     # `RET` や、`u:p\'SECRET@` のパスワードが丸ごと残った（1 巡目に空白だけ足して、2 巡目に引用符で同じ形が
     # 出た）。⚠ エスケープしていない空白・引用符・`<>` はこれまでどおり URL の終わりの目印。
     # ⚠ JSON を文字列に埋めた形（`\"`）でも URL が後ろへ伸びるが、変わるのは伏せるものがある URL だけ。
+    # 🔴 **改行だけは `'\n'`（引用符で囲む）になる（Codex P1・3 巡目）。** `Shellwords.escape` が `\X` 以外で
+    # 表すのはこの 1 つだけ（全 ASCII 文字で確かめた）なので、これで `Shellwords.escape` の出力は全部覆う。
     URL_IN_TEXT_PATTERN = %r{
       (?<![a-z0-9+.-]) (?<lead>[0-9+.-]*) [a-z][a-z0-9+.-]*+ ://
       (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
       (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\]? | [^\s<>"'`\\^{}|\[\]])
-      (?: [^\s<>"'`\\^{}|\[\]?\#] | \\. )*
-      (?: [?\#] (?: \\. | \[[^\[\]\s<>"'`]*\] | [^\s<>"'`\]] )* )?
+      (?: [^\s<>"'`\\^{}|\[\]?\#] | \\. | '\n' )*
+      (?: [?\#] (?: \\. | '\n' | \[[^\[\]\s<>"'`]*\] | [^\s<>"'`\]] )* )?
     }ix
 
     # URL の末尾に付きがちで、URL 本体ではないことが多い文字。
@@ -429,8 +431,13 @@ module Ginseng
     def mask_url_core(value, text:, depth: 0)
       value = utf8_compatible(value.to_s)
       value = value.scrub('?') unless value.valid_encoding?
-      return mask_escaped_url(value, text:, depth:) if value.include?('\\')
+      return mask_escaped_url(value, text:, depth:) if shell_escaped?(value)
       return mask_plain_url(value, text:, depth:)
+    end
+
+    # ⚠ `Shellwords.escape` の形（`\X` と、改行の `'\n'`）を含むか。
+    def shell_escaped?(value)
+      return value.include?('\\') || value.include?("'\n'")
     end
 
     def mask_plain_url(value, text:, depth:)

@@ -53,9 +53,10 @@ module Ginseng
         return masked.shellescape.gsub(FILTERED.shellescape, FILTERED)
       end
 
+      # ⚠ 改行は `'\n'` の形でも来る（`Shellwords.escape` が改行だけをそう表す）。
       def unescape_shell(value, marker)
-        return value.gsub(/\\(.)/m) do
-          char = Regexp.last_match(1)
+        return value.gsub(/\\(.)|'(\n)'/m) do
+          char = Regexp.last_match(1) || Regexp.last_match(2)
           char.match?(/\s/) ? "#{marker}#{char.ord}x" : char
         end
       end
