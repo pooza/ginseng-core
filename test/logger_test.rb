@@ -297,6 +297,50 @@ module Ginseng
       end
     end
 
+    # 🔴 **`://` が見えるのに復号できない入れ子の値は伏せる（4.0.0 リリース前レビュー）。** 末尾に `%FF` を
+    # 足すだけで素通りしていた。⚠ 段数は URL の段で数える（エンコードした 3 段の無害な値は残る）。
+    def test_mask_urls_in_masks_an_undecodable_nested_url
+      ['https://h.example/?u=https%3A%2F%2Fh%2F%3Ftoken%3DSECRET%FF', 'https://h.example/?u=https%3A%2F%2Fh%2Fmulukhiya%2Fwebhook%2FSECRET%ZZ'].each do |src|
+        assert_equal('https://h.example/?u=[FILTERED]', @logger.mask_urls_in(src))
+      end
+      url = 'https://page.example/?return_to=/home'
+      3.times {url = "https://h.example/?next=#{::URI.encode_www_form_component(url)}"}
+
+      assert_equal(url, @logger.mask_urls_in(url))
+    end
+
+    # 🔴 **復号の段にも上限がある（#716 Codex P1）。** 数えずに再帰していたので、何千段も `%25` を重ねた値で
+    # `SystemStackError` になり、`create_entry` ごと上がった。
+    def test_mask_urls_in_caps_the_decoding_layers
+      deep = "https://h.example/?u=#{'https%3A%2F%2Fx%2F%3Ftoken%3DSECRET'.gsub('%') {"%#{'25' * 20_000}"}}"
+
+      assert_equal('https://h.example/?u=[FILTERED]', @logger.mask_urls_in(deep))
+      assert_not_include(@logger.create_entry(url: deep), 'SECRET')
+      shallow = "https://h.example/?u=#{'https%3A%2F%2Fx%2F%3Ftoken%3DSECRET'.gsub('%', '%2525')}"
+
+      assert_not_include(@logger.mask_urls_in(shallow), 'SECRET')
+      assert_include(@logger.mask_urls_in(shallow), 'x%25252F', '浅い段は値を残して伏せる')
+    end
+
+    # 🔴🔴 **エスケープの後ろに続く別の URL を飲み込まない（4.0.0 リリース前レビュー）。** `\X` を URL の一部と
+    # みなしたため、JSON を二重にエンコードした文字列や `\n` の後ろの URL が前の URL に入り、伏せられなかった。
+    # ⚠ 手前の区画が伏字で終わるとき（資格情報の値が URL）は、次の区画も値の続きとして伏せる。
+    def test_mask_urls_in_splits_urls_joined_by_escapes
+      [
+        {'a' => 'https://other.example/x', 'b' => 'https://u:SECRET@k.example/'}.to_json.to_json,
+        {'a' => 'https://h.example/?x=1', 'b' => 'https://k.example/mulukhiya/webhook/SECRET'}.to_json.to_json,
+        'https://other.example/x\\nhttps://u:SECRET@k.example/',
+        'https://h.example/?x=1\\nhttps://u:SECRET@k.example/',
+        "cmd #{"https://h.example/a?token='https://SECRET.example/".shellescape} done",
+      ].each do |src|
+        assert_not_include(@logger.mask_urls_in(src), 'SECRET', src)
+      end
+      assert_equal(
+        'see https://o.example/x\\nhttps://u:[FILTERED]@k.example/ ok',
+        @logger.mask_urls_in('see https://o.example/x\\nhttps://u:SECRET@k.example/ ok'),
+      )
+    end
+
     # ⚠⚠ **入れ子は段数に上限がある (#712)。** 超えたら値ごと伏せる（安全側）。
     def test_mask_urls_in_caps_the_nesting_depth
       # ⚠ 生の `?u=` は値の中の `?u=` が区切りになり入れ子にならないので、エンコードを重ねる。
@@ -306,10 +350,20 @@ module Ginseng
 
       assert_not_include(masked, 'SECRET')
       # ⚠ 上限の段で、残りの値が丸ごと伏字になる（その段はエンコードされたまま）。
-      assert_match(/%253Fu%253D\[FILTERED\]\z/, masked)
+      # ⚠ 段数は URL の段で数える（4.0.0 リリース前レビュー）ので、上限は 5 段目。
+      assert_match(/%2525253Fu%2525253D\[FILTERED\]\z/, masked)
       shallow = "https://h.example/?u=#{::URI.encode_www_form_component('https://x.example/?token=SECRET')}"
 
       assert_equal('https://h.example/?u=https%3A%2F%2Fx.example%2F%3Ftoken%3D[FILTERED]', @logger.mask_urls_in(shallow))
+    end
+
+    # ⚠ 設定の接頭辞の連続したスラッシュも畳む（4.0.0 リリース前レビュー: 外しても緑だった）。
+    def test_mask_url_squeezes_configured_prefixes
+      @logger.instance_variable_set(:@config, {'/logger/mask_url_paths' => ['/a//hook/']})
+
+      ['https://h.example/a/hook/SECRET', 'https://h.example/a//hook/SECRET'].each do |src|
+        assert_not_include(@logger.mask_url(src), 'SECRET', src)
+      end
     end
 
     # 🔴 **連続したスラッシュも接頭辞として読む (#712)。** nginx の `merge_slashes`（既定で有効）を通ると、
@@ -325,7 +379,7 @@ module Ginseng
       assert_equal('https://h.example/a//b', @logger.mask_url('https://h.example/a//b'))
     end
 
-    # 🔴 **添字だけの名前も Rack と同じく読む (#712)。** `[token]=` は Rack では `token` と読まれる。
+    # 🔴 **名前は最初の `[` までで読み、先頭の括弧は中身を名前とみなす (#712)。** ⚠ 後者は伏せる側に倒す判断。
     def test_mask_urls_in_masks_a_bracketed_name
       ['https://h.example/?[token]=SECRET', 'https://h.example/?token[x]y=SECRET'].each do |src|
         assert_not_include(@logger.mask_urls_in(src), 'SECRET', src)
@@ -361,6 +415,14 @@ module Ginseng
           secrets.each {|v| assert_not_include(masked, v, src)}
         end
       end
+      # 🔴 **authority の 1 文字目のエスケープも受ける（Codex P1・5 巡目）。**
+      ['https://[::1]/?token=SECRET', 'https://[::1%25eth0]/?token=SECRET', "https://'u:pSECRET@h.example/"].each do |url|
+        assert_not_include(@logger.mask_urls_in("cmd #{url.shellescape} done"), 'SECRET', url)
+      end
+      # ⚠ 生のまま伏せて足りるときは、エスケープし直さない。
+      assert_equal('https://h.example/a?x=1\\&sig=[FILTERED]', @logger.mask_urls_in('https://h.example/a?x=1\\&sig=SECRET'))
+      # 🔴 **NUL が残っても例外を上げない（4.0.0 リリース前レビュー）。** `Shellwords.escape` は NUL で上がる。
+      assert_not_include(@logger.mask_urls_in("https://h.example/x\0y\\?token\\=SECRET"), 'SECRET')
       plain = 'https://h.example/a b/x?a=1&b=2'.shellescape
 
       assert_equal("sh -c #{plain}", @logger.mask_urls_in("sh -c #{plain}"))

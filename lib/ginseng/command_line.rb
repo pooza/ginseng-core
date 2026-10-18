@@ -216,7 +216,14 @@ module Ginseng
     # ⚠⚠ **2 段のエスケープも伏せる (#702)。** `sudo_command` は `to_s`（1 段）をさらに
     # shellescape するので、`sudo` の経路のコマンド行や、それを写した例外メッセージでは
     # 1 段の形では当たらなかった。
+    #
+    # 🔴 **NUL を含む秘密はエスケープした形を作らない（4.0.0 リリース前レビュー）。** `shellescape` が
+    # `ArgumentError` を上げ、`to_json` の中で走る `as_json` 経由で `Logger#create_entry` まで上がっていた。
+    # ⚠ NUL は引数にも環境変数にも渡せないので、エスケープした形が本文に現れることは無い。
     def mask_patterns(secret, encoding)
+      if secret.include?("\0")
+        return [secret].filter_map {|pattern| convert_encoding(pattern, encoding)}
+      end
       escaped = secret.shellescape
       return [secret, escaped, escaped.shellescape].uniq.filter_map do |pattern|
         convert_encoding(pattern, encoding)

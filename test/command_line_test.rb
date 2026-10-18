@@ -138,6 +138,14 @@ module Ginseng
       assert_empty(@command.secrets)
     end
 
+    # 🔴 **NUL を含む秘密でも、ログが例外を上げない（4.0.0 リリース前レビュー）。** `shellescape` が上がっていた。
+    def test_json_survives_a_secret_with_nul
+      @command.args = ['echo', 'a']
+      @command.secrets = ["s3\0cret"]
+
+      assert_equal('{"command":"echo a"}', Logger.new.create_entry(command: @command))
+    end
+
     # 🔴🔴 **JSON にしても `secrets` / `env` / 中の Logger の config を出さない (#713)。**
     # ⚠ `to_json` の直呼びと、ログの `command:` にオブジェクトのまま渡す形の両方を見る。
     def test_json_does_not_show_secrets

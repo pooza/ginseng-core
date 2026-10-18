@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require 'addressable/uri'
-require 'securerandom'
-require 'shellwords'
 
 module Ginseng
   # ログ・外部送信の直前に資格情報を落とすための一式 (#582)。
@@ -23,7 +21,8 @@ module Ginseng
 
     FILTERED = '[FILTERED]'
 
-    # エンコードし直した伏字を、読める形へ戻すための綴り（入れ子の URL。#712）。
+    # エンコードし直した伏字を、読める形へ戻すための綴り（入れ子の URL。#712）。⚠ 使うのは `UrlQuery` だが、
+    # ここに置く — `include UrlQuery` の時点で Zeitwerk が読み込むので、あちらでは `FILTERED` がまだ無い。
     FILTERED_ENCODED = ::URI.encode_www_form_component(FILTERED).freeze
 
     # Hash のキーに現れたら値ごと落とす資格情報の既定値。
@@ -212,15 +211,21 @@ module Ginseng
     # 空白・引用符・`<>`・バッククォートは同じシェルの単語の中身なので、そこで切ると `?token\=SEC\ RET` の
     # `RET` や、`u:p\'SECRET@` のパスワードが丸ごと残った（1 巡目に空白だけ足して、2 巡目に引用符で同じ形が
     # 出た）。⚠ エスケープしていない空白・引用符・`<>` はこれまでどおり URL の終わりの目印。
-    # ⚠ JSON を文字列に埋めた形（`\"`）でも URL が後ろへ伸びるが、変わるのは伏せるものがある URL だけ。
+    # 🔴🔴 **その代わり、後ろの別の URL まで 1 つの一致に入る（4.0.0 リリース前レビュー）。** JSON を二重に
+    # エンコードした文字列（`\",\"b\":\"https://u:SECRET@k/`）や `\n` の後ろの URL が前の URL の一部になり、
+    # userinfo もパスも伏せられなかった。⚠ **エスケープの直後にスキームが続くなら、そのエスケープは含めない**
+    # （次の URL は別の一致になる）。🔴 一致の後で区切り直す形は、IPv6 の `[` で一致そのものが止まって
+    # 後ろの URL が丸ごと残った。⚠ `\=` の直後は続ける — シェルのエスケープ形でのクエリの値（`\?u\=https://…`）。
     # 🔴 **改行だけは `'\n'`（引用符で囲む）になる（Codex P1・3 巡目）。** `Shellwords.escape` が `\X` 以外で
-    # 表すのはこの 1 つだけ（全 ASCII 文字で確かめた）なので、これで `Shellwords.escape` の出力は全部覆う。
+    # 表すのはこの 1 つだけ（全 ASCII 文字で確かめた）。
+    # 🔴 **authority の 1 文字目のエスケープも受ける（Codex P1・5 巡目）。** `https://\[::1\]/\?token\=` は
+    # 1 文字目の `\` で一致そのものが起きず、素通りしていた。
     URL_IN_TEXT_PATTERN = %r{
       (?<![a-z0-9+.-]) (?<lead>[0-9+.-]*) [a-z][a-z0-9+.-]*+ ://
       (?:[^\s<>"'`\\^{}|\[\]/?\#]*@)?
-      (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\]? | [^\s<>"'`\\^{}|\[\]])
-      (?: [^\s<>"'`\\^{}|\[\]?\#] | \\. | '\n' )*
-      (?: [?\#] (?: \\. | '\n' | \[[^\[\]\s<>"'`]*\] | [^\s<>"'`\]] )* )?
+      (?:\[[0-9a-f:.]+(?:#{URL_ZONE_ID_PATTERN})?\]? | [^\s<>"'`\\^{}|\[\]] | \\. )
+      (?: [^\s<>"'`\\^{}|\[\]?\#] | #{URL_IN_TEXT_ESCAPE_PATTERN} )*
+      (?: [?\#] (?: #{URL_IN_TEXT_ESCAPE_PATTERN} | \[[^\[\]\s<>"'`]*\] | [^\s<>"'`\]\\] )* )?
     }ix
 
     # URL の末尾に付きがちで、URL 本体ではないことが多い文字。
@@ -230,9 +235,9 @@ module Ginseng
     # （「マスクの対象か」と「資格情報か」は同じ判断）。
     # ⚠ 復号できない名前は `ArgumentError` を上げる。**呼び出し側で安全側へ倒す。**
     #
-    # 🔴 **名前は Rack と同じく最初の `[` までで読む (#712)。** `[token]=` は Rack では `token` と
-    # 読まれるのに、末尾の添字を外すだけでは空の名前になり素通りしていた。⚠ 先頭が `[` のときは、
-    # 最初の括弧の中身を名前とみなす。
+    # 🔴 **名前は最初の `[` までで読む (#712)。** Rack は `token[x]y=` を `token` と読む（3.2.7 で実測）のに、
+    # 末尾の添字を外すだけでは一致しなかった。⚠ 先頭が `[` のときは、最初の括弧の中身を名前とみなす —
+    # Rack 3.2.7 は `[token]=` を `[token]` のまま読むが、先頭の括弧を外して読む実装を想定して伏せる側に倒す。
     def self.query_param_name(key)
       name = ::URI.decode_www_form_component(key.to_s).strip
       if name.start_with?('[') && (close = name.index(']', 1))
@@ -288,10 +293,17 @@ module Ginseng
       # 文中の URL の終わりの目印（空白・引用符・`<>`）で切る理由が無い。🔴 切ると
       # `?x="1"&sig=SECRET` の `sig` が素通りしていた。
       return mask_url_core(text, text: true) if whole_url?(text)
+      # 🔴 **前の URL が伏字で終わり、間がエスケープ 1 つだけなら、次の URL は丸ごと伏せる（4.0.0 リリース前
+      # レビュー）。** 資格情報の値そのものが URL のことがある（`\?token\=\'https://SECRET…`）。
+      joint = nil
       return text.gsub(URL_IN_TEXT_PATTERN) do |url|
-        lead = Regexp.last_match[:lead]
-        core, trailing = split_trailing_punctuation(url.delete_prefix(lead))
-        "#{lead}#{mask_url_core(core, text: true)}#{trailing}"
+        match = Regexp.last_match
+        head, tail = match.byteoffset(0)
+        core, trailing = split_trailing_punctuation(url.delete_prefix(match[:lead]))
+        masked = mask_url_core(core, text: true)
+        masked = FILTERED if joint && url_joint?(text, joint, head)
+        joint = masked.end_with?(FILTERED) && trailing.empty? ? tail : nil
+        "#{match[:lead]}#{masked}#{trailing}"
       end
     end
 
@@ -419,7 +431,9 @@ module Ginseng
     # - 読めても `&amp;` / `sig[]=` / `;` 区切り / フラグメントは、名前として当たらなかった
     #
     # ⚠⚠ **区切りを文字列のまま見て、値の範囲だけを差し替える。** 読めないという状態が
-    # 無くなり、**伏せないところは 1 バイトも変わらない**（正規化で URL が化けない）。
+    # 無くなり、**伏せないところは 1 バイトも変わらない**（正規化で URL が化けない）。⚠ 例外が 2 つ —
+    # シェルのエスケープ形で伏せたときは全体を `Shellwords.escape` の形にエスケープし直し、エンコードした
+    # 入れ子の URL で伏せたときはその値をエンコードし直す（どちらも伏せるものがあったときだけ）。
     #
     # ⚠ **引数まるごとを 1 つの URL とみなす (#712)。** 値やパスワードの中の空白でも切らない。
     # 文中の URL は `mask_urls_in` へ渡すこと。
@@ -433,11 +447,6 @@ module Ginseng
       value = value.scrub('?') unless value.valid_encoding?
       return mask_escaped_url(value, text:, depth:) if shell_escaped?(value)
       return mask_plain_url(value, text:, depth:)
-    end
-
-    # ⚠ `Shellwords.escape` の形（`\X` と、改行の `'\n'`）を含むか。
-    def shell_escaped?(value)
-      return value.include?('\\') || value.include?("'\n'")
     end
 
     def mask_plain_url(value, text:, depth:)
