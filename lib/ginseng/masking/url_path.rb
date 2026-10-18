@@ -16,7 +16,9 @@ module Ginseng
       private
 
       # 当たった接頭辞。⚠ 既定と設定を合成するので、1 本の URL に複数当たる。
+      # ⚠ 連続したスラッシュを畳んだ形でも見る（`masked_url_path` を参照）。
       def mask_url_prefixes(value)
+        value = value.squeeze('/') if value.include?('//')
         return mask_url_paths.select {|v| value.include?(v)}
       end
 
@@ -124,11 +126,29 @@ module Ginseng
       #
       # ⚠ 受けるのは**パスの文字列**（#700 で URL をパースしなくなった）。
       def masked_url_path(path)
+        return masked_squeezed_url_path(path) if path.include?('//')
         ranges = mask_url_secret_ranges(path)
         return nil if ranges.empty?
         masked = path.dup
         # ⚠ **後ろから置き換える。** 前から置き換えると、残りの範囲の位置がずれる。
         ranges.sort_by {|v| -v.begin}.each {|v| masked[v] = FILTERED}
+        return masked
+      end
+
+      # 🔴 **連続したスラッシュを畳んでから照合する (#712)。** `/mulukhiya//webhook/SECRET` は
+      # nginx の `merge_slashes`（既定で有効）を通ると webhook に届くのに、接頭辞に当たらなかった。
+      # ⚠ 伏せる範囲は畳んだパスで決め、元のパスの位置へ戻して置き換える（セグメントの中に `/` は
+      # 無いので、範囲はそのまま連続した位置に戻る）。畳まないところは 1 バイトも変えない。
+      def masked_squeezed_url_path(path)
+        ranges = mask_url_secret_ranges(path.squeeze('/'))
+        return nil if ranges.empty?
+        # 畳んだパスの位置 → 元のパスの位置（連続したスラッシュの 2 つ目以降を飛ばす）。
+        chars = path.chars
+        origins = chars.each_index.reject {|i| i.positive? && chars[(i - 1)..i] == ['/', '/']}
+        masked = path.dup
+        ranges.sort_by {|v| -v.begin}.each do |range|
+          masked[origins[range.begin]..origins[range.end - 1]] = FILTERED
+        end
         return masked
       end
     end

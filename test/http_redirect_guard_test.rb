@@ -367,7 +367,9 @@ module Ginseng
         'X-Api-Key', 'X-Auth-Token', 'Private-Token', 'Authentication', 'X-Amz-Security-Token',
         # ⚠ 2.4.2 まで素通りしていた名前 (#701)。
         'X-Auth-Key', 'X-Auth-Email', 'X-Access-Key', 'Access-Key', 'Ocp-Apim-Subscription-Key',
-        'Signature', 'X-Signature', 'X-Hub-Signature', 'X-Session', 'Cookie2'
+        'Signature', 'X-Signature', 'X-Hub-Signature', 'X-Session', 'Cookie2',
+        # ⚠ 3.0.0 まで素通りしていた名前 (#712)。
+        'X-Functions-Key', 'X-Client-Key', 'X-App-Key', 'X-Master-Key', 'Private-Key'
       ].each do |name|
         WebMock.reset!
         redirect(:get, 302)
