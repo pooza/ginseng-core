@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+require 'shellwords'
+
 module Ginseng
   module Masking
     # URL の**クエリとフラグメント**に埋まった資格情報を落とす一式（入れ子の URL・シェルのエスケープを
     # 含む）。⚠ `Masking` から切り出してある (#712) — **`Masking` に混ぜて使う前提**で、
-    # `mask_query_params` も `mask_url_core` も混ぜた側が持つ（`UrlPath` と同じ形）。
+    # `mask_query_params` / `mask_url_core` / `mask_plain_url` / `URL_PATTERN` / `FILTERED` /
+    # `FILTERED_ENCODED` は混ぜた側が持つ（`UrlPath` と同じ形）。
     module UrlQuery
       # クエリとフラグメントの `名前=値` 1 つ (#700)。区切りは `masked_url_params` を見る。
       #
@@ -29,6 +33,20 @@ module Ginseng
       # ので、サーバーが読む値は `&` か `#` までで、伏せすぎて困るのは診断の側だけ。
       URL_CREDENTIAL_END_PATTERNS = {true => /[&\#\s]/, false => /[&\#]/}.freeze
 
+      # スキームと `://`（直後に別の URL が続くかの先読みに使う）。
+      URL_SCHEME_AHEAD = '[a-z][a-z0-9+.-]*+://'
+
+      # URL の中のエスケープ 1 つ（`URL_IN_TEXT_PATTERN`）。⚠ 直後にスキームが続くものは含めない。
+      # 🔴 **クエリでも `\` はこの形でだけ読む。** 素の文字として受けると、ここを素通りして後ろの URL まで
+      # 飲み込んでいた（`?x=1\nhttps://u:SECRET@k/`。v3.0.0 から）。
+      URL_IN_TEXT_ESCAPE_PATTERN = /
+        \\= | \\[^=](?!#{URL_SCHEME_AHEAD}) | '\n'(?!#{URL_SCHEME_AHEAD})
+      /ix
+
+      # 前の URL と次の URL の間が、エスケープ 1 つだけか（`mask_urls_in`）。⚠ `\n` の `n` は次の一致の
+      # スキームに入るので、`\` だけのこともある。
+      URL_IN_TEXT_JOINT_PATTERN = /\A(?:\\.?|'\n')\z/m
+
       # 入れ子の URL（`?u=https://…`）を何段まで追うか (#712)。⚠ 超えたら値ごと伏せる（安全側）。
       MAX_NESTED_URL_DEPTH = 4
 
@@ -39,11 +57,22 @@ module Ginseng
 
       private
 
+      # 前の URL の終わり（`joint`）と次の URL の始まり（`head`）の間が、エスケープ 1 つだけか。⚠ バイト位置。
+      def url_joint?(text, joint, head)
+        return text.byteslice(joint, head - joint).match?(URL_IN_TEXT_JOINT_PATTERN)
+      end
+
+      # ⚠ `Shellwords.escape` の形（`\X` と、改行の `'\n'`）を含むか。
+      def shell_escaped?(value)
+        return value.include?('\\') || value.include?("'\n'")
+      end
+
       # 🔴 **シェルのエスケープを外した形でも伏せる (#712)。** `https://h/x\?token\=SECRET` は、
       # 区切りがエスケープされているので `?token=` として読めなかった（`sh -c` の文字列）。
-      # ⚠ 外した形で伏せるものがあったときだけ、**エスケープし直して**返す（伏字は読める形に戻す）。
+      # ⚠ 外した形で伏せるものがあったときだけ、**全体を `Shellwords.escape` の形にエスケープし直して**返す
+      # （伏字は読める形に戻す。⚠ 元が `Shellwords.escape` の出力でなければ、伏せていない部分の形も変わる）。
       # 伏せるものが無ければ元の文字列のまま。⚠ 生のまま伏せた結果で足りる（エスケープを外すと
-      # 外した形で伏せた結果と同じになる）ときも、元の形のまま返す。
+      # 外した形で伏せた結果と同じになる）ときは、生のまま伏せた結果を返す。
       #
       # 🔴 **エスケープした空白は、外すときに目印（英数字）へ置き換える（Codex P1）。** 素の空白に戻すと、
       # 文中の URL として空白で切られ、`token\=SEC\ RET` の `RET` が残った。⚠ 素の空白はこれまでどおり
@@ -55,7 +84,15 @@ module Ginseng
         masked = mask_plain_url(unescaped, text:, depth:)
         return plain if masked == unescaped || masked == unescape_shell(plain, marker)
         masked = masked.gsub(/#{marker}(\d+)x/) {Regexp.last_match(1).to_i.chr}
-        return masked.shellescape.gsub(FILTERED.shellescape, FILTERED)
+        return shell_escape(masked).gsub(FILTERED.shellescape, FILTERED)
+      end
+
+      # `Shellwords.escape` と同じ形にエスケープする。🔴 **NUL で例外を上げない（4.0.0 リリース前レビュー）。**
+      # `Shellwords.escape` は NUL で `ArgumentError` を上げるので、伏せた文字列に NUL が残ると公開の
+      # `mask_urls_in` が上がり、ログの行は `_mask_error` に落ちていた。
+      def shell_escape(value)
+        return "''" if value.empty?
+        return value.gsub(%r{[^A-Za-z0-9_\-.,:+/@\n]}) {|char| "\\#{char}"}.gsub("\n", "'\n'")
       end
 
       # ⚠ 改行は `'\n'` の形でも来る（`Shellwords.escape` が改行だけをそう表す）。
@@ -80,8 +117,8 @@ module Ginseng
       # 🔴 **ほかの値は、入れ子の URL として伏せる (#712)。** `?u=https://x/mulukhiya/webhook/SECRET`
       # のパスは、外側のパスではないので見ていなかった。
       #
-      # ⚠⚠ **`gsub` で回す。** `Regexp#match(rest, pos)` のループは長さの 2 乗に近く伸びた（32 万字で
-      # 1.3 秒、`gsub` は 0.09 秒）。伏せた値の終わり（`zone`）より手前で始まる一致は、区切りごと消す
+      # ⚠⚠ **`gsub` で回す。** `Regexp#match(rest, pos)` のループは長さの 2 乗に近く伸びた（2026-10-18、
+      # `a=1&` を繰り返した 32 万字のクエリで 1.3 秒、`gsub` は 0.09 秒）。伏せた値の終わり（`zone`）より手前で始まる一致は、区切りごと消す
       # （その範囲は一致で埋まり、間に残る文字は無い — 値は `&` `#`（文中では空白も）で必ず終わるので）。
       def masked_url_params(rest, text:, depth:)
         return rest if rest.empty?
@@ -106,13 +143,20 @@ module Ginseng
       # した形は復号して伏せ、伏せるものがあったときだけエンコードし直す（伏字は読める形に戻す）。
       # ⚠⚠ **段数に上限を置く** — 1 段ごとに値を読み直すので、入れ子を重ねた入力で計算量が増える。
       # 超えたら値ごと伏せる。
+      #
+      # ⚠ 段数は **URL の段**で数える（4.0.0 リリース前レビュー）。復号の段でも数えていたので、エンコードした
+      # 入れ子は 1 段で 2 つ進み、実質 2 段で上限に当たっていた。⚠ 復号の段は 1 回ごとに値が縮むので、数えなくても
+      # 止まる。
+      # 🔴 **`://` が見えるのに復号できない値は伏せる（4.0.0 リリース前レビュー）。** そのまま返していたので、
+      # 末尾に `%FF` / `%ZZ` を足すだけで入れ子の URL ごと素通りした（名前の側は復号できなければ伏せている）。
       def masked_nested_url(value, text:, depth:)
         return value unless value.match?(NESTED_URL_HINT_PATTERN)
         return FILTERED if depth >= MAX_NESTED_URL_DEPTH
         return mask_url_core(value, text:, depth: depth + 1) if value.match?(URL_PATTERN)
         decoded = decode_nested_url(value)
-        return value if decoded.nil? || decoded == value
-        masked = masked_nested_url(decoded, text: false, depth: depth + 1)
+        return FILTERED if decoded.nil?
+        return value if decoded == value
+        masked = masked_nested_url(decoded, text: false, depth:)
         return value if masked == decoded
         return ::URI.encode_www_form_component(masked).gsub(FILTERED_ENCODED, FILTERED)
       end
