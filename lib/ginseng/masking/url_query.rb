@@ -39,16 +39,25 @@ module Ginseng
       # ⚠ 外した形で伏せるものがあったときだけ、**エスケープし直して**返す（伏字は読める形に戻す）。
       # 伏せるものが無ければ元の文字列のまま。⚠ 生のまま伏せた結果で足りる（エスケープを外すと
       # 外した形で伏せた結果と同じになる）ときも、元の形のまま返す。
+      #
+      # 🔴 **エスケープした空白は、外すときに目印（英数字）へ置き換える（Codex P1）。** 素の空白に戻すと、
+      # 文中の URL として空白で切られ、`token\=SEC\ RET` の `RET` が残った。⚠ 素の空白はこれまでどおり
+      # URL の終わりの目印として読む。伏せたあとで目印を空白に戻す。
       def mask_escaped_url(value, text:, depth:)
         plain = mask_plain_url(value, text:, depth:)
-        unescaped = unescape_shell(value)
+        marker = "GINSENGBLANK#{SecureRandom.hex(8)}"
+        unescaped = unescape_shell(value, marker)
         masked = mask_plain_url(unescaped, text:, depth:)
-        return plain if masked == unescaped || masked == unescape_shell(plain)
+        return plain if masked == unescaped || masked == unescape_shell(plain, marker)
+        masked = masked.gsub(/#{marker}(\d+)x/) {Regexp.last_match(1).to_i.chr}
         return masked.shellescape.gsub(FILTERED.shellescape, FILTERED)
       end
 
-      def unescape_shell(value)
-        return value.gsub(/\\(.)/m) {Regexp.last_match(1)}
+      def unescape_shell(value, marker)
+        return value.gsub(/\\(.)/m) do
+          char = Regexp.last_match(1)
+          char.match?(/\s/) ? "#{marker}#{char.ord}x" : char
+        end
       end
 
       # クエリとフラグメントの `名前=値` のうち、名前が当たる値を落とす。

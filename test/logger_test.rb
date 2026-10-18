@@ -340,7 +340,16 @@ module Ginseng
         assert_include(masked, '[FILTERED]', '伏字は読める形で出す')
       end
       assert_not_include(@logger.mask_url(escaped), 'SECRET')
-      plain = 'https://h.example/x?a=1&b=2'.shellescape
+      # 🔴 **エスケープした空白も同じシェルの単語の中身（Codex P1）。** 値の後ろ半分・パスワードが残っていた。
+      secrets = ['RETb', 'SECRET']
+      ['https://h.example/x?token=SEC RETb', 'https://u:p ssSECRET@h.example/'].each do |url|
+        ["sh -c curl #{url.shellescape} done", url.shellescape].each do |src|
+          masked = @logger.mask_urls_in(src)
+
+          secrets.each {|v| assert_not_include(masked, v, src)}
+        end
+      end
+      plain = 'https://h.example/a b/x?a=1&b=2'.shellescape
 
       assert_equal("sh -c #{plain}", @logger.mask_urls_in("sh -c #{plain}"))
     end
