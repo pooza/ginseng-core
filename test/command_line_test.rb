@@ -130,6 +130,30 @@ module Ginseng
       assert_equal(['s3cret'], @command.secrets)
     end
 
+    # 🔴 **対の配列も黙って受けない (#713)。** 要素の `to_s` が本文に現れない文字列になり、何も伏せずに通っていた。
+    def test_secrets_rejects_nested_pairs
+      assert_raise(ArgumentError) {@command.secrets = [['push_url', 's3cret']]}
+      assert_raise(ArgumentError) {@command.secrets = ['ok', {push_url: 's3cret'}]}
+      assert_raise(ArgumentError) {@command.secrets = [Set['s3cret']]}
+      assert_empty(@command.secrets)
+    end
+
+    # 🔴🔴 **JSON にしても `secrets` / `env` / 中の Logger の config を出さない (#713)。**
+    # ⚠ `to_json` の直呼びと、ログの `command:` にオブジェクトのまま渡す形の両方を見る。
+    def test_json_does_not_show_secrets
+      @command.args = ['curl', 'https://push.example/api/push/s3cret?token=QUERYTOKEN']
+      @command.secrets = ['s3cret']
+      @command.env = {'PUSH_URL' => 'https://push.example/api/push/s3cret'}
+      logger = Logger.new
+      hidden = ['s3cret', 'QUERYTOKEN', 'PUSH_URL', 'config', 'logger']
+      [@command.to_json, logger.create_entry(command: @command)].each do |json|
+        hidden.each {|v| assert_not_include(json, v)}
+      end
+
+      assert_equal(@command.masked_to_s, JSON.parse(logger.create_entry(command: @command))['command'])
+      assert_equal(@command.masked_to_s.to_json, @command.to_json)
+    end
+
     # ⚠⚠ **2 段のエスケープも伏せる (#702)。** `sudo_command` は `to_s` をさらに shellescape する。
     def test_masked_covers_the_doubly_escaped_form
       @command.args = ['echo', "s3cr'et"]

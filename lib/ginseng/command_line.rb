@@ -57,9 +57,15 @@ module Ginseng
     # 🔴 **Hash は受けない (#702)。** `to_a` が `[[キー, 値]]` になり、`"[:push_url, \"…\"]"` という
     # 本文に現れない文字列を伏せる値にして、**何も伏せずに黙って通っていた**。⚠ 文字列 1 つは
     # 1 要素として受ける。
+    # 🔴 **対の配列（`[['k', 'SECRET']]`）も受けない (#713)。** Hash と同じ誤用で、要素の `to_s` が
+    # `'["k", "SECRET"]'` になり、同じく何も伏せずに通っていた。⚠ 要素は平らな値だけ。
     def secrets=(values)
       raise ArgumentError, 'secrets must be an Array of strings, not a Hash' if values.is_a?(Hash)
-      @secrets = Array(values).compact.map {|value| value.to_s.dup.freeze}
+      values = Array(values)
+      if values.any?(Enumerable)
+        raise ArgumentError, 'secrets must be a flat Array of strings, not nested pairs'
+      end
+      @secrets = values.compact.map {|value| value.to_s.dup.freeze}
         .reject(&:blank?).uniq.sort_by {|secret| -secret.length}.freeze
     end
 
@@ -100,6 +106,18 @@ module Ginseng
     def inspect
       detail = "dir=#{dir.inspect} user=#{user.inspect} secrets=#{secrets.size}"
       return "#<#{self.class} #{masked_to_s} #{detail}>"
+    end
+
+    # 🔴🔴 **JSON にするときも `masked_to_s` の形にする (#713)。** ActiveSupport の既定の
+    # `as_json` は ivar を並べるので、`command.to_json` も `logger.info(command: command)` も
+    # `secrets` / `env` / 生の引数を、⚠ 中の Logger の config（`/crypt/password`）ごと出していた。
+    # ⚠ `inspect` を伏せた #702 とは別の経路。
+    def as_json(*)
+      return masked_to_s
+    end
+
+    def to_json(*)
+      return as_json.to_json(*)
     end
 
     # ログに出す形のコマンド行 (#702)。`secrets` と、**引数の中の URL の資格情報**を伏せる。
