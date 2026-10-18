@@ -286,7 +286,13 @@ module Ginseng
       }.each do |src, dest|
         assert_equal(dest, @logger.mask_urls_in(src))
       end
-      ['https://h.example/?u=https://x.example/a/b&q=%41', 'https://h.example/?u=https%3a%2f%2fx.example%2fa'].each do |src|
+      # ⚠ 何重にもエンコードした無害な値は入れ子の URL ではない（Codex P2）。
+      unchanged = [
+        'https://h.example/?u=https://x.example/a/b&q=%41', 'https://h.example/?u=https%3a%2f%2fx.example%2fa',
+        'https://h.example/?q=%2525252541', 'https://h.example/?q=%25252525252541&r=%3A'
+      ]
+
+      unchanged.each do |src|
         assert_equal(src, @logger.mask_urls_in(src))
       end
     end

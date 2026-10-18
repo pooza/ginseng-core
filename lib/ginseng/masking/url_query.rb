@@ -32,6 +32,11 @@ module Ginseng
       # 入れ子の URL（`?u=https://…`）を何段まで追うか (#712)。⚠ 超えたら値ごと伏せる（安全側）。
       MAX_NESTED_URL_DEPTH = 4
 
+      # どこかのエンコードの段に `://` が現れる値か (#712 Codex P2)。⚠ 入れ子の URL として復号するのは
+      # これに当たる値だけ。🔴 `%` を含むだけで復号していたころは、何重にもエンコードした無害な値
+      # （`%2525252541`）が段数の上限に当たって丸ごと伏字になっていた。
+      NESTED_URL_HINT_PATTERN = %r{(?: : | %(?:25)*3a ) (?: / | %(?:25)*2f ){2}}ix
+
       private
 
       # 🔴 **シェルのエスケープを外した形でも伏せる (#712)。** `https://h/x\?token\=SECRET` は、
@@ -102,7 +107,7 @@ module Ginseng
       # ⚠⚠ **段数に上限を置く** — 1 段ごとに値を読み直すので、入れ子を重ねた入力で計算量が増える。
       # 超えたら値ごと伏せる。
       def masked_nested_url(value, text:, depth:)
-        return value unless value.include?('://') || value.include?('%')
+        return value unless value.match?(NESTED_URL_HINT_PATTERN)
         return FILTERED if depth >= MAX_NESTED_URL_DEPTH
         return mask_url_core(value, text:, depth: depth + 1) if value.match?(URL_PATTERN)
         decoded = decode_nested_url(value)
