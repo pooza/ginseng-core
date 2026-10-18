@@ -50,6 +50,9 @@ module Ginseng
       # 入れ子の URL（`?u=https://…`）を何段まで追うか (#712)。⚠ 超えたら値ごと伏せる（安全側）。
       MAX_NESTED_URL_DEPTH = 4
 
+      # 入れ子の値を何段まで復号するか（#716 Codex P1）。⚠ URL の段とは別に数える。超えたら値ごと伏せる。
+      MAX_NESTED_URL_DECODES = 8
+
       # どこかのエンコードの段に `://` が現れる値か (#712 Codex P2)。⚠ 入れ子の URL として復号するのは
       # これに当たる値だけ。🔴 `%` を含むだけで復号していたころは、何重にもエンコードした無害な値
       # （`%2525252541`）が段数の上限に当たって丸ごと伏字になっていた。
@@ -145,18 +148,21 @@ module Ginseng
       # 超えたら値ごと伏せる。
       #
       # ⚠ 段数は **URL の段**で数える（4.0.0 リリース前レビュー）。復号の段でも数えていたので、エンコードした
-      # 入れ子は 1 段で 2 つ進み、実質 2 段で上限に当たっていた。⚠ 復号の段は 1 回ごとに値が縮むので、数えなくても
-      # 止まる。
+      # 入れ子は 1 段で 2 つ進み、実質 2 段で上限に当たっていた。
+      # 🔴 **復号の段は別に数えて上限を置く（#716 Codex P1）。** `%25` は 1 段で 2 文字しか増えないので、段数は
+      # 長さにほぼ比例する。数えずに再帰していたので、24 万字の値で `SystemStackError` になり、`create_entry`
+      # ごと上がった（`StandardError` ではないので rescue に落ちない）。⚠ 超えたら値ごと伏せる。
       # 🔴 **`://` が見えるのに復号できない値は伏せる（4.0.0 リリース前レビュー）。** そのまま返していたので、
       # 末尾に `%FF` / `%ZZ` を足すだけで入れ子の URL ごと素通りした（名前の側は復号できなければ伏せている）。
-      def masked_nested_url(value, text:, depth:)
+      def masked_nested_url(value, text:, depth:, decodes: 0)
         return value unless value.match?(NESTED_URL_HINT_PATTERN)
         return FILTERED if depth >= MAX_NESTED_URL_DEPTH
         return mask_url_core(value, text:, depth: depth + 1) if value.match?(URL_PATTERN)
         decoded = decode_nested_url(value)
         return FILTERED if decoded.nil?
         return value if decoded == value
-        masked = masked_nested_url(decoded, text: false, depth:)
+        return FILTERED if decodes >= MAX_NESTED_URL_DECODES
+        masked = masked_nested_url(decoded, text: false, depth:, decodes: decodes + 1)
         return value if masked == decoded
         return ::URI.encode_www_form_component(masked).gsub(FILTERED_ENCODED, FILTERED)
       end

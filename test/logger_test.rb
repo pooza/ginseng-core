@@ -309,6 +309,19 @@ module Ginseng
       assert_equal(url, @logger.mask_urls_in(url))
     end
 
+    # 🔴 **復号の段にも上限がある（#716 Codex P1）。** 数えずに再帰していたので、何千段も `%25` を重ねた値で
+    # `SystemStackError` になり、`create_entry` ごと上がった。
+    def test_mask_urls_in_caps_the_decoding_layers
+      deep = "https://h.example/?u=#{'https%3A%2F%2Fx%2F%3Ftoken%3DSECRET'.gsub('%') {"%#{'25' * 20_000}"}}"
+
+      assert_equal('https://h.example/?u=[FILTERED]', @logger.mask_urls_in(deep))
+      assert_not_include(@logger.create_entry(url: deep), 'SECRET')
+      shallow = "https://h.example/?u=#{'https%3A%2F%2Fx%2F%3Ftoken%3DSECRET'.gsub('%', '%2525')}"
+
+      assert_not_include(@logger.mask_urls_in(shallow), 'SECRET')
+      assert_include(@logger.mask_urls_in(shallow), 'x%25252F', '浅い段は値を残して伏せる')
+    end
+
     # 🔴🔴 **エスケープの後ろに続く別の URL を飲み込まない（4.0.0 リリース前レビュー）。** `\X` を URL の一部と
     # みなしたため、JSON を二重にエンコードした文字列や `\n` の後ろの URL が前の URL に入り、伏せられなかった。
     # ⚠ 手前の区画が伏字で終わるとき（資格情報の値が URL）は、次の区画も値の続きとして伏せる。
