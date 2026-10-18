@@ -247,6 +247,104 @@ module Ginseng
       assert_equal('https://user:[FILTERED]@h.example/', @logger.mask_url('https://user:p@ss@h.example/'))
     end
 
+    # 🔴 **`mask_url` の直呼びは引数まるごとを 1 つの URL とみなす (#712)。** 空白で切ると、値の後ろ半分や
+    # パスワードが丸ごと出ていた（#700 からの退行）。⚠ 文中の URL（`mask_urls_in`）は従来どおり空白で切る。
+    def test_mask_url_does_not_stop_at_spaces
+      assert_equal('https://h.example/?token=[FILTERED]', @logger.mask_url('https://h.example/?token=SEC RETb'))
+      assert_equal('https://u:[FILTERED]@h.example/', @logger.mask_url('https://u:p ssSECRETk@h.example/'))
+      assert_equal(
+        'see https://h.example/mulukhiya/webhook/[FILTERED] failed afterward',
+        @logger.mask_urls_in('see https://h.example/mulukhiya/webhook/SECRET failed afterward'),
+      )
+    end
+
+    # 🔴 **資格情報の値は `&` か `#` まで伏せる (#712)。** 値の中の `;名前=` / `?名前=` で切れて、後ろ半分が
+    # 残っていた。⚠ 資格情報でない値の後ろの `;名前=` は従来どおり区切りとして読む。
+    def test_mask_urls_in_masks_a_credential_value_up_to_the_ampersand
+      {
+        'https://h.example/?token=SEC;a=RETaq&b=1' => 'https://h.example/?token=[FILTERED]&b=1',
+        'https://h.example/?token=SEC?a=RETaq#f' => 'https://h.example/?token=[FILTERED]#f',
+        'https://h.example/?a=1;sig=SECRET' => 'https://h.example/?a=1;sig=[FILTERED]',
+      }.each do |src, dest|
+        assert_equal(dest, @logger.mask_urls_in(src))
+        assert_equal(dest, @logger.mask_url(src))
+      end
+    end
+
+    # 🔴 **入れ子の URL も伏せる (#712)。** クエリの値に入った URL のパス・クエリ・userinfo は、外側の URL の
+    # 一部ではないので見ていなかった。⚠ エンコードした形も見る。伏せるものが無ければ 1 バイトも変えない。
+    def test_mask_urls_in_masks_a_nested_url
+      {
+        'https://h.example/?u=https://x.example/mulukhiya/webhook/SECRET&a=1' =>
+          'https://h.example/?u=https://x.example/mulukhiya/webhook/[FILTERED]&a=1',
+        'https://h.example/?u=https%3A%2F%2Fx.example%2Fmulukhiya%2Fwebhook%2FSECRET' =>
+          'https://h.example/?u=https%3A%2F%2Fx.example%2Fmulukhiya%2Fwebhook%2F[FILTERED]',
+        'https://h.example/?u=https%3A%2F%2Fu%3ASECRET%40x.example%2F' =>
+          'https://h.example/?u=https%3A%2F%2Fu%3A[FILTERED]%40x.example%2F',
+        'https://h.example/?u=https%253A%252F%252Fx.example%252F%253Ftoken%253DSECRET' =>
+          'https://h.example/?u=https%253A%252F%252Fx.example%252F%253Ftoken%253D[FILTERED]',
+      }.each do |src, dest|
+        assert_equal(dest, @logger.mask_urls_in(src))
+      end
+      ['https://h.example/?u=https://x.example/a/b&q=%41', 'https://h.example/?u=https%3a%2f%2fx.example%2fa'].each do |src|
+        assert_equal(src, @logger.mask_urls_in(src))
+      end
+    end
+
+    # ⚠⚠ **入れ子は段数に上限がある (#712)。** 超えたら値ごと伏せる（安全側）。
+    def test_mask_urls_in_caps_the_nesting_depth
+      # ⚠ 生の `?u=` は値の中の `?u=` が区切りになり入れ子にならないので、エンコードを重ねる。
+      url = 'https://x.example/?token=SECRET'
+      8.times {url = "https://h.example/?u=#{::URI.encode_www_form_component(url)}"}
+      masked = @logger.mask_urls_in(url)
+
+      assert_not_include(masked, 'SECRET')
+      # ⚠ 上限の段で、残りの値が丸ごと伏字になる（その段はエンコードされたまま）。
+      assert_match(/%253Fu%253D\[FILTERED\]\z/, masked)
+      shallow = "https://h.example/?u=#{::URI.encode_www_form_component('https://x.example/?token=SECRET')}"
+
+      assert_equal('https://h.example/?u=https%3A%2F%2Fx.example%2F%3Ftoken%3D[FILTERED]', @logger.mask_urls_in(shallow))
+    end
+
+    # 🔴 **連続したスラッシュも接頭辞として読む (#712)。** nginx の `merge_slashes`（既定で有効）を通ると、
+    # `/mulukhiya//webhook/SECRET` は webhook に届く。⚠ 畳まないところは元のまま。
+    def test_mask_urls_in_masks_a_path_with_doubled_slashes
+      {
+        'https://h.example/mulukhiya//webhook/SECRET' => 'https://h.example/mulukhiya//webhook/[FILTERED]',
+        'https://h.example//mulukhiya/webhook//SECRET//x' => 'https://h.example//mulukhiya/webhook//[FILTERED]//x',
+      }.each do |src, dest|
+        assert_equal(dest, @logger.mask_urls_in(src))
+        assert_equal(dest, @logger.mask_url(src))
+      end
+      assert_equal('https://h.example/a//b', @logger.mask_url('https://h.example/a//b'))
+    end
+
+    # 🔴 **添字だけの名前も Rack と同じく読む (#712)。** `[token]=` は Rack では `token` と読まれる。
+    def test_mask_urls_in_masks_a_bracketed_name
+      ['https://h.example/?[token]=SECRET', 'https://h.example/?token[x]y=SECRET'].each do |src|
+        assert_not_include(@logger.mask_urls_in(src), 'SECRET', src)
+      end
+      assert_equal('token', Masking.query_param_name('[token][x]'))
+      assert_equal('sig', Masking.query_param_name('sig[]'))
+    end
+
+    # 🔴 **シェルのエスケープを外した形でも伏せる (#712)。** `sh -c` の文字列や `Shellwords.escape` の結果は
+    # `\?token\=` の形で、区切りとして読めなかった。⚠ 伏せるものが無ければ元のまま。
+    def test_mask_urls_in_masks_a_shell_escaped_url
+      escaped = 'https://h.example/x?token=SECRET&a=b'.shellescape
+
+      ["sh -c curl\\ #{escaped} done", escaped].each do |src|
+        masked = @logger.mask_urls_in(src)
+
+        assert_not_include(masked, 'SECRET', src)
+        assert_include(masked, '[FILTERED]', '伏字は読める形で出す')
+      end
+      assert_not_include(@logger.mask_url(escaped), 'SECRET')
+      plain = 'https://h.example/x?a=1&b=2'.shellescape
+
+      assert_equal("sh -c #{plain}", @logger.mask_urls_in("sh -c #{plain}"))
+    end
+
     def test_create_message_masks_signed_url_query
       SIGNED_URLS.each do |name, url|
         assert_include(Masking::MASK_QUERY_PARAMS, name)

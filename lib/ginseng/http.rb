@@ -52,9 +52,11 @@ module Ginseng
     # 当たらず、2.0.0 の時点の実測で `X-Auth-Key` が別ホストの 302 先へ届いた。
     # ⚠ `auth` は `authorization` / `authentication` を含む。`key` は
     # `api` / `access` / `secret` / `subscription` が前に付くときだけ見る。
+    # 🔴 **`X-Functions-Key`（Azure Functions）/ `X-Client-Key` も当たらなかった (#712)。** ⚠ 同じ判断で
+    # `app` / `client` / `functions` / `master` / `private` を足した。
     CREDENTIAL_HEADER_PATTERN = /
       auth | cookie | credential | password | secret | session | signature | token |
-      (?:access|api|subscription)[-_]?key
+      (?:access|api|app|client|functions|master|private|subscription)[-_]?key
     /ix
 
     # ⚠ **オリジンをまたいで持ち出してはいけないヘッダか。** `RedirectGuard`（追わない）
