@@ -359,6 +359,24 @@ module Ginseng
       end
     end
 
+    # 🔴 **締切切れの行も `log_exec` と同じに伏せる（4.1.0 リリース前レビュー）。** `masked(to_s)` では
+    # 秘密がパラメータ名と重なると値が残り、`dir:` は平文だった。
+    def test_exec_timeout_masks_the_log
+      Dir.mktmpdir('s3cret') do |dir|
+        logger = Logger.new
+        logs = []
+        logger.define_singleton_method(:error) {|message| logs.push(logger.create_message(message))}
+        @command.instance_variable_set(:@logger, logger)
+        @command.secrets = ['token', 's3cret']
+        @command.dir = dir
+        @command.args = ['sh', '-c', 'sleep 10', 'https://h.example/?token=OTHERSECRET']
+
+        assert_raise(Timeout::Error) {@command.exec(timeout: 1)}
+        assert_not_include(logs.last[:command], 'OTHERSECRET')
+        assert_not_include(logs.last[:dir], 's3cret')
+      end
+    end
+
     # 🔴 **締切の時点で戻り、子を残さない**（pooza/mulukhiya-toot-proxy#4794）。
     # ⚠⚠ 以前は子が終わるまで例外が上がらなかった（`sleep 30` なら 30 秒後）。
     def test_exec_timeout_kills_the_child

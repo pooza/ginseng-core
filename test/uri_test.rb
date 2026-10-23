@@ -51,6 +51,11 @@ module Ginseng
       assert_equal(['https://example.com/a'], URI.scan(text.b).map(&:to_s))
       assert_equal(['https://example.com/a'], URI.scan(text.encode('Shift_JIS')).map(&:to_s))
       assert_equal(['https://example.com/a'], URI.scan(text.encode('EUC-JP')).map(&:to_s))
+      # ⚠ BINARY は先読みで止める。文字クラスにすると、終端と先頭バイトが同じ文字（ひらがななど）で切れる。
+      assert_equal(['https://example.com/あいう'],
+        URI.scan('https://example.com/あいう。次'.b).map {|uri| Ginseng::URI.decode(uri.to_s)})
+      # ⚠ 終端を表せない符号化でも落ちない（表せない文字は飛ばす）。
+      assert_equal(['https://a.example/x'], URI.scan('https://a.example/x y'.encode('ISO-8859-1')).map(&:to_s))
     end
 
     def test_local?

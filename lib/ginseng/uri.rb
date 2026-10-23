@@ -60,8 +60,11 @@ module Ginseng
     # URL の終わりとみなす全角の句読点と括弧 (#721)。日本語の文では URL の直後に空白が無いので、
     # 空白までを拾うと `https://example.com/a。次の文` が 1 つの URL になっていた。
     # ⚠ **非 ASCII 全体では切らない。** パスやクエリに生の日本語を含む URL を拾えなくなる。
+    # ⚠ 代わりに、パスやクエリに生の全角の句読点・括弧を含む URL はそこで切れる
+    # （`?q=「語」` は `?q=` まで）。括弧の対応は見ていない。
     # ⚠ 半角の末尾（`.` `,` `)`）は扱いを変えていない。
     SCAN_TERMINATORS = '。、，．！？：；（）「」『』【】〔〕〈〉《》［］｛｝｡､｢｣'
+    private_constant :SCAN_TERMINATORS
 
     def self.scan(text)
       return enum_for(__method__, text) unless block_given?
@@ -73,7 +76,7 @@ module Ginseng
     # 🔴 **終端の文字は、本文の符号化に合わせて組む (#721)。** UTF-8 の正規表現のままだと
     # BINARY / Shift_JIS の本文で `Encoding::CompatibilityError` になる（それまでは拾えていた）。
     # ⚠ BINARY は UTF-8 のバイト列を先読みで止める。UTF-8 は自己同期なので、文字の途中では一致しない。
-    # ⚠ 先読みは 1 文字ごとに全候補を試すので遅い（1MB の URL で 2.5 倍）。文字の符号化では文字クラスにする。
+    # ⚠ 先読みは 1 文字ごとに全候補を試すので数倍遅い。文字の符号化では文字クラスにする。
     # ⚠ ASCII 互換でない符号化（UTF-16 など）は従来どおりの形のまま。
     def self.scan_pattern(encoding)
       return %r{https?://[[:^space:]]+} unless encoding.ascii_compatible?
