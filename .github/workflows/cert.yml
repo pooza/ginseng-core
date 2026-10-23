@@ -16,9 +16,14 @@ on:
   # ⚠ 手で回せるようにしておく（schedule は既定ブランチでしか動かない）。
   workflow_dispatch:
 
+# 🔴 **`pull-requests: write` の宣言だけでは PR を作れない (#725)。** リポジトリの設定
+# 「Allow GitHub Actions to create and approve pull requests」も要る（2026-10-24 に有効化）。
+# 無効のままだと PR 作成が 403 になり、09-28 から 4 週赤だった。
 permissions:
   contents: write
   pull-requests: write
+  # ⚠ test.yml を起こすため（下記「CI を起こす」）。
+  actions: write
 
 jobs:
   update:
@@ -58,6 +63,13 @@ jobs:
           git commit -m 'chore: cacert.pem を上流へ追随する (#515)'
           # ⚠ 毎回そのブランチを更新する。開いている PR があれば差分はそこへ載る。
           git push --force origin "$branch"
+          # ⚠⚠ **CI を起こす (#725)。** `GITHUB_TOKEN` の push では test.yml の `push:` が
+          # 走らず、PR にチェックが 1 本も付かなかった。`workflow_dispatch` はその例外。
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/test.yml/dispatches" \
+            -d "{\"ref\":\"$branch\"}"
           if curl -fsS \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
