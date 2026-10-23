@@ -237,6 +237,22 @@ module Ginseng
       assert_equal("x #{Ginseng::Masking::FILTERED}", env['C'])
     end
 
+    # ⚠⚠ **`child_env` は公開の口 (#720)。** 利用側が同じ環境で別のコマンドを走らせる。
+    # 🔴 外すキーは `nil` のまま返す（`Kernel#spawn` の env で「外す」の意味）。
+    def test_child_env_is_public
+      @command.env = {'PUSH_URL' => 'https://example.com/', RBENV_VERSION: '4.0.9'}
+      env = @command.child_env
+
+      assert_equal('https://example.com/', env['PUSH_URL'])
+      assert_equal('4.0.9', env['RBENV_VERSION'], '明示した値を優先すること')
+      @command.env = {}
+
+      assert_equal({'RBENV_VERSION' => nil}, @command.child_env)
+      @command.child_env['X'] = 'y'
+
+      assert_not_include(@command.child_env, 'X', '返した Hash を書き換えても中に効かないこと')
+    end
+
     def test_exec_leaves_the_env_alone_without_secrets
       logger = Recorder.new
       @command.instance_variable_set(:@logger, logger)
