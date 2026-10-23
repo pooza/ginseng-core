@@ -201,6 +201,24 @@ module Ginseng
       end
     end
 
+    # サブプロセスへ渡す環境変数。Bundler.with_unbundled_env が剥がすのは
+    # BUNDLE_* / GEM_* / RUBYLIB / RUBYOPT 等「Bundler が設定したもの」だけで、
+    # rbenv は管轄外なので RBENV_VERSION は残る。Ruby のパッチアップを跨ぐ
+    # デプロイの瞬間、旧 Ruby で稼働中の親（sidekiq 等）から RBENV_VERSION を
+    # 引き継いだ子が旧 Ruby で起動し、新 SHA の git gem が materialize されて
+    # いない側の gems を見て Bundler::PathError で落ちる (#480)。明示的に unset
+    # し、子は .ruby-version / rbenv の通常解決に任せる。
+    # 呼び出し側が env で明示指定した場合はそちらを優先する。
+    #
+    # ⚠⚠ **公開の口 (#720)。** 利用側が同じ環境で別のコマンド（`bundle check` など）を走らせるときに使う。
+    # 組み直すと、外すキーが増えたときに追随できない。
+    # 🔴 **値が `nil` のキーは「その環境変数を外す」の意味**（`Kernel#spawn` の env と同じ）。
+    # 空文字に変えて渡さないこと。⚠ 返すのは毎回新しい Hash。
+    # 🔴 **値は伏せていない。** ログに出すなら `masked` を通す。
+    def child_env
+      return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
+    end
+
     private
 
     # 伏せる形を、**本文側の符号化に寄せてから**返す (#642 Codex P2)。
@@ -239,18 +257,6 @@ module Ginseng
       return pattern.encode(encoding)
     rescue EncodingError
       return nil
-    end
-
-    # サブプロセスへ渡す環境変数。Bundler.with_unbundled_env が剥がすのは
-    # BUNDLE_* / GEM_* / RUBYLIB / RUBYOPT 等「Bundler が設定したもの」だけで、
-    # rbenv は管轄外なので RBENV_VERSION は残る。Ruby のパッチアップを跨ぐ
-    # デプロイの瞬間、旧 Ruby で稼働中の親（sidekiq 等）から RBENV_VERSION を
-    # 引き継いだ子が旧 Ruby で起動し、新 SHA の git gem が materialize されて
-    # いない側の gems を見て Bundler::PathError で落ちる (#480)。明示的に unset
-    # し、子は .ruby-version / rbenv の通常解決に任せる。
-    # 呼び出し側が env で明示指定した場合はそちらを優先する。
-    def child_env
-      return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
     end
 
     # 🔴🔴 **秘密の伏字が、URL の走査を途中で切らないこと（Codex P1）。** `[FILTERED]` を先に
