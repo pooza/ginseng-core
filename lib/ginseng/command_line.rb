@@ -104,7 +104,7 @@ module Ginseng
     # ⚠⚠ **`secrets` は出さない (#702)。** 既定の `#inspect` は ivar を並べるので、`p command` や
     # 例外のダンプで `@secrets=["s3cret"]` がそのまま出ていた。
     def inspect
-      detail = "dir=#{dir.inspect} user=#{user.inspect} secrets=#{secrets.size}"
+      detail = "dir=#{masked_dir.inspect} user=#{user.inspect} secrets=#{secrets.size}"
       return "#<#{self.class} #{masked_to_s} #{detail}>"
     end
 
@@ -272,10 +272,19 @@ module Ginseng
 
     def log_exec(secs, success:)
       params = {
-        command: masked_to_s, dir:, env: masked_env, user: @user,
+        command: masked_to_s, dir: masked_dir, env: masked_env, user: @user,
         status: @status, seconds: secs.round(3)
       }
       success ? @logger.info(params) : @logger.error(params)
+    end
+
+    # 🔴 **`dir` も伏せる (#719)。** 同じ行の `command:` と `env:` は伏せるのに `dir:` だけ平文で、
+    # `inspect` も同じだった。⚠ `masked_env` と同じく、`secrets` が無ければ値をそのまま返す
+    # （`Pathname` を文字列に変えない）。
+    # ⚠ spawn の例外（`chdir` の `Errno::ENOENT` など）のメッセージは伏せない。呼び出し側が受けて伏せる。
+    def masked_dir
+      return dir if secrets.empty? || dir.nil?
+      return masked(dir)
     end
 
     # 🔴 **`env:` の値も伏せる (#642)。**
