@@ -212,9 +212,9 @@ module Ginseng
     #
     # ⚠⚠ **公開の口 (#720)。** 利用側が同じ環境で別のコマンド（`bundle check` など）を走らせるときに使う。
     # 組み直すと、外すキーが増えたときに追随できない。
-    # 🔴 **値が `nil` のキーは「その環境変数を外す」の意味**（`Kernel#spawn` の env と同じ）。
-    # 空文字に変えて渡さないこと。⚠ 返すのは毎回新しい Hash。
-    # 🔴 **値は伏せていない。** ログに出すなら `masked` を通す。
+    # ⚠ 値が `nil` のキーは「その環境変数を外す」の意味（`Kernel#spawn` の env と同じ）。空文字に変えない。
+    # ⚠ 値は伏せていない。ログに出すなら `masked` を通す。
+    # ⚠ Hash は毎回新しいが、値の文字列は `env` と同じもの。書き換えない。
     def child_env
       return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
     end
@@ -285,8 +285,8 @@ module Ginseng
     end
 
     # 🔴 **`dir` も伏せる (#719)。** 同じ行の `command:` と `env:` は伏せるのに `dir:` だけ平文で、
-    # `inspect` も同じだった。⚠ `masked_env` と同じく、`secrets` が無ければ値をそのまま返す
-    # （`Pathname` を文字列に変えない）。
+    # `inspect` も同じだった。⚠ `secrets` が無ければ値をそのまま返す（`Pathname` のまま）。
+    # ⚠ `secrets` があれば、伏せるものが無くても文字列になる（JSON にした中身は変わらない）。
     # ⚠ spawn の例外（`chdir` の `Errno::ENOENT` など）のメッセージは伏せない。呼び出し側が受けて伏せる。
     def masked_dir
       return dir if secrets.empty? || dir.nil?

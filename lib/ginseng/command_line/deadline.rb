@@ -249,9 +249,11 @@ module Ginseng
         raise Timeout::Error, "execution expired (#{timeout}s#{detail})"
       end
 
+      # 🔴 **`log_exec` と同じ伏せ方にする（4.1.0 リリース前レビュー）。** `masked(to_s)` は
+      # 秘密がパラメータ名と重なると値を残し（`masked_to_s` が塞いだ形）、`dir:` は #719 から漏れていた。
       def log_expired(pid, timeout, stopped:)
         @logger.error(
-          command: masked(to_s), dir:, env: masked_env, user: @user, pid:, timeout:,
+          command: masked_to_s, dir: masked_dir, env: masked_env, user: @user, pid:, timeout:,
           message: stopped ? 'timed out' : 'timed out, but the child could not be stopped'
         )
       end
