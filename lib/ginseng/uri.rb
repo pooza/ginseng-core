@@ -57,12 +57,44 @@ module Ginseng
       return encoded.force_encoding(Encoding::UTF_8)
     end
 
+    # URL の終わりとみなす全角の句読点と括弧 (#721)。日本語の文では URL の直後に空白が無いので、
+    # 空白までを拾うと `https://example.com/a。次の文` が 1 つの URL になっていた。
+    # ⚠ **非 ASCII 全体では切らない。** パスやクエリに生の日本語を含む URL を拾えなくなる。
+    # ⚠ 半角の末尾（`.` `,` `)`）は扱いを変えていない。
+    SCAN_TERMINATORS = '。、，．！？：；（）「」『』【】〔〕〈〉《》［］｛｝｡､｢｣'
+
     def self.scan(text)
       return enum_for(__method__, text) unless block_given?
-      return text.clone.scan(%r{https?://[[:^space:]]+}) do |link|
+      return text.clone.scan(scan_pattern(text.encoding)) do |link|
         yield URI.parse(link.gsub(/[[:cntrl:]]/, ''))
       end
     end
+
+    # 🔴 **終端の文字は、本文の符号化に合わせて組む (#721)。** UTF-8 の正規表現のままだと
+    # BINARY / Shift_JIS の本文で `Encoding::CompatibilityError` になる（それまでは拾えていた）。
+    # ⚠ BINARY は UTF-8 のバイト列を先読みで止める。UTF-8 は自己同期なので、文字の途中では一致しない。
+    # ⚠ 先読みは 1 文字ごとに全候補を試すので遅い（1MB の URL で 2.5 倍）。文字の符号化では文字クラスにする。
+    # ⚠ ASCII 互換でない符号化（UTF-16 など）は従来どおりの形のまま。
+    def self.scan_pattern(encoding)
+      return %r{https?://[[:^space:]]+} unless encoding.ascii_compatible?
+      @scan_patterns ||= {}
+      return @scan_patterns[encoding] ||= begin
+        terminators = SCAN_TERMINATORS.chars.filter_map do |char|
+          next char.b if encoding == Encoding::BINARY
+          next char.encode(encoding)
+        rescue EncodingError
+          next nil
+        end
+        escaped = terminators.map {|v| Regexp.escape(v)}
+        if encoding == Encoding::BINARY
+          source = "https?://(?:(?!#{escaped.join('|'.b)})[[:^space:]])+".b
+        else
+          source = 'https?://[^[:space:]'.encode(encoding) << escaped.join << ']+'
+        end
+        Regexp.new(source)
+      end
+    end
+    private_class_method :scan_pattern
 
     def self.decode(text)
       return ::URI.decode_www_form_component(text)
