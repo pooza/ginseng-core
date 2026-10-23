@@ -117,6 +117,33 @@ module Ginseng
       assert_include(@command.inspect, 'secrets=1')
     end
 
+    # 🔴 **`dir` も伏せる (#719)。** `command:` / `env:` を伏せた同じ行で、`dir:` だけ平文だった。
+    def test_exec_and_inspect_mask_secrets_in_the_dir
+      Dir.mktmpdir('s3cret') do |dir|
+        logger = Recorder.new
+        @command.instance_variable_set(:@logger, logger)
+        @command.secrets = ['s3cret']
+        @command.dir = dir
+        @command.args = ['pwd']
+
+        assert_equal(0, @command.exec)
+        assert_not_include(logger.logs.last.last[:dir], 's3cret')
+        assert_include(logger.logs.last.last[:dir], Masking::FILTERED)
+        assert_not_include(@command.inspect, 's3cret')
+      end
+    end
+
+    # ⚠ 渡さなければ `dir` は触らない（型も変えない）。
+    def test_exec_leaves_the_dir_alone_without_secrets
+      logger = Recorder.new
+      @command.instance_variable_set(:@logger, logger)
+      @command.dir = Pathname('/tmp')
+      @command.args = ['true']
+      @command.exec
+
+      assert_equal(Pathname('/tmp'), logger.logs.last.last[:dir])
+    end
+
     # 🔴 **Hash を黙って受けない (#702)。** `to_a` が `[[キー, 値]]` になり、何も伏せずに通っていた。
     # ⚠ 文字列 1 つは 1 要素として受ける。
     def test_secrets_rejects_a_hash
