@@ -28,6 +28,31 @@ module Ginseng
       end
     end
 
+    # 🔴 **URL の直後の全角の句読点・括弧から先を含めない (#721)。**
+    def test_scan_stops_at_fullwidth_punctuation
+      assert_equal(['https://example.com/a'], URI.scan('見て https://example.com/a。次の文').map(&:to_s))
+      assert_equal(['https://example.com/a'], URI.scan('（https://example.com/a）').map(&:to_s))
+      assert_equal(['https://example.com/a', 'https://example.com/b'],
+        URI.scan('「https://example.com/a」と『https://example.com/b』、').map(&:to_s))
+      assert_equal(['https://example.com/a'], URI.scan('【https://example.com/a】').map(&:to_s))
+    end
+
+    # ⚠ **生の日本語を含む URL は従来どおり拾う (#721)。** 非 ASCII 全体では切らない。
+    def test_scan_keeps_non_ascii_paths
+      assert_equal(['https://ja.wikipedia.org/wiki/日本語'],
+        URI.scan('https://ja.wikipedia.org/wiki/日本語 を見て').map {|uri| Ginseng::URI.decode(uri.to_s)})
+    end
+
+    # 🔴 **UTF-8 以外の本文でも落ちない (#721)。** 終端を UTF-8 の正規表現で書くと、BINARY /
+    # Shift_JIS の本文で `Encoding::CompatibilityError` になった（それまでは拾えていた）。
+    def test_scan_handles_other_encodings
+      text = '見て https://example.com/a。次の文'
+
+      assert_equal(['https://example.com/a'], URI.scan(text.b).map(&:to_s))
+      assert_equal(['https://example.com/a'], URI.scan(text.encode('Shift_JIS')).map(&:to_s))
+      assert_equal(['https://example.com/a'], URI.scan(text.encode('EUC-JP')).map(&:to_s))
+    end
+
     def test_local?
       assert_false(@cjk.local?)
       assert_predicate(@local, :local?)
