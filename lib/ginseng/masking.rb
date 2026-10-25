@@ -7,7 +7,7 @@ module Ginseng
   #
   # ⚠⚠ **マスクの正本はここ 1 か所にする。** 利用側で同等品を書くと、対象の列が
   # 分かれて必ずズレる。`/logger/mask_fields` / `/logger/mask_query_params` /
-  # `/logger/mask_url_paths` を唯一の正本に保つため、`mask` / `mask_url` /
+  # `/logger/mask_url_paths` / `/logger/mask_url_host_paths` を唯一の正本に保つため、`mask` / `mask_url` /
   # `mask_urls_in` は public にしてある（実例: Sentry の `before_send`
   # ＝ pooza/tomato-shrieker#1467）。
   #
@@ -18,6 +18,8 @@ module Ginseng
     include UrlPath
     # ⚠ クエリとフラグメント、入れ子の URL も別ファイル (#712)。形は `UrlPath` と同じ。
     include UrlQuery
+    # ⚠ ホストを決めて接頭辞から後ろを落とす規則も別ファイル (#704)。形は `UrlPath` と同じ。
+    include UrlHostPath
 
     FILTERED = '[FILTERED]'
 
@@ -452,7 +454,7 @@ module Ginseng
     def mask_plain_url(value, text:, depth:)
       return value unless mask_url_candidate?(value)
       parts = (text ? URL_PARTS_PATTERN : URL_WHOLE_PARTS_PATTERN).match(value)
-      path = masked_url_path(parts[:path]) || parts[:path]
+      path = masked_url_paths(parts[:authority], parts[:path])
       authority = masked_url_authority(parts[:authority])
       params = masked_url_params(parts[:rest], text:, depth:)
       return "#{parts[:scheme]}#{authority}#{path}#{params}"
@@ -463,6 +465,7 @@ module Ginseng
     def mask_url_candidate?(value)
       return false unless value.match?(URL_PATTERN)
       return true if value.include?('?') || value.include?('#') || value.include?('@')
+      return true if mask_url_host_candidate?(value)
       return mask_url_prefixes(value).any?
     end
 

@@ -519,6 +519,73 @@ module Ginseng
       assert_include(message[:url], '/extra', '以降のパスは残す')
     end
 
+    # 🔴🔴 **Slack / Discord の webhook は、接頭辞から後ろを全部伏せる (#704)。** 秘密が接頭辞の
+    # 1 セグメント先とは限らない（Slack は 3 セグメントめ）ので、`/logger/mask_url_paths` では
+    # 塞がらなかった。⚠ 接頭辞とクエリは残す。
+    def test_mask_url_masks_webhook_paths_by_host
+      {
+        'https://hooks.slack.com/services/T000/B000/XXXXSECRET' =>
+          'https://hooks.slack.com/services/[FILTERED]',
+        'https://discord.com/api/webhooks/123/XXXXSECRET?wait=true' =>
+          'https://discord.com/api/webhooks/[FILTERED]?wait=true',
+        'https://ptb.discord.com/api/v10/webhooks/123/XXXXSECRET' =>
+          'https://ptb.discord.com/api/v10/webhooks/[FILTERED]',
+        'https://discordapp.com/api/v6/webhooks/123/XXXXSECRET/slack' =>
+          'https://discordapp.com/api/v6/webhooks/[FILTERED]',
+        # ⚠ ホストの大文字・ポート・末尾の `.`・userinfo、連続したスラッシュ、パスの大文字。
+        'https://HOOKS.Slack.com.:443/services//T000/B000/XXXXSECRET' =>
+          'https://HOOKS.Slack.com.:443/services//[FILTERED]',
+        'https://u:p@canary.discord.com/API/Webhooks/123/XXXXSECRET' =>
+          'https://u:[FILTERED]@canary.discord.com/API/Webhooks/[FILTERED]',
+      }.each do |src, expected|
+        assert_equal(expected, @logger.mask_url(src), src)
+      end
+    end
+
+    # ⚠ **ホストが違えば触らない (#704)。** `/services/` だけで判定すると無関係な URL を巻き込む。
+    # ⚠ 接頭辞で終わる URL（後ろが空）も、伏せるものが無いので触らない。
+    def test_mask_url_leaves_other_hosts_alone
+      [
+        'https://example.com/services/T000/B000/XXXXSECRET',
+        'https://evilhooks.slack.com/services/T000/B000/XXXXSECRET',
+        'https://hooks.slack.com.example.com/services/T000/B000/XXXXSECRET',
+        'https://discord.com/api/v10/channels/123/messages',
+        'https://hooks.slack.com/services/',
+      ].each do |src|
+        assert_equal(src, @logger.mask_url(src), src)
+      end
+    end
+
+    # ⚠ 文中の URL・シェルのエスケープ形・`slack:` 欄・例外メッセージでも伏せる (#704)。
+    # 🔴 `Slack.broadcast` は失敗した hook を `slack:` に、`HTTP#log` は `url:` に出す。
+    def test_create_message_masks_webhook_urls
+      url = 'https://hooks.slack.com/services/T000/B000/XXXXSECRET'
+      message = @logger.create_message(
+        slack: url,
+        url: 'https://discord.com/api/webhooks/123/XXXXSECRET',
+        error: StandardError.new("Bad response 404 (#{url})"),
+      )
+
+      assert_not_include(message.to_json, 'XXXXSECRET')
+      assert_include(message[:slack], 'https://hooks.slack.com/services/', '接頭辞は残す')
+      assert_not_include(@logger.mask_urls_in("curl #{url.shellescape} failed"), 'XXXXSECRET')
+    end
+
+    # ⚠ 設定 `/logger/mask_url_host_paths` で足せる。既定は残る（減らせない）。
+    # ⚠ `https://` 付きでも読み、パスの無い項目はパス全体を伏せる。
+    def test_mask_url_host_paths_merge_with_the_config
+      @logger.instance_variable_set(:@config, {
+        '/logger/mask_url_host_paths' => ['https://Push.Example.com/api/push/', 'whole.example.com'],
+      })
+
+      assert_equal('https://push.example.com/api/push/[FILTERED]',
+        @logger.mask_url('https://push.example.com/api/push/XXXXSECRET'))
+      assert_equal('https://whole.example.com/[FILTERED]',
+        @logger.mask_url('https://whole.example.com/a/XXXXSECRET'))
+      assert_equal('https://hooks.slack.com/services/[FILTERED]',
+        @logger.mask_url('https://hooks.slack.com/services/T/B/XXXXSECRET'), '既定は残すこと')
+    end
+
     # ⚠⚠ **どのルールにも当たらない URL は 1 バイトも変えないこと。** 当たらない
     # ときに parse → to_s で往復すると、正規化で URL が化ける後退が入る。
     def test_create_message_keeps_untouched_url_identical
