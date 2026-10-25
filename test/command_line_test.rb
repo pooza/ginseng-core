@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'tempfile'
+
 module Ginseng
   class CommandLineTest < TestCase
     def disable?
@@ -386,13 +388,24 @@ module Ginseng
     end
 
     # ⚠ 親の bundler の痕跡は子へ渡さず、`env=` で渡したものは渡す (#710)。
+    # ⚠ **起動の経路ごとに見る（4.2.0 リリース前レビュー）。** 締切つきの `exec` と `exec_system` は
+    # `unsetenv_others` を外しても、締切なしの `exec` だけを見るテストでは緑のままだった。
     def test_child_sees_the_unbundled_env
       assert_predicate(ENV.fetch('BUNDLE_GEMFILE', nil), :present?, '前提: 親は bundler の下で動いている')
       @command.env = {'GINSENG_TEST_710' => 'given'}
-      @command.args = ['sh', '-c', 'echo "${BUNDLE_GEMFILE-unset} ${GINSENG_TEST_710-unset}"']
-      @command.exec
+      {
+        exec: proc {@command.exec},
+        exec_with_timeout: proc {@command.exec(timeout: 10)},
+        exec_system: proc {@command.exec_system},
+      }.each do |name, run|
+        Tempfile.create('ginseng_710') do |file|
+          @command.args = ['sh', '-c', "echo \"${BUNDLE_GEMFILE-unset} ${GINSENG_TEST_710-unset}\" > #{file.path}"]
+          run.call
 
-      assert_equal('unset given', @command.stdout.chomp)
+          assert_equal('unset given', File.read(file.path).chomp, name)
+        end
+      end
+
       assert_not_include(@command.spawn_env.keys.grep(/\ABUNDLE_/), 'BUNDLE_GEMFILE')
       assert_equal('given', @command.spawn_env['GINSENG_TEST_710'])
       assert_include(@command.spawn_env, 'RBENV_VERSION')

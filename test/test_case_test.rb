@@ -35,6 +35,10 @@ module Ginseng
             def test_d_assert_raise
               assert_raise(SystemExit) {exit(1)}
             end
+
+            def test_e_raise
+              raise 'not an exit'
+            end
           end
 
           class ExitingSetupTest < TestCase
@@ -55,11 +59,56 @@ module Ginseng
         end
       RUBY
 
-      assert_match(/^6 tests, .* 3 failures, 0 errors/, output, '全部走り、exit の 3 本だけが失敗すること')
+      assert_match(/^7 tests, .* 3 failures, 1 errors/, output, '全部走り、exit の 3 本だけが失敗すること')
+      assert_match(/RuntimeError: not an exit/, output, 'exit 以外の例外は従来どおり error にすること')
       assert_match(/exit\(0\) が呼ばれた/, output)
       assert_match(/exit\(1\) が呼ばれた \(#696\): boom/, output, 'abort のメッセージを添えること')
       assert_match(/test_x.*exit\(3\) が呼ばれた/, output, 'setup の exit も失敗にすること')
       assert_false(status.success?)
+    end
+
+    # ⚠ `Ginseng::TestCase` でないテストの `exit` は従来どおり素通しする（ハンドラはプロセス全体で 1 つ）。
+    def test_exit_in_a_plain_test_passes_through
+      output, status = run_script(<<~RUBY)
+        require 'ginseng'
+        Ginseng::TestCase # ⚠ 読み込むと test-unit と例外ハンドラが入る（Zeitwerk の自動読み込み）
+        class PlainExitingTest < Test::Unit::TestCase
+          def test_exit
+            exit(7)
+          end
+        end
+      RUBY
+
+      assert_equal(7, status.exitstatus, output)
+    end
+
+    # 🔴 **fork した子の `exit` は受けないこと（4.2.0 リリース前レビュー）。** 受けると子が残りの
+    # スイートを丸ごと走らせ、後続のテストが 2 回走った。⚠ 子も test-unit の後始末で「0 tests」の
+    # 要約を 1 行出す（v4.1.0 から）ので、要約行の本数では見ない。
+    def test_exit_in_a_forked_child_ends_the_child
+      output, status = run_script(<<~RUBY)
+        require 'ginseng'
+        module Ginseng
+          class ForkingTest < TestCase
+            def test_a_fork
+              pid = fork
+              exit(0) if pid.nil?
+              Process.wait(pid)
+
+              assert_equal(0, $?.exitstatus)
+            end
+
+            def test_b_after
+              puts "after:\#{Process.pid}"
+            end
+          end
+        end
+      RUBY
+
+      assert_equal(1, output.scan(/^after:/).size, output)
+      assert_no_match(/exit\(0\) が呼ばれた/, output)
+      assert_match(/^2 tests, .* 0 failures, 0 errors/, output)
+      assert_predicate(status, :success?, output)
     end
 
     # 🔴🔴 **読めなかったテストファイルがあれば、失敗で終わること (#696)。** 以前は `- case:` の
