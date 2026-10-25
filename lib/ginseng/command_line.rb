@@ -168,13 +168,11 @@ module Ginseng
     def exec(timeout: nil)
       @stdout, @stderr, @status, @pid = nil
       secs = Time.elapse do
-        Bundler.with_unbundled_env do
-          if deadline?(timeout) && !environment_class.win?
-            capture_until(timeout)
-          else
-            block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, chdir: dir)}
-            timeout ? Timeout.timeout(timeout, &block) : block.call
-          end
+        if deadline?(timeout) && !environment_class.win?
+          capture_until(timeout)
+        else
+          block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, **spawn_options)}
+          timeout ? Timeout.timeout(timeout, &block) : block.call
         end
       end
       @pid = @status.pid
@@ -184,24 +182,16 @@ module Ginseng
     end
 
     def bundle_install
-      Bundler.with_unbundled_env do
-        return system(child_env, 'bundle', 'install', chdir: dir)
-      end
+      return system(spawn_env, 'bundle', 'install', **spawn_options)
     end
 
     def exec_system
       start = Time.now
-      Bundler.with_unbundled_env do
-        if @user
-          result = system(sudo_command, chdir: dir)
-        else
-          result = system(child_env, to_s, chdir: dir)
-        end
-        log_exec(Time.now - start, success: result)
-      end
+      result = system(*spawn_args, **spawn_options)
+      log_exec(Time.now - start, success: result)
     end
 
-    # サブプロセスへ渡す環境変数。Bundler.with_unbundled_env が剥がすのは
+    # サブプロセスへ渡す環境変数の、**親の環境に重ねる分**。Bundler.unbundled_env が剥がすのは
     # BUNDLE_* / GEM_* / RUBYLIB / RUBYOPT 等「Bundler が設定したもの」だけで、
     # rbenv は管轄外なので RBENV_VERSION は残る。Ruby のパッチアップを跨ぐ
     # デプロイの瞬間、旧 Ruby で稼働中の親（sidekiq 等）から RBENV_VERSION を
@@ -210,13 +200,29 @@ module Ginseng
     # し、子は .ruby-version / rbenv の通常解決に任せる。
     # 呼び出し側が env で明示指定した場合はそちらを優先する。
     #
-    # ⚠⚠ **公開の口 (#720)。** 利用側が同じ環境で別のコマンド（`bundle check` など）を走らせるときに使う。
-    # 組み直すと、外すキーが増えたときに追随できない。
+    # ⚠⚠ **公開の口 (#720)。** 組み直すと、外すキーが増えたときに追随できない。
+    # ⚠ 利用側が同じ環境で別のコマンド（`bundle check` など）を走らせるときは、これを重ねた全体の
+    # `spawn_env` を使う (#710)。
     # ⚠ 値が `nil` のキーは「その環境変数を外す」の意味（`Kernel#spawn` の env と同じ）。空文字に変えない。
     # ⚠ 値は伏せていない。ログに出すなら `masked` を通す。
     # ⚠ Hash は毎回新しいが、値の文字列は `env` と同じもの。書き換えない。
     def child_env
       return UNSET_ENV_KEYS.to_h {|key| [key, nil]}.merge(@env.stringify_keys)
+    end
+
+    # サブプロセスへ渡す環境変数の**全体** (#710)。親の bundler の痕跡を剥がした環境に `child_env` を重ねる。
+    #
+    # 🔴🔴 **`Bundler.with_unbundled_env` で囲まない。** あれは**プロセス全体の `ENV` を差し替えて戻す**ので、
+    # 2 本のスレッドが重なると、後から入った側が差し替え後の `ENV` を控えてそれで戻し、**`ENV` が bundler
+    # 起動前の状態のまま残る**（pooza/tomato-shrieker#1715。`ENV['TEST']` が消えてテストが 18 本落ちた）。
+    # ⚠ `ENV` には触らず、子へ渡す環境だけを組んで `unsetenv_others: true`（→ `spawn_options`）で渡す。
+    #
+    # ⚠ **公開の口。** 利用側が同じ環境で別のコマンドを走らせるときは、`child_env` ではなくこちらを使う
+    # （`child_env` だけでは親の `BUNDLE_GEMFILE` などが子へ漏れる）。
+    # ⚠ 元になるのは bundler 起動時の環境（`Bundler.original_env`）。**起動後に `ENV` へ足した値は子へ渡らない**
+    # （`with_unbundled_env` で囲んでいた頃と同じ）。渡したい値は `env=` で渡す。
+    def spawn_env
+      return Bundler.unbundled_env.merge(child_env)
     end
 
     private
@@ -310,7 +316,12 @@ module Ginseng
     end
 
     def spawn_args
-      return @user ? [sudo_command] : [child_env, to_s]
+      return [spawn_env, @user ? sudo_command : to_s]
+    end
+
+    # ⚠ `spawn_env` は環境の全体なので、親の `ENV` を引き継がせない（`unsetenv_others`）。
+    def spawn_options
+      return {chdir: dir, unsetenv_others: true}
     end
 
     # 🔴🔴 **`env` の値は argv に載り、同じホストの誰でも `ps` で読める (#708)。** ログの経路

@@ -343,6 +343,62 @@ module Ginseng
       assert(@command.bundle_install)
     end
 
+    # 🔴🔴 **実行中にプロセスの `ENV` を差し替えないこと (#710)。** `Bundler.with_unbundled_env` で
+    # 囲んでいた頃は、実行中は別のスレッドから見ても `ENV` が差し替わっていて、2 本が重なると
+    # 差し替え後のまま残った（pooza/tomato-shrieker#1715）。
+    def test_exec_leaves_the_process_env_alone
+      {
+        exec: proc {@command.exec},
+        exec_with_timeout: proc {@command.exec(timeout: 10)},
+        exec_system: proc {@command.exec_system},
+      }.each do |name, run|
+        ENV['GINSENG_TEST_710'] = 'kept'
+        @command.args = ['sleep', '0.5']
+        seen = []
+        thread = Thread.new(&run)
+        loop do
+          seen.push(ENV.fetch('GINSENG_TEST_710', nil))
+          break if thread.join(0.02)
+        end
+
+        assert_operator(seen.size, :>, 5, "#{name}: 実行中に何度も見ていること")
+
+        assert_equal(['kept'], seen.uniq, "#{name}: 実行中も ENV が変わらないこと")
+        assert_equal('kept', ENV.fetch('GINSENG_TEST_710', nil), name)
+      ensure
+        ENV.delete('GINSENG_TEST_710')
+      end
+    end
+
+    # 🔴 **2 本が重なっても `ENV` が戻ること (#710)。** 壊れるのは**後から入った側が後に出る**形 —
+    # 差し替え後の `ENV` を控えて、それで戻していた。⚠ 逆の並び（先に入った側が後に出る）では
+    # 正しく戻るので、直す前でも緑になる。
+    def test_overlapping_exec_keeps_the_process_env
+      ENV['GINSENG_TEST_710'] = 'kept'
+      first = Thread.new {CommandLine.new(['sleep', '0.3']).exec}
+      sleep(0.1)
+      second = Thread.new {CommandLine.new(['sleep', '0.6']).exec}
+      [first, second].each(&:join)
+
+      assert_equal('kept', ENV.fetch('GINSENG_TEST_710', nil))
+    ensure
+      ENV.delete('GINSENG_TEST_710')
+    end
+
+    # ⚠ 親の bundler の痕跡は子へ渡さず、`env=` で渡したものは渡す (#710)。
+    def test_child_sees_the_unbundled_env
+      assert_predicate(ENV.fetch('BUNDLE_GEMFILE', nil), :present?, '前提: 親は bundler の下で動いている')
+      @command.env = {'GINSENG_TEST_710' => 'given'}
+      @command.args = ['sh', '-c', 'echo "${BUNDLE_GEMFILE-unset} ${GINSENG_TEST_710-unset}"']
+      @command.exec
+
+      assert_equal('unset given', @command.stdout.chomp)
+      assert_not_include(@command.spawn_env.keys.grep(/\ABUNDLE_/), 'BUNDLE_GEMFILE')
+      assert_equal('given', @command.spawn_env['GINSENG_TEST_710'])
+      assert_include(@command.spawn_env, 'RBENV_VERSION')
+      assert_nil(@command.spawn_env['RBENV_VERSION'], '外すキーは nil のまま渡すこと')
+    end
+
     def test_exec_with_timeout
       @command.args = ['ls', '/']
       @command.exec(timeout: 10)
