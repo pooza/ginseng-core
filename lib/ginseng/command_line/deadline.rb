@@ -137,7 +137,7 @@ module Ginseng
         out_r, out_w = IO.pipe
         err_r, err_w = IO.pipe
         keeper = Process.spawn(*KEEPER, pgroup: true, in: gate_r, out: File::NULL, err: File::NULL)
-        pid = Process.spawn(*spawn_args, chdir: dir, pgroup: keeper,
+        pid = Process.spawn(*spawn_args, **spawn_options, pgroup: keeper,
           in: File::NULL, out: out_w, err: err_w)
         return Child.new(keeper, gate_w, pid, [out_r, err_r])
       ensure
