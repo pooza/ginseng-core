@@ -6,6 +6,9 @@ module Ginseng
   class TestCase < Test::Unit::TestCase
     include Package
 
+    # テストを走らせているプロセス。⚠ fork した子と見分けるため（→ 例外ハンドラ）。
+    RUNNER_PID = Process.pid
+
     # 🔴🔴 **テストの途中で `exit` / `abort` が呼ばれたら、そのテストの失敗にして先へ進む (#696)。**
     # test-unit は `SystemExit` を素通しするので、以前は**残りのテストが 1 本も走らないまま**、
     # 終了コードは `exit` に渡した値になった — ⚠⚠ `exit(0)` なら「0 failures・100% passed」の緑
@@ -15,8 +18,11 @@ module Ginseng
     # ⚠ 受けるのはテストの外へ漏れたものだけ。`assert_raise(SystemExit)` で受けるテストはそのまま。
     # ⚠⚠ **例外ハンドラはプロセス全体で 1 つの一覧**（test-unit のクラス変数）なので、ここで型を絞る。
     # 🔴 **`exit!` は塞げない** — 例外にならず `at_exit` も飛ばしてその場で終わる。
+    # 🔴 **fork した子の `exit` は受けない（4.2.0 リリース前レビュー）。** ブロック無しの `fork` の子で
+    # 受けると、**子が残りのスイートを丸ごと走らせ**、副作用（DB・外部への投稿）が二重になった。
     exception_handler do |test, exception|
       next false unless test.is_a?(TestCase) && exception.is_a?(SystemExit)
+      next false unless Process.pid == RUNNER_PID
       test.__send__(:add_exit_failure, exception)
       next true
     end

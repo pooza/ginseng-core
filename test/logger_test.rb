@@ -532,6 +532,15 @@ module Ginseng
           'https://ptb.discord.com/api/v10/webhooks/[FILTERED]',
         'https://discordapp.com/api/v6/webhooks/123/XXXXSECRET/slack' =>
           'https://discordapp.com/api/v6/webhooks/[FILTERED]',
+        # ⚠ ワークフローの webhook・GovSlack・旧ドメインのサブドメイン（4.2.0 リリース前レビュー）。
+        'https://hooks.slack.com/workflows/T0/A0/123/XXXXSECRET' =>
+          'https://hooks.slack.com/workflows/[FILTERED]',
+        'https://hooks.slack.com/triggers/T0/123/XXXXSECRET' =>
+          'https://hooks.slack.com/triggers/[FILTERED]',
+        'https://hooks.slack-gov.com/services/T/B/XXXXSECRET' =>
+          'https://hooks.slack-gov.com/services/[FILTERED]',
+        'https://canary.discordapp.com/api/webhooks/1/XXXXSECRET' =>
+          'https://canary.discordapp.com/api/webhooks/[FILTERED]',
         # ⚠ ホストの大文字・ポート・末尾の `.`・userinfo、連続したスラッシュ、パスの大文字。
         'https://HOOKS.Slack.com.:443/services//T000/B000/XXXXSECRET' =>
           'https://HOOKS.Slack.com.:443/services//[FILTERED]',
@@ -825,7 +834,7 @@ module Ginseng
     # **マスク対象を足して reload したのに古い一覧のまま資格情報を出し続ける**
     # ＝ 直したつもりで直っていない、という一番たちの悪い形になる。
     #
-    # ⚠ **3 つとも同じ形でメモ化している**ので、まとめて見る。
+    # ⚠ **4 つとも同じ形でメモ化している**ので、まとめて見る。
     def test_masking_lists_follow_the_configuration
       config = config_class.instance
       # ⚠ `/logger/mask_url_paths` は lib.yaml に無い（既定へ倒れる側）ので、
@@ -834,8 +843,9 @@ module Ginseng
       # ⚠⚠ **元から無かったキーは nil を書き戻すのではなく消すこと（Codex P2）。**
       # `Config` は singleton で、`keys` は値が nil の項も列挙する。nil を代入すると
       # **後続のテストから `/logger/mask_url_paths` が「在る」ように見える**。
-      original = ['/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths']
-        .to_h {|key| [key, (config[key] rescue ABSENT)]}
+      original = [
+        '/logger/mask_fields', '/logger/mask_query_params', '/logger/mask_url_paths', '/logger/mask_url_host_paths'
+      ].to_h {|key| [key, (config[key] rescue ABSENT)]}
       fields = original['/logger/mask_fields']
       params = original['/logger/mask_query_params']
 
@@ -845,14 +855,17 @@ module Ginseng
       # メモ化したままでも通ってしまう ＝ 回帰を捕まえられない。
       assert_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
       assert_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
+      assert_include(@logger.create_message(url: 'https://push.example.com/api/push/SECRET')[:url], 'SECRET')
 
       config['/logger/mask_fields'] = fields + ['session']
       config['/logger/mask_query_params'] = params + ['session']
       config['/logger/mask_url_paths'] = ['/hook/']
+      config['/logger/mask_url_host_paths'] = ['push.example.com/api/push/']
 
       assert_equal({probe: 'mask'}, @logger.create_message(probe: 'mask', session: 'SECRET'))
       assert_not_include(@logger.create_message(url: 'https://example.com/?session=SECRET')[:url], 'SECRET')
       assert_not_include(@logger.create_message(url: 'https://example.com/hook/SECRET/x')[:url], 'SECRET')
+      assert_not_include(@logger.create_message(url: 'https://push.example.com/api/push/SECRET')[:url], 'SECRET')
     ensure
       original&.each do |key, value|
         if value.equal?(ABSENT)

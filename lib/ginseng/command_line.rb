@@ -221,6 +221,8 @@ module Ginseng
     # （`child_env` だけでは親の `BUNDLE_GEMFILE` などが子へ漏れる）。
     # ⚠ 元になるのは bundler 起動時の環境（`Bundler.original_env`）。**起動後に `ENV` へ足した値は子へ渡らない**
     # （`with_unbundled_env` で囲んでいた頃と同じ）。渡したい値は `env=` で渡す。
+    # 🔴 **値は伏せていない。** 親の環境の全体なので、ログに出すと `child_env` よりずっと多くが漏れる。
+    # 出すなら `masked` を通す（4.2.0 リリース前レビュー）。
     def spawn_env
       return Bundler.unbundled_env.merge(child_env)
     end

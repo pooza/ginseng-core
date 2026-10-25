@@ -16,15 +16,16 @@ module Ginseng
       # `/logger/mask_url_host_paths` で**足せる**（⚠ 減らせない）。書き方は `ホスト/パスの接頭辞`。
       #
       # 🔴 **webhook の URL はパスそのものが資格情報で、秘密は接頭辞の 1 セグメント先とは限らない。**
-      # - Slack の incoming webhook: `https://hooks.slack.com/services/T…/B…/<秘密>`
+      # - Slack の incoming webhook: `https://hooks.slack.com/services/T…/B…/<秘密>`。⚠ ワークフローの
+      #   webhook（`/workflows/` / `/triggers/`）と、GovSlack（`hooks.slack-gov.com`）も同じ（4.2.0 リリース前レビュー）
       # - Discord の webhook: `https://discord.com/api/webhooks/{id}/{token}`。⚠ 版付きのパス
-      #   （`/api/v10/webhooks/`）と、旧ドメイン・サブドメイン（`discordapp.com` / `canary` / `ptb`）がある
+      #   （`/api/v10/webhooks/`）と、`canary` / `ptb` のサブドメインがある。どちらも旧ドメイン `discordapp.com` にもある
       MASK_URL_HOST_PATHS = [
-        'hooks.slack.com/services/',
-        *['discord.com', 'discordapp.com', 'canary.discord.com', 'ptb.discord.com'].product(
-          ['', 'v6/', 'v7/', 'v8/', 'v9/', 'v10/'],
-        ).map {|host, version| "#{host}/api/#{version}webhooks/"},
-      ].freeze
+        *['hooks.slack.com', 'hooks.slack-gov.com']
+          .product(['services/', 'workflows/', 'triggers/']),
+        *['discord.com', 'discordapp.com'].flat_map {|v| [v, "canary.#{v}", "ptb.#{v}"]}
+          .product(['', 'v6/', 'v7/', 'v8/', 'v9/', 'v10/'].map {|v| "api/#{v}webhooks/"}),
+      ].map {|host, path| "#{host}/#{path}"}.freeze
 
       private
 
