@@ -142,16 +142,19 @@ module Ginseng
     # 飛ばしたファイルごとに、omission になるテストを 1 本ずつ持つテストケースを作る（#132）。
     def self.report_skipped_cases(skips)
       return if skips.empty?
+      owner = self
       test_case = Class.new(self) do
         skips.each do |name, reason|
-          define_method("test_skip_#{name}") do
-            message = "テストファイル #{name} を読まなかった (skip_case?)"
-            message = "#{message}: #{reason}" if reason.is_a?(String)
-            omit(message)
-          end
+          define_method("test_skip_#{name}") {omit(owner.skip_message(name, reason))}
         end
       end
       define_report_case('Skipped', test_case)
+    end
+
+    def self.skip_message(name, reason)
+      message = "テストファイル #{name} を読まなかった (skip_case?)"
+      message = "#{message}: #{reason}" if reason.is_a?(String)
+      return message
     end
 
     # ⚠ 名前の無いクラスは報告で読めないので、定数として置く（`load` が 2 度呼ばれても上書きしない）。

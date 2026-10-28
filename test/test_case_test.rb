@@ -176,12 +176,23 @@ module Ginseng
           Ginseng::TestCase.define_singleton_method(:dir) {#{dir.dump}}
           Ginseng::TestCase.define_singleton_method(:skip_case?) {|name| name == 'disabled_test' && 'handler disabled'}
           Ginseng::TestCase.load
+          puts "SKIPPED=\#{Ginseng::TestCase::Skipped1Test.public_instance_methods(false).join(',')}"
         RUBY
 
         assert_match(/^2 tests, .* 0 failures, 0 errors, 0 pendings, 1 omissions/, output)
-        assert_match(/disabled_test を読まなかった \(skip_case\?\): handler disabled/, output)
+        assert_match(/^SKIPPED=test_skip_disabled_test$/, output)
         assert_predicate(status, :success?, output)
       end
+    end
+
+    # ⚠ omission の詳細は test-unit の出力の設定次第で表示されない（CI では出なかった）ので、
+    # 文言は子プロセスの出力ではなく、ここで見る。
+    def test_skip_message
+      assert_equal(
+        'テストファイル disabled_test を読まなかった (skip_case?): handler disabled',
+        TestCase.skip_message('disabled_test', 'handler disabled'),
+      )
+      assert_equal('テストファイル disabled_test を読まなかった (skip_case?)', TestCase.skip_message('disabled_test', true))
     end
 
     # ⚠ `skip_case?` 自身が例外になったファイルは、読めなかったものとして失敗にする。
