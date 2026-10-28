@@ -79,21 +79,50 @@ module Ginseng
     # ⚠ 他のファイルは従来どおり読み進める（1 つの不備で全部を止めない）。
     # ⚠ `rescue => e` が受けるのは `StandardError`（未定義の定数など）。構文エラーや `LoadError` は
     # `ScriptError` なので、従来どおりその場で止まる（黙らない）。
+    #
+    # 🔴 **意図して飛ばすファイルは `skip_case?` で外す（pooza/ginseng-style#132）。** `rescue` へ落として
+    # 飛ばすと、読めなかったファイルと見分けられず、失敗として数えられる。
+    # ⚠⚠ **利用側は `load` を写さない。** 写すと、ここへ足した検知が届かない（#132 で 12 本が写していた）。
+    # 前処理が要るなら `load` を上書きして `super` を呼ぶ。
     def self.load(cases = nil)
-      ENV['TEST'] = Package.name
+      ENV['TEST'] = package_class.name
       errors = {}
+      skips = {}
       file_map(cases).each do |name, path|
-        puts "+ case: #{name}" if Environment.test?
+        if reason = skip_case?(name)
+          puts "- case: #{name} (skipped)" if environment_class.test?
+          skips[name] = reason
+          next
+        end
+        puts "+ case: #{name}" if environment_class.test?
         require path
       rescue => e
-        puts "- case: #{name} (#{e.message})" if Environment.test?
+        puts "- case: #{name} (#{e.message})" if environment_class.test?
         errors[name] = e
       end
       report_load_errors(errors)
+      report_skipped_cases(skips)
+    end
+
+    # 読まずに飛ばすテストファイルか（上書き点・pooza/ginseng-style#132）。真なら読まず、omission として
+    # 数える（#488 と同じく、飛ばした本数を要約の行に残す）。⚠ 文字列を返せば理由として添える。
+    # ⚠ ここで例外になったファイルは、読めなかったものとして失敗にする。
+    def self.skip_case?(_name)
+      return false
+    end
+
+    # ⚠⚠ **利用側の `Package` / `Environment` は、インスタンスのメソッドから引く。** 利用側の
+    # `TestCase` は自分の `Package` を include しているが、その `Package` はクラスへメソッドを
+    # 足さない。字面の `Package` / `Environment` は、ここでは常に core のものになる。
+    def self.package_class
+      return allocate.package_class
+    end
+
+    def self.environment_class
+      return allocate.environment_class
     end
 
     # 読めなかったファイルごとに、失敗するテストを 1 本ずつ持つテストケースを作る (#696)。
-    # ⚠ 名前の無いクラスは報告で読めないので、定数として置く（`load` が 2 度呼ばれても上書きしない）。
     def self.report_load_errors(errors)
       return if errors.empty?
       test_case = Class.new(self) do
@@ -107,9 +136,32 @@ module Ginseng
           end
         end
       end
+      define_report_case('LoadError', test_case)
+    end
+
+    # 飛ばしたファイルごとに、omission になるテストを 1 本ずつ持つテストケースを作る（#132）。
+    def self.report_skipped_cases(skips)
+      return if skips.empty?
+      owner = self
+      test_case = Class.new(self) do
+        skips.each do |name, reason|
+          define_method("test_skip_#{name}") {omit(owner.skip_message(name, reason))}
+        end
+      end
+      define_report_case('Skipped', test_case)
+    end
+
+    def self.skip_message(name, reason)
+      message = "テストファイル #{name} を読まなかった (skip_case?)"
+      message = "#{message}: #{reason}" if reason.is_a?(String)
+      return message
+    end
+
+    # ⚠ 名前の無いクラスは報告で読めないので、定数として置く（`load` が 2 度呼ばれても上書きしない）。
+    def self.define_report_case(prefix, test_case)
       index = 1
-      index += 1 while const_defined?("LoadError#{index}Test", false)
-      const_set("LoadError#{index}Test", test_case)
+      index += 1 while const_defined?("#{prefix}#{index}Test", false)
+      const_set("#{prefix}#{index}Test", test_case)
     end
 
     def self.names(cases = nil)
@@ -128,7 +180,7 @@ module Ginseng
     end
 
     def self.dir
-      return File.join(Environment.dir, 'test')
+      return File.join(environment_class.dir, 'test')
     end
   end
 end

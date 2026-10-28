@@ -165,7 +165,101 @@ module Ginseng
       end
     end
 
+    # 🔴 **意図して飛ばしたファイルは、失敗ではなく omission として数える（pooza/ginseng-style#132）。**
+    # 利用側は `rescue` へ落として飛ばしていたので、読めなかったファイルと見分けられなかった。
+    def test_skipped_case_is_an_omission
+      Dir.mktmpdir do |dir|
+        write_good_test(dir)
+        File.write(File.join(dir, 'disabled_test.rb'), "raise 'must not be loaded'\n")
+        output, status = run_script(<<~RUBY)
+          require 'ginseng'
+          Ginseng::TestCase.define_singleton_method(:dir) {#{dir.dump}}
+          Ginseng::TestCase.define_singleton_method(:skip_case?) {|name| name == 'disabled_test' && 'handler disabled'}
+          Ginseng::TestCase.load
+          puts "SKIPPED=\#{Ginseng::TestCase::Skipped1Test.public_instance_methods(false).join(',')}"
+        RUBY
+
+        assert_match(/^2 tests, .* 0 failures, 0 errors, 0 pendings, 1 omissions/, output)
+        assert_match(/^SKIPPED=test_skip_disabled_test$/, output)
+        assert_predicate(status, :success?, output)
+      end
+    end
+
+    # ⚠ omission の詳細は test-unit の出力の設定次第で表示されない（CI では出なかった）ので、
+    # 文言は子プロセスの出力ではなく、ここで見る。
+    def test_skip_message
+      assert_equal(
+        'テストファイル disabled_test を読まなかった (skip_case?): handler disabled',
+        TestCase.skip_message('disabled_test', 'handler disabled'),
+      )
+      assert_equal('テストファイル disabled_test を読まなかった (skip_case?)', TestCase.skip_message('disabled_test', true))
+    end
+
+    # ⚠ `skip_case?` 自身が例外になったファイルは、読めなかったものとして失敗にする。
+    def test_skip_case_error_is_a_failure
+      Dir.mktmpdir do |dir|
+        write_good_test(dir)
+        output, status = run_script(<<~RUBY)
+          require 'ginseng'
+          Ginseng::TestCase.define_singleton_method(:dir) {#{dir.dump}}
+          Ginseng::TestCase.define_singleton_method(:skip_case?) {|_name| raise 'broken skip_case?'}
+          Ginseng::TestCase.load
+        RUBY
+
+        assert_match(/^1 tests, .* 1 failures, 0 errors/, output)
+        assert_match(/good_test を読めなかった .*broken skip_case\?/, output)
+        assert_false(status.success?)
+      end
+    end
+
+    # 🔴🔴 **利用側の `TestCase` は、自分の `Package` / `Environment` で読む（pooza/ginseng-style#132）。**
+    # 写しを消せるかの芯。⚠ 字面の `Package` / `Environment` は core のものに解決される。
+    def test_load_uses_the_package_of_the_subclass
+      Dir.mktmpdir do |root|
+        Dir.mkdir(File.join(root, 'test'))
+        write_good_test(File.join(root, 'test'))
+        output, status = run_script(<<~RUBY)
+          require 'ginseng'
+          module Foreign
+            module Environment
+              def self.dir = #{root.dump}
+              def self.test? = true
+            end
+
+            module Package
+              def environment_class = Environment
+              def package_class = Package
+              def self.name = 'foreign-package'
+            end
+
+            class TestCase < Ginseng::TestCase
+              include Package
+            end
+          end
+          Foreign::TestCase.load
+          puts "TEST=\#{ENV['TEST']}"
+        RUBY
+
+        assert_match(/^\+ case: good_test$/, output, '利用側の Environment.dir の test を読み、test? で出力すること')
+        assert_match(/^TEST=foreign-package$/, output)
+        assert_match(/^1 tests, .* 0 failures, 0 errors/, output)
+        assert_predicate(status, :success?, output)
+      end
+    end
+
     private
+
+    def write_good_test(dir)
+      File.write(File.join(dir, 'good_test.rb'), <<~RUBY)
+        module Ginseng
+          class GoodTest < TestCase
+            def test_ok
+              assert_true(true)
+            end
+          end
+        end
+      RUBY
+    end
 
     def run_script(source)
       Dir.mktmpdir do |dir|
