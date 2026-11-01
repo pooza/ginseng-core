@@ -604,7 +604,7 @@ module Ginseng
         'https://synapse.b-shock.org/webhook',
         # ⚠ userinfo の判定で巻き込まないこと (#589)。パスワードの無いユーザ名と、
         # `@` を持たないポート指定。
-        'https://user@example.com/x',
+        'postgres://user@example.com/x',
         'http://example.com:8080/path',
       ].each do |url|
         assert_equal(url, @logger.create_message(url:)[:url])
@@ -1221,7 +1221,9 @@ module Ginseng
 
       assert_equal(url, @logger.create_message(url:)[:url])
       assert_equal('not a url? really', @logger.create_message(message: 'not a url? really')[:message])
-      assert_equal('/api/v1/statuses?token=x', @logger.create_message(message: '/api/v1/statuses?token=x')[:message], 'スキームが無ければ URL 扱いしない')
+      # ⚠ スキームが無くても `mask_fields` の名前は落とす (#661)。`i` のようなクエリだけの名前は落とさない。
+      assert_equal('/api/v1/statuses?token=[FILTERED]', @logger.create_message(message: '/api/v1/statuses?token=x')[:message])
+      assert_equal('/api/v1/statuses?i=x', @logger.create_message(message: '/api/v1/statuses?i=x')[:message])
     end
 
     # 壊れた URL でも落ちないこと（ログ出力で例外を上げるのが最悪）。
@@ -1424,6 +1426,97 @@ module Ginseng
 
       assert_operator(captured.size, :>=, 2, '本体とバックトレースが出ること')
       assert_true(JSON.parse(captured.first)['_encoding_error'])
+    end
+
+    # ⚠ URL の形でない文字列にも `mask_fields` の名前を効かせる (#661)。
+    def test_mask_masks_fields_in_plain_text
+      {
+        'token=SECRET plain' => 'token=[FILTERED] plain',
+        'access_token: SECRET' => 'access_token: [FILTERED]',
+        'Authorization: Bearer SECRET' => 'Authorization: [FILTERED]',
+        '{"password":"SEC RET","a":1}' => '{"password":[FILTERED],"a":1}',
+        "password='SEC RET' x" => 'password=[FILTERED] x',
+        'see b?a=1&token=SECRET&c=2' => 'see b?a=1&token=[FILTERED]&c=2',
+      }.each do |src, expected|
+        assert_equal(expected, @logger.mask(src))
+      end
+    end
+
+    def test_mask_masks_whole_authorization_value_in_plain_text
+      [
+        'Authorization: token SECRET',
+        'authorization=Basic SECRET',
+        'Authorization: Digest username="a", response="SECRET"',
+      ].each do |src|
+        assert_not_include(@logger.mask(src), 'SECRET')
+      end
+      assert_equal("Authorization: [FILTERED]\nnext", @logger.mask("Authorization: token SECRET\nnext"))
+      assert_equal('{"authorization":[FILTERED],"a":1}', @logger.mask('{"authorization":"SECRET","a":1}'))
+    end
+
+    def test_mask_survives_invalid_bytes_in_plain_text
+      assert_equal('token=[FILTERED]', @logger.mask("token=SECRET\xFF"))
+      assert_equal('token=[FILTERED]', @logger.mask('token=SECRET'.b))
+      assert_equal('token=[FILTERED]', @logger.mask('token=SECRET'.encode('UTF-16LE')))
+    end
+
+    def test_mask_keeps_plain_text_without_credentials
+      [
+        'key=value',
+        'code: 500',
+        'mytoken=abc',
+        'Foo::token::Bar',
+        'token required',
+      ].each do |src|
+        assert_equal(src, @logger.mask(src))
+      end
+    end
+
+    def test_mask_fields_in_plain_text_follow_config
+      config = Config.instance
+      original = config['/logger/mask_fields'] rescue ABSENT
+
+      assert_equal('session_id=abc', @logger.mask('session_id=abc'))
+
+      config['/logger/mask_fields'] = @logger.mask_fields.to_a + ['session_id']
+
+      assert_equal('session_id=[FILTERED]', @logger.mask('session_id=abc'))
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/mask_fields')
+      else
+        config['/logger/mask_fields'] = original
+      end
+    end
+
+    # 🔴 文中の URL が改行で切れると、後半のクエリが URL の走査に届かない (#717)。
+    def test_mask_masks_query_after_newline_in_text
+      assert_equal("see https://h.example/a\nb?token=[FILTERED]", @logger.mask("see https://h.example/a\nb?token=SECRET"))
+    end
+
+    # 🔴 まるごと URL の userinfo が空白や改行で切れると、パスワードが丸ごと出ていた (#717)。
+    def test_mask_urls_in_masks_password_with_whitespace
+      ["https://u:SEC\nRET@h.example/x", 'https://u:SEC RET@h.example/x'].each do |src|
+        assert_equal('https://u:[FILTERED]@h.example/x', @logger.mask_urls_in(src))
+      end
+    end
+
+    def test_mask_urls_in_keeps_sentence_after_url
+      assert_equal('https://h.example failed for a@b.example', @logger.mask_urls_in('https://h.example failed for a@b.example'))
+    end
+
+    # DSN の鍵は user 部にある (#661)。⚠ HTTP 以外のユーザ名は診断に要るので残す。
+    def test_mask_url_masks_userinfo_without_password_on_http
+      {
+        'https://abcdef123@o1.ingest.sentry.io/42' => 'https://[FILTERED]@o1.ingest.sentry.io/42',
+        'HTTP://abc@h.example/' => 'HTTP://[FILTERED]@h.example/',
+        'postgres://app@db/mydb' => 'postgres://app@db/mydb',
+        'ssh://git@github.com/x' => 'ssh://git@github.com/x',
+        'https://h.example/@alice' => 'https://h.example/@alice',
+      }.each do |src, expected|
+        assert_equal(expected, @logger.mask_url(src))
+        assert_equal(expected, @logger.mask_urls_in("see #{src} now").delete_prefix('see ').delete_suffix(' now'))
+      end
     end
 
     private
