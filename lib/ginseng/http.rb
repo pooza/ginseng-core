@@ -54,9 +54,14 @@ module Ginseng
     # 前に付くときだけ見る。
     # 🔴 **`X-Functions-Key`（Azure Functions）/ `X-Client-Key` も当たらなかった (#712)。** ⚠ 同じ判断で
     # `app` / `master` / `private` も足した。
+    # 🔴 **`X-Admin-Key` なども当たらなかった (#718)。** ⚠ `-key` で終わる名前を広くは読まない（`X-Idempotency-Key`
+    # を巻き込む）ので、1 つずつ足す。
     CREDENTIAL_HEADER_PATTERN = /
-      auth | cookie | credential | password | secret | session | signature | token |
-      (?:access|api|app|client|functions|master|private|subscription)[-_]?key
+      auth | cookie | credential | password | pwd | secret | session | signature | token |
+      (?:
+        access|account|admin|api|app|client|functions|master|private|service|signing|
+        subscription|webhook
+      )[-_]?key
     /ix
 
     # ⚠ **オリジンをまたいで持ち出してはいけないヘッダか。** `RedirectGuard`（追わない）

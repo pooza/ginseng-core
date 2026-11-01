@@ -120,6 +120,11 @@ module Ginseng
       'hm' => 'https://cdn.discordapp.com/attachments/1/2/a.png?ex=AKIDEXAMPLE&hm=SECRET',
       'jwt' => 'https://private-user-images.githubusercontent.com/a.png?v=AKIDEXAMPLE&jwt=SECRET',
       'authorization' => 'https://f000.backblazeb2.com/file/b/a.png?b=AKIDEXAMPLE&Authorization=SECRET',
+      # ⚠ #718 で足した名前。
+      'private_token' => 'https://gitlab.example/api?a=AKIDEXAMPLE&private_token=SECRET',
+      'api_token' => 'https://h.example/api?a=AKIDEXAMPLE&api_token=SECRET',
+      'access-token' => 'https://h.example/api?a=AKIDEXAMPLE&access-token=SECRET',
+      'accesstoken' => 'https://h.example/api?a=AKIDEXAMPLE&accessToken=SECRET',
       # ⚠ #701 で足した名前。Alibaba OSS / Tencent COS / Akamai / ほか。
       'x-oss-signature' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-signature=SECRET',
       'x-oss-security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-security-token=SECRET',
