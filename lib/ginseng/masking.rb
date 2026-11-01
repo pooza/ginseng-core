@@ -20,6 +20,9 @@ module Ginseng
     include UrlQuery
     # ⚠ ホストを決めて接頭辞から後ろを落とす規則も別ファイル (#704)。形は `UrlPath` と同じ。
     include UrlHostPath
+    # ⚠ 文字列の中の `key=value` と URL の userinfo も別ファイル (#661)。形は `UrlPath` と同じ。
+    include TextFields
+    include UrlAuthority
 
     FILTERED = '[FILTERED]'
 
@@ -157,8 +160,11 @@ module Ginseng
     # 文が続く文字列がある。🔴 パスを空白の先まで取ると、`…/webhook/SECRET failed afterward`
     # の**後ろの文ごと**伏字になっていた（パスのマスクは次の `/` までを落とす）。
     # ⚠ クエリは残り（`rest`）に入るので、値の中の空白（`?x=a b&sig=`）は従来どおり越える。
+    # 🔴 **ただし `@` までは空白を越える (#717)。** `url:` 欄の `https://u:SEC\nRET@h/` のパスワードが丸ごと
+    # 出ていた。⚠ 後ろの文にある `@` まで届くことがあるが、落ちるのはコロンの後ろなので伏せる側に倒す。
     URL_PARTS_PATTERN = %r{
-      \A (?<scheme>[a-z][a-z0-9+.-]*://) (?<authority>[^/?\#\s]*) (?<path>[^?\#\s]*) (?<rest>.*) \z
+      \A (?<scheme>[a-z][a-z0-9+.-]*://)
+      (?<authority>(?:[^/?\#]*@)?[^/?\#\s]*) (?<path>[^?\#\s]*) (?<rest>.*) \z
     }mix
 
     # `URL_PARTS_PATTERN` の、**引数まるごとが URL** のとき（`mask_url` の直呼び）の形 (#712)。
@@ -266,7 +272,7 @@ module Ginseng
       in Array
         return arg.reject {|v| v.to_s.empty?}.map {|v| mask(v)}
       in String
-        return mask_urls_in(arg)
+        return mask_fields_in(mask_urls_in(arg))
       else
         return arg
       end
@@ -455,7 +461,7 @@ module Ginseng
       return value unless mask_url_candidate?(value)
       parts = (text ? URL_PARTS_PATTERN : URL_WHOLE_PARTS_PATTERN).match(value)
       path = masked_url_paths(parts[:authority], parts[:path])
-      authority = masked_url_authority(parts[:authority])
+      authority = masked_url_authority(parts[:authority], scheme: parts[:scheme])
       params = masked_url_params(parts[:rest], text:, depth:)
       return "#{parts[:scheme]}#{authority}#{path}#{params}"
     end
@@ -467,23 +473,6 @@ module Ginseng
       return true if value.include?('?') || value.include?('#') || value.include?('@')
       return true if mask_url_host_candidate?(value)
       return mask_url_prefixes(value).any?
-    end
-
-    # userinfo に埋まったパスワードを落とす (#589)。
-    #
-    # 🔴 **同じ URL のクエリは落ちるのに、隣にあるパスワードが平文で残っていた。**
-    # `postgres://app:S3CRET@db/mydb` のような DSN は例外メッセージに載る
-    # （`Sequel.connect` の失敗を `@logger.error(error: e)` で出す経路）。
-    #
-    # ⚠⚠ **ユーザ名は落とさない。** ユーザ名は診断に要るうえ、資格情報はパスワードの
-    # ほう。⚠ `redis://:S3CRET@redis:6379/0` のように**ユーザ名が空**の形も拾う。
-    # ⚠ userinfo は**最後の** `@` まで（パスワードに `@` があっても丸ごと落とす）。
-    def masked_url_authority(authority)
-      at = authority.rindex('@')
-      return authority unless at
-      colon = authority.index(':')
-      return authority unless colon && colon < at - 1
-      return "#{authority[..colon]}#{FILTERED}#{authority[at..]}"
     end
 
     # ⚠ 設定は既定と**合成**する。**マスクしない方向へは倒さない**
