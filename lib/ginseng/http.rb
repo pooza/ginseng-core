@@ -337,7 +337,8 @@ module Ginseng
     # 落ちる (mulukhiya-toot-proxy#4480)。
     #
     # ⚠⚠ **包み直したメッセージはログのマスクを通らずに外へ出る (#703)。** 例外は
-    # 呼び出し側の `rescue` や Sentry へそのまま渡るので、**ここでログと同じマスクを掛ける**。
+    # 呼び出し側の `rescue` や Sentry へそのまま渡るので、**ここで URL のマスクを掛ける**
+    # （`mask_urls_in`。文字列の `key=value` は伏せない）。
     # ⚠ URI の例外は `repeat` の入口で縮め済み（`redact_uri_error`）。これはその他の例外の分。
     def gateway_error(error)
       return error if error.is_a?(GatewayError)
