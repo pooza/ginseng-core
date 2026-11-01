@@ -1442,6 +1442,24 @@ module Ginseng
       end
     end
 
+    def test_mask_masks_whole_authorization_value_in_plain_text
+      [
+        'Authorization: token SECRET',
+        'authorization=Basic SECRET',
+        'Authorization: Digest username="a", response="SECRET"',
+      ].each do |src|
+        assert_not_include(@logger.mask(src), 'SECRET')
+      end
+      assert_equal("Authorization: [FILTERED]\nnext", @logger.mask("Authorization: token SECRET\nnext"))
+      assert_equal('{"authorization":[FILTERED],"a":1}', @logger.mask('{"authorization":"SECRET","a":1}'))
+    end
+
+    def test_mask_survives_invalid_bytes_in_plain_text
+      assert_equal('token=[FILTERED]', @logger.mask("token=SECRET\xFF"))
+      assert_equal('token=[FILTERED]', @logger.mask('token=SECRET'.b))
+      assert_equal('token=[FILTERED]', @logger.mask('token=SECRET'.encode('UTF-16LE')))
+    end
+
     def test_mask_keeps_plain_text_without_credentials
       [
         'key=value',

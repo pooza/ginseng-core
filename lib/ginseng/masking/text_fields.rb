@@ -15,6 +15,8 @@ module Ginseng
       # 🔴 値に改行が混じると 1 行目までしか落とせない（文の続きと区別できない）。
       def mask_fields_in(text)
         return text unless text.include?('=') || text.include?(':')
+        # ⚠ `mask_urls_in` は `://` が無いと scrub の前に返す。不正なバイト列は gsub で ArgumentError になる。
+        text = text.scrub('?') unless text.valid_encoding?
         return text.gsub(mask_fields_pattern) {"#{Regexp.last_match[:head]}#{FILTERED}"}
       end
 
@@ -24,11 +26,14 @@ module Ginseng
         return @mask_fields_pattern.last if @mask_fields_pattern&.first.equal?(fields)
         # ⚠ `Regexp.union` は埋め込むと `(?-mix:…)` になり、外側の `i` が効かない。
         names = fields.map {|field| Regexp.escape(field)}.join('|')
+        # ⚠ `Authorization` の値はスキームが何であっても行末まで（`token X` / `Digest a="b", response="c"`）。
         pattern = /
+          (?<head> (?<![a-z0-9_-]) authorization ["']? \s* (?: = | :(?!:) ) \s* )
+          (?!["'\[]) [^\r\n]+ |
           (?<head> (?<![a-z0-9_-]) (?:#{names}) ["']? \s* (?: = | :(?!:) ) \s* )
           (?:
             #{Regexp.escape(FILTERED)} | "(?:[^"\\]|\\.)*" | '(?:[^'\\]|\\.)*' |
-            (?:(?:bearer|basic)\s+)? ["']? [^\s&;,"'<>)]+
+            ["']? [^\s&;,"'<>)]+
           )
         /ix
         @mask_fields_pattern = [fields, pattern]
