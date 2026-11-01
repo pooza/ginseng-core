@@ -12,7 +12,9 @@ module Ginseng
       # 🔴 **URL の形でないものは素通りしていた。** 改行で切れた URL の後半（`b?token=SECRET`。#717）も同じ。
       # ⚠ **名前は `mask_fields`。** クエリの一覧には `key` / `code` / `i` が在り、文章を壊すので使わない。
       # ⚠ `mask_urls_in` には入れない。あちらは URL だけを見る口で、`mask` より細かい経路でも呼ばれる。
-      # 🔴 値に改行が混じると 1 行目までしか落とせない（文の続きと区別できない）。
+      # 🔴 引用符の無い値に改行が混じると 1 行目までしか落とせない（文の続きと区別できない）。
+      # ⚠ 区切りの前後の空白は行を越えない。`missing token:\nnext line` の次の行を消さないため。
+      # ⚠ `==` / `=~` は比較なので読まない。`=>` は `Hash#inspect` の形なので読む。
       def mask_fields_in(text)
         return text unless text.include?('=') || text.include?(':')
         # ⚠ `mask_urls_in` は `://` が無いと scrub の前に返す。不正なバイト列は gsub で ArgumentError になる。
@@ -28,9 +30,9 @@ module Ginseng
         names = fields.map {|field| Regexp.escape(field)}.join('|')
         # ⚠ `Authorization` の値はスキームが何であっても行末まで（`token X` / `Digest a="b", response="c"`）。
         pattern = /
-          (?<head> (?<![a-z0-9_-]) authorization ["']? \s* (?: = | :(?!:) ) \s* )
+          (?<head> (?<![a-z0-9_-]) authorization ["']? [ \t]* (?: =>?(?![=~]) | :(?!:) ) [ \t]* )
           (?!["'\[]) [^\r\n]+ |
-          (?<head> (?<![a-z0-9_-]) (?:#{names}) ["']? \s* (?: = | :(?!:) ) \s* )
+          (?<head> (?<![a-z0-9_-]) (?:#{names}) ["']? [ \t]* (?: =>?(?![=~]) | :(?!:) ) [ \t]* )
           (?:
             #{Regexp.escape(FILTERED)} | "(?:[^"\\]|\\.)*" | '(?:[^'\\]|\\.)*' |
             ["']? [^\s&;,"'<>)]+

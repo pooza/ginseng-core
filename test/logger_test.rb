@@ -1437,6 +1437,9 @@ module Ginseng
         '{"password":"SEC RET","a":1}' => '{"password":[FILTERED],"a":1}',
         "password='SEC RET' x" => 'password=[FILTERED] x',
         'see b?a=1&token=SECRET&c=2' => 'see b?a=1&token=[FILTERED]&c=2',
+        'TOKEN=SECRET' => 'TOKEN=[FILTERED]',
+        '{"password"=>"SEC RET", "a"=>1}' => '{"password"=>[FILTERED], "a"=>1}',
+        '{"token" => "SECRET"}' => '{"token" => [FILTERED]}',
       }.each do |src, expected|
         assert_equal(expected, @logger.mask(src))
       end
@@ -1467,6 +1470,10 @@ module Ginseng
         'mytoken=abc',
         'Foo::token::Bar',
         'token required',
+        'token == expected',
+        'token =~ /x/',
+        "missing token:\nnext line stays",
+        "Authorization:\nnext line stays",
       ].each do |src|
         assert_equal(src, @logger.mask(src))
       end
@@ -1501,8 +1508,19 @@ module Ginseng
       end
     end
 
+    # 🔴 空白を越えた `@` まで userinfo と読むと、後ろの文が消える (#717 の直しの回帰)。
     def test_mask_urls_in_keeps_sentence_after_url
-      assert_equal('https://h.example failed for a@b.example', @logger.mask_urls_in('https://h.example failed for a@b.example'))
+      [
+        'https://h.example failed for a@b.example',
+        'https://h.example:8080 failed for a@b.example',
+        'https://h.example: 404 for a@b.example',
+        'https://h.example failed: see a@b.example',
+        'https://h.example timed out at 12:30 by a@b.example',
+        'redis://redis:6379 refused, ping a@b.example',
+        "https://h.example:8080\nretry 3\na@b.example done",
+      ].each do |src|
+        assert_equal(src, @logger.mask_urls_in(src))
+      end
     end
 
     # DSN の鍵は user 部にある (#661)。⚠ HTTP 以外のユーザ名は診断に要るので残す。
@@ -1510,6 +1528,9 @@ module Ginseng
       {
         'https://abcdef123@o1.ingest.sentry.io/42' => 'https://[FILTERED]@o1.ingest.sentry.io/42',
         'HTTP://abc@h.example/' => 'HTTP://[FILTERED]@h.example/',
+        'https://abc@h.example:8080/' => 'https://[FILTERED]@h.example:8080/',
+        'https://abc:@h.example/' => 'https://[FILTERED]@h.example/',
+        'postgres://app:@db/mydb' => 'postgres://app:@db/mydb',
         'postgres://app@db/mydb' => 'postgres://app@db/mydb',
         'ssh://git@github.com/x' => 'ssh://git@github.com/x',
         'https://h.example/@alice' => 'https://h.example/@alice',

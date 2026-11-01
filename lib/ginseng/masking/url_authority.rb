@@ -23,12 +23,12 @@ module Ginseng
         at = authority.rindex('@')
         return authority unless at
         colon = authority.index(':')
-        if colon.nil? || colon > at
+        # ⚠ `https://<鍵>:@h` はパスワードが空で、鍵は user 部にある。
+        if colon.nil? || colon >= at - 1
           # ⚠ 空白を越えた `@` は後ろの文のメールアドレスかもしれない。ユーザ名として丸ごと落とすと文が消える。
           return authority if authority.match?(/\s/) || !mask_userinfo_user?(scheme)
           return "#{FILTERED}#{authority[at..]}"
         end
-        return authority unless colon < at - 1
         return "#{authority[..colon]}#{FILTERED}#{authority[at..]}"
       end
 
