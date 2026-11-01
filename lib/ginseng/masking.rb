@@ -104,9 +104,12 @@ module Ginseng
     # `oh`（Facebook）は汎用すぎるので入れない。
     MASK_QUERY_PARAMS = [
       '__token__',
+      'access-token',
       'access_token',
+      'accesstoken',
       'api-key',
       'api_key',
+      'api_token',
       'apikey',
       'auth',
       'authorization',
@@ -120,6 +123,7 @@ module Ginseng
       'jwt',
       'key',
       'password',
+      'private_token',
       'q-signature',
       'refresh_token',
       'secret',
