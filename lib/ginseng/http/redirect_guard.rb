@@ -30,8 +30,9 @@ module Ginseng
     # ⚠ **資格情報を持たない要求は従来どおり追う。** 🔴 一律に切ると、Google Apps Script
     # のように**相手が正規に 302 を返す経路**が壊れる（`HTTP#get` のコメント参照）。
     #
-    # ⚠⚠ **`host_validator` を渡した経路とは別物。** あちらは「オリジンをまたいだら
-    # 資格情報を落として追う」（#527 / #568 / #576）。こちらは**宛先が 1 つに
+    # ⚠⚠ **`Ginseng::HTTP` の既定とは別物。** あちらは「オリジンをまたいだら
+    # 資格情報を落として追う」（#527 / #568 / #576。6.0.0 から validator の有無を問わない・#655）。
+    # 🔴 本文は 307 / 308 で撃ち直すので、それだけでは足りない。こちらは**宛先が 1 つに
     # 決まっている Service** 向けなので、**落として追う**より**追わない**ほうが合う。
     # ⚠ だから `Ginseng::HTTP` の既定にはしない（pooza/ginseng-style#111 の A を採らない）。
     module RedirectGuard
@@ -94,8 +95,9 @@ module Ginseng
       # ⚠⚠ **本文のキーは列挙しない**（`UNSAFE_METHODS` と同じ理由）。実測で、
       # `host_validator` を渡した GET に 307 を返すと、**`redirect_options` が
       # `keep_body` で本文を持ち越し、メソッドも GET のまま**なので
-      # **`client_secret` が別ホストの 2 段目へ届いた**（validator を渡さない経路では
-      # HTTParty が GET の本文を撃ち直さないので届かない）。
+      # **`client_secret` が別ホストの 2 段目へ届いた**。⚠ 6.0.0 のリリース前レビューで
+      # `redirect_options` 側も GET / HEAD の本文を持ち越さないようにした（5.x の HTTParty と同じ）ので、
+      # ここは二重の守り。
       def guarded_options(options, safe: true, uri: nil)
         return options if options.key?(:follow_redirects)
         return options if safe && !credentials?(options, uri) && options[:body].blank?
@@ -212,8 +214,8 @@ module Ginseng
       # と数えられる** — 実例: `tomato-shrieker` の `WebhookShrieker`（`Ginseng::Slack`
       # の子）は `def exec(body); return post(body); end` で、**応答を一度も見ない**。
       #
-      # ⚠ **「追従しているから 3xx は返らない」ではない。** 🔴 HTTParty が追うのは
-      # `Location` を持つ 3xx だけなので、**`Location` の無い 3xx（300 など）は
+      # ⚠ **「追従しているから 3xx は返らない」ではない。** 🔴 追うのは
+      # `Location` を持つ 3xx だけ（`redirect_location`）なので、**`Location` の無い 3xx（300 など）は
       # 追従したままでもここへ来る**。⚠⚠ どちらも「宛先が違う」の合図なので落とす。
       # ⚠ **落とすときは `error` を 1 行残す (#653・リリース前レビュー観点②)。**
       # 🔴 4xx は `repeat` の rescue が `error` を出すが、ここは `repeat` の外なので

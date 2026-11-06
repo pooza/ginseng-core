@@ -31,6 +31,9 @@ module Ginseng
       # 安全かつ本文を持たない HEAD には当てはまらない（curl -I -L も HEAD のまま）。
       SAFE_METHODS = [:get, :head].freeze
 
+      # 追ってよい行き先のスキーム。→ `redirect_uri`
+      REDIRECT_SCHEMES = ['http', 'https'].freeze
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -63,11 +66,20 @@ module Ginseng
           # 通すようになったので追従させる。
           # ⚠⚠ **「メソッドを保つ」と「body を保つ」は別の条件。** 一緒にすると、
           # GET に body を渡した呼び出しで**初段の body が撃ち直される**。
-          keep_body = KEEP_METHOD_STATUSES.include?(response.code)
-          method = :get unless keep_body || SAFE_METHODS.include?(method)
+          # 🔴🔴 **GET / HEAD の本文は 307 / 308 でも持ち越さない（6.0.0 のリリース前レビュー）。**
+          # ⚠⚠ 5.x の既定の経路は HTTParty が追っていて、GET の本文は必ず捨てていた（`clear_body`）。
+          # ここだけ持ち越していたので、6.0.0 で既定の経路もここを通すと**本文付きの GET が 307 で
+          # 別ホストへ本文ごと撃ち直された**（実測: `client_secret=SECRET` が 2 段目に届いた）。
+          keep_method = KEEP_METHOD_STATUSES.include?(response.code)
+          keep_body = keep_method && !SAFE_METHODS.include?(method)
+          method = :get unless keep_method || SAFE_METHODS.include?(method)
           options = redirect_options(options, origin, uri, keep_body:)
         end
-        raise GatewayError, "Too many redirects (#{limit})"
+        # ⚠ **諦めた行を 1 本残す（6.0.0 のリリース前レビュー）。** ここは `repeat` の外なので、
+        # 残さないと info 行が並ぶだけで error 行が 1 本も出ない（5.x は HTTParty の例外が `repeat` で出ていた）。
+        error = GatewayError.new("Too many redirects (#{limit})")
+        log_retry_error(error, method, uri, Time.now, gave_up: :too_many_redirects)
+        raise error
       end
 
       # 次のホップの URI。
@@ -79,8 +91,18 @@ module Ginseng
       # HTTParty が `execute` の中で追っていたので伏せてあり、6.0.0 で既定の経路もここを
       # 通るようになって**回帰した**（validator の経路は以前から同じ形だった）。
       # ⚠ 包むのは `repeat` と同じ形（伏せた複製を `cause` に付けた `GatewayError`）。行も 1 本残す。
+      #
+      # 🔴🔴 **http / https 以外の行き先も、ここで止める（6.0.0 のリリース前レビュー）。**
+      # ⚠⚠ `myapp:/cb?code=SECRET` は `URI.join` を通るので、次のホップの `url:` としてログへ渡り、
+      # **ログのマスクは `scheme://` の形しか伏せないので平文で出た**（#703 で塞いだ形が別の欄から）。
+      # しかも送れない行き先なのに、`UnsupportedURIScheme` を `retry_limit` 回撃ち直していた。
+      # ⚠ 行には直前のホップの URL を残し、行き先はスキームだけにする（`uri_origin`）。
       def redirect_uri(method, uri, location)
-        return create_uri(::URI.join(uri.to_s, location).to_s)
+        target = ::URI.join(uri.to_s, location)
+        return create_uri(target.to_s) if REDIRECT_SCHEMES.include?(target.scheme.to_s.downcase)
+        error = GatewayError.new("Unsupported redirect to '#{uri_origin(location.to_s)}'")
+        log_retry_error(error, method, uri, Time.now, gave_up: :invalid_location)
+        raise error
       rescue *RetryMethods::URI_ERRORS => e
         redacted = redact_uri_error(e)
         log_retry_error(redacted, method, uri, Time.now, gave_up: :invalid_location)
@@ -103,9 +125,8 @@ module Ginseng
           response = execute(method, uri, hop_options, max_bytes)
           # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
           # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
-          # ⚠⚠ **validator を渡したかどうかでログの形が変わらないこと** —
-          # `upload` の直行経路は `method:, multipart:, url:, status:` の順で
-          # 出すので、**同じ位置に置く**（JSON のキー順が揃う）。
+          # ⚠ キーの順は `method:, multipart:, url:, status:`。5.x の `upload` の直行経路と同じ
+          # 並び（6.0.0 で直行経路は無くなったが、行の形は変えない）。
           log(method:, **hop_options.slice(:multipart), url: uri, status: response.code, start:)
           bad_response!(response) unless response.code < 400
           next response
@@ -132,7 +153,11 @@ module Ginseng
         # ⚠ **`multipart` は body と一緒に落とす (#578)。** 307 / 308 以外は body を
         # 捨てて GET になるので、印だけ残すと**ログが嘘をつく**うえ、body の無い
         # 要求に `multipart: true` を渡すことになる。
-        options = keep_body ? options.except(:query) : options.except(:query, :body, :multipart)
+        # 🔴 **`default_params` も `query` と同じく持ち越さない（6.0.0 のリリース前レビュー）。** HTTParty は
+        # ホップごとにクエリへ足すので、残すと**別ホストの 2 段目に `?api_key=…` が付いた**（実測。5.x の
+        # 既定の経路は HTTParty が追っていて付かなかった）。
+        dropped = [:query, :default_params]
+        options = keep_body ? options.except(*dropped) : options.except(*dropped, :body, :multipart)
         rewind_body!(options[:body]) if keep_body
         return options if origin == origin_of(uri)
         # ⚠ ヘッダより先に落とす。`headers` が空でも資格情報オプションは

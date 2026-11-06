@@ -88,6 +88,8 @@ module Ginseng
     # 🔴 **この判断は `host_validator` を渡した経路のもの (#653)。** `RedirectGuard`
     # の素の経路には**ホスト検証が 1 つも無い**（`Location` の行き先を信じて追う）ので、
     # そちらでは「意図しないホストへ相互 TLS で認証しに行く」ことになる。
+    # ⚠⚠ **6.0.0 から既定の経路（validator 無し）も `redirect_options` を通る (#655)。** そちらでは
+    # 検証の無いリダイレクト先へ提示する（5.x で HTTParty が追っていた頃と同じ）。
     # ⚠ `pem` / `p12` を渡す利用側は実測でゼロ。足すときはここを見直す。
     #
     # ⚠⚠ **`cookies:` も同じ経路 (#576)。** `Cookie` ヘッダ自体は
@@ -103,7 +105,8 @@ module Ginseng
     # 4xx のうち、時間をおけば結果が変わりうるもの。
     RETRYABLE_STATUSES = [408, 425, 429].freeze
 
-    # host_validator 使用時に追うリダイレクトの上限。
+    # 追うリダイレクトの上限（`max_redirects:` で変えられる）。⚠ 6.0.0 から既定の経路にも効く
+    # (#655。HTTParty の既定は 5)。
     MAX_REDIRECTS = 8
 
     # `Retry-After` として受け入れる上限（秒）。⚠ `/http/retry/max_seconds` で
@@ -283,7 +286,7 @@ module Ginseng
       return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
     end
 
-    # host_validator を持たない冪等メソッド（GET / HEAD）の共通経路。
+    # 冪等メソッド（GET / HEAD）の共通経路。⚠ 6.0.0 から validator の有無を問わない (#655)。
     #
     # ⚠⚠ **呼び出し側の hash を壊さないこと (#528)。**以前はここで
     # `options.delete(:host_validator)` していたため、**同じ hash を head と get で
