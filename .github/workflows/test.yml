@@ -31,7 +31,7 @@ jobs:
           # public な github: 参照なので、消しても bundle install に影響しない。
           persist-credentials: false
       # ⚠ 手順の正本は pooza/ginseng-style。ここには matrix と schedule だけ置く。
-      - uses: pooza/ginseng-style/.github/actions/ruby-check@2818c5618476302e4a10454f1b621502a053f492 # v1.1.14
+      - uses: pooza/ginseng-style/.github/actions/ruby-check@127c2854e76811eeec41e21c7bf262b4a527d2b7 # v1.1.15
         with:
           # ⚠⚠ **鮮度確認はこのワークフローから外した (#515)。**
           # 古くなると `cert check` で落ち、**lint も test も skipped になって
