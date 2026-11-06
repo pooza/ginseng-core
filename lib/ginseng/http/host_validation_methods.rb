@@ -57,7 +57,7 @@ module Ginseng
           # 経路（HTTParty に任せていた側）と同じ形 — 3xx を落とすかどうかは
           # 呼び出し側（`RedirectGuard#guard_response`）が決める。
           return response unless follow && location
-          uri = create_uri(::URI.join(uri.to_s, location).to_s)
+          uri = redirect_uri(method, uri, location)
           # ⚠ **メソッドはホップごとに変わりうる (#569)。** GET / HEAD しか
           # 通っていなかった頃は `method` が不変だったが、body 付きメソッドを
           # 通すようになったので追従させる。
@@ -68,6 +68,23 @@ module Ginseng
           options = redirect_options(options, origin, uri, keep_body:)
         end
         raise GatewayError, "Too many redirects (#{limit})"
+      end
+
+      # 次のホップの URI。
+      #
+      # 🔴🔴 **読めない `Location` の例外を、素のまま外へ出さない（#743 Codex P2 / #695）。**
+      # ⚠⚠ `URI::InvalidURIError` は `bad URI (is not URI?): "<Location 全体>"` を載せ、ここは
+      # `repeat` の外なので `redact_uri_error` も `GatewayError` への包み直しも通らない。実測で
+      # `Location: https://[::1/cb?code=SECRET` の `SECRET` が平文で出た。🔴 5.x の既定の経路は
+      # HTTParty が `execute` の中で追っていたので伏せてあり、6.0.0 で既定の経路もここを
+      # 通るようになって**回帰した**（validator の経路は以前から同じ形だった）。
+      # ⚠ 包むのは `repeat` と同じ形（伏せた複製を `cause` に付けた `GatewayError`）。行も 1 本残す。
+      def redirect_uri(method, uri, location)
+        return create_uri(::URI.join(uri.to_s, location).to_s)
+      rescue *RetryMethods::URI_ERRORS => e
+        redacted = redact_uri_error(e)
+        log_retry_error(redacted, method, uri, Time.now, gave_up: :invalid_location)
+        raise_gateway_error(redacted, e)
       end
 
       # ホップ 1 回ぶん。⚠ 検証は `repeat` の外で行う — 中に置くと、拒否した相手を

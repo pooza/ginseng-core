@@ -173,6 +173,32 @@ module Ginseng
       assert_requested(:post, SAME_ORIGIN, body: {a: 1}.to_json)
     end
 
+    # 🔴🔴 **読めない `Location` の秘密を、例外にも行にも平文で出さない（#743 Codex P2 / #695）。**
+    # ⚠ 5.x の既定の経路は HTTParty が追っていて伏せてあった。validator の経路も同じ扱いにする。
+    def test_unreadable_location_is_redacted
+      ['https://[::1/callback?code=SECRET', 'http://h.example/a b?code=SECRET'].each do |location|
+        [{}, {host_validator: ->(_host) {true}}].each do |options|
+          WebMock.reset!
+          stub_request(:get, @url).to_return(status: 302, headers: {'Location' => location})
+          logged = []
+          @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+
+          error = assert_raise(GatewayError, location) {@http.get('/api', options)}
+          chain = []
+          cause = error
+          while cause
+            chain.push("#{cause.class}: #{cause.message}")
+            cause = cause.cause
+          end
+
+          assert_not_include(chain.join("\n"), 'SECRET', "#{location} #{options.keys}")
+          assert_equal(1, logged.size, location)
+          assert_equal(:invalid_location, logged.first[:gave_up])
+          assert_not_include(logged.first[:error].message, 'SECRET')
+        end
+      end
+    end
+
     # ⚠ **`upload` も既定で自前で追う。** 5.x では HTTParty に直に渡していた。
     def test_upload_drops_credentials_across_origins
       stub_request(:post, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
