@@ -897,7 +897,11 @@ module Ginseng
         'X-Api-Key', 'Api-Key', :id_token, 'Security-Token', 'q-signature',
         'x-cos-security-token', 'x-oss-security-token', 'x-oss-signature',
         # ⚠ 大文字小文字で判定を変えないこと（#585 の回帰も兼ねる）。
-        :Authorization, :Access_Token, :TOKEN
+        :Authorization, :Access_Token, :TOKEN,
+        # 🔴 クエリでは伏せるのに Hash では平文だった名前と、その近い名前 (#738)。
+        # `accessToken` は Misskey の MiAuth の応答のキー。
+        :api_token, :private_token, :accessToken, 'access-token',
+        :auth_token, :authToken, 'auth-token', :apiToken, 'api-token', :privateToken, 'private-token'
       ].each do |key|
         message = @logger.create_message(probe: 'mask', key => 'S3CRET')
 
@@ -945,6 +949,24 @@ module Ginseng
       generic = {sig: 'x', signature: 'footer', hm: 1, jwt: 'header'}
 
       assert_equal(generic, @logger.create_message(generic))
+    end
+
+    # 🔴 文字列の中の `key=value` でも同じ名前を伏せる (#738)。⚠ これまで `api_token=` は、
+    # 名前の `token` の直前が `_` なので当たらず平文だった。⚠⚠ `pwd` は伏せない（作業ディレクトリ）。
+    def test_create_message_masks_credential_fields_in_text
+      [
+        'failed: api_token=SECRET',
+        'failed: accessToken: SECRET',
+        'failed: {"auth_token":"SECRET"}',
+        'failed: private-token=SECRET',
+      ].each do |text|
+        masked = @logger.create_message(message: text)[:message]
+
+        assert_not_include(masked, 'SECRET', text)
+      end
+
+      assert_equal({message: 'pwd: /home/app'}, @logger.create_message(message: 'pwd: /home/app'))
+      assert_equal({pwd: '/home/app'}, @logger.create_message(pwd: '/home/app'))
     end
 
     # 🔴 **設定は既定を置き換えない。既定と合成する (#586)。**
