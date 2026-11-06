@@ -127,8 +127,8 @@ module Ginseng
       assert_match(/Too many redirects/, error.message)
     end
 
-    # validator を渡さない既定の経路は従来どおり HTTParty に追従させる。
-    def test_without_validator_keeps_httparty_behavior
+    # validator を渡さない既定の経路も、リダイレクトの無い要求は 5.x と同じ結果になる。
+    def test_without_validator_plain_request
       WebMock.stub_request(:get, 'https://example.com/plain').to_return(status: 200, body: 'plain')
 
       assert_equal('plain', @http.get('https://example.com/plain').body)
@@ -690,8 +690,8 @@ module Ginseng
       assert_requested(:post, 'https://b.example/echo') {|req| req.body == {token: 'secret'}.to_json}
     end
 
-    # validator を渡さない従来の呼び出しは HTTParty のまま。
-    def test_post_without_validator_keeps_httparty_behavior
+    # validator を渡さない既定の経路も、302 の POST は GET に化けて追う（5.x と同じ結果。#655）。
+    def test_post_without_validator_follows_like_httparty
       WebMock.stub_request(:post, 'https://example.com/exec')
         .to_return(status: 302, headers: {'Location' => 'https://example.com/echo'})
       WebMock.stub_request(:get, 'https://example.com/echo').to_return(status: 200, body: 'ok')

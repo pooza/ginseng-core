@@ -477,15 +477,18 @@ module Ginseng
       {
         'ftp://h.example/a?sig=SECRET' => "'ftp://h.example[FILTERED]' Must be HTTP, HTTPS or Generic",
         'https://[::1/a?sig=SECRET' => 'bad URI (is not URI?): "https:[FILTERED]"',
-        '/api' => "'myapp:[FILTERED]' Must be HTTP, HTTPS or Generic",
+        # ⚠ 6.0.0 から、送れないスキームへのリダイレクトは追う前に止める（`redirect_uri`）。
+        '/api' => "Unsupported redirect to 'myapp:[FILTERED]'",
       }.each do |url, expected|
         error = nil
         logged = capture_log {error = assert_raise(GatewayError, url) {@http.get(url)}}
 
         assert_equal(expected, error.message, url)
         assert_not_empty(logged, url)
+        # 🔴🔴 **行全体を見る（6.0.0 のリリース前レビュー）。** `:error` 欄だけ見ていた間、`url:` 欄に
+        # `myapp:/callback?code=SECRET` が平文で出ていたのを捕まえられなかった。
         logged.each do |entry|
-          assert_not_include(@http.instance_variable_get(:@logger).create_message(entry)[:error].to_s, 'SECRET', url)
+          assert_not_include(@http.instance_variable_get(:@logger).create_message(entry).to_json, 'SECRET', url)
         end
       end
     end

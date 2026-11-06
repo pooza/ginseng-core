@@ -443,17 +443,21 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE)
     end
 
-    # 🔴 **ガードが無ければ 2 段目へ本文が届くことを測る。**
-    def test_without_the_guard_the_get_body_reaches_the_second_hop
-      redirect(:get, 307)
-      bare = HTTP.new
-      bare.base_uri = ORIGIN
-      bare.get('/api', {
-        body: {'client_secret' => 'secret'},
-        host_validator: allow_hosts('example.com', 'elsewhere.example.com'),
-      })
+    # 🔴 **ガードが無くても、GET の本文は 2 段目へ届かない（6.0.0 のリリース前レビュー）。**
+    # ⚠⚠ 5.x まではここで本文が届いていた（validator の経路は `redirect_options` が GET の本文を
+    # 持ち越していた）。6.0.0 で既定の経路もそこを通すようになり、HTTParty と同じく捨てる形に直した。
+    # ⚠ 追うこと自体は変わらないので、ガードが止めているのは「追うかどうか」のほう。
+    def test_without_the_guard_the_get_body_is_dropped
+      body = {body: {'client_secret' => 'secret'}}
+      [{}, {host_validator: allow_hosts('example.com', 'elsewhere.example.com')}].each do |options|
+        WebMock.reset!
+        redirect(:get, 307)
+        bare = HTTP.new
+        bare.base_uri = ORIGIN
+        bare.get('/api', body.merge(options))
 
-      assert_requested(:get, ELSEWHERE, body: 'client_secret=secret')
+        assert_requested(:get, ELSEWHERE) {|req| req.body.blank?}
+      end
     end
 
     # 🔴🔴 **スキーム相対の userinfo も見る (#653 Codex P1・3 巡目)。**

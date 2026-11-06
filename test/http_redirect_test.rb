@@ -132,6 +132,66 @@ module Ginseng
       assert_requested(:get, @url, times: 3)
     end
 
+    # ⚠ **上限を超えたら error 行を 1 本残す（6.0.0 のリリース前レビュー）。** `repeat` の外なので、
+    # 残さないと info 行が並ぶだけになる。
+    def test_too_many_redirects_is_logged
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => @url})
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api', {max_redirects: 2})}}
+
+      assert_equal([:too_many_redirects], logged.map {|v| v[:gave_up]})
+    end
+
+    # 🔴🔴 **http / https 以外の行き先は追わず、行にも例外にも平文で出さない（6.0.0 のリリース前レビュー）。**
+    # ⚠⚠ ログのマスクは `scheme://` の形しか伏せないので、行き先を `url:` 欄へ渡すと平文で出た。
+    # ⚠ 送れない行き先なので撃ち直さない（以前は `retry_limit` 回撃っていた）。
+    def test_unsupported_redirect_scheme_is_refused
+      ['myapp:/callback?code=SECRET', 'mailto:me@example.com?body=SECRET', 'javascript:alert(SECRET)'].each do |location|
+        WebMock.reset!
+        stub_request(:get, @url).to_return(status: 302, headers: {'Location' => location})
+        logger = @http.instance_variable_get(:@logger)
+        error = nil
+        logged = capture_error_log {error = assert_raise(GatewayError, location) {@http.get('/api')}}
+
+        assert_not_include(error.message, 'SECRET', location)
+        assert_equal(1, logged.size, location)
+        assert_not_include(logger.create_message(logged.first).to_json, 'SECRET', location)
+        assert_equal(@url, logged.first[:url], '行には直前のホップの URL を残す')
+        assert_requested(:get, @url, times: 1)
+      end
+    end
+
+    # 🔴 **`default_params` はリダイレクト先へ持ち越さない（6.0.0 のリリース前レビュー）。** HTTParty は
+    # ホップごとにクエリへ足すので、残すと別ホストの 2 段目に `?api_key=…` が付く。
+    def test_default_params_are_not_carried
+      stub_request(:get, "#{@url}?api_key=SECRET").to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      @http.get('/api', {default_params: {api_key: 'SECRET'}})
+
+      assert_requested(:get, ELSEWHERE)
+      assert_not_requested(:get, "#{ELSEWHERE}?api_key=SECRET")
+    end
+
+    # 🔴 **対照: HTTParty に追わせると付かない。** ⚠ 5.x の既定の経路と同じ結果であることの固定。
+    def test_httparty_alone_drops_default_params
+      stub_request(:get, "#{@url}?api_key=SECRET").to_return(status: 302, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      HTTParty.get(@url, default_params: {api_key: 'SECRET'})
+
+      assert_requested(:get, ELSEWHERE)
+    end
+
+    # 🔴 **GET の本文は 307 でも撃ち直さない（6.0.0 のリリース前レビュー）。** 5.x の HTTParty と同じ。
+    def test_get_body_is_dropped_on_temporary_redirect
+      stub_request(:get, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
+      stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+      @http.get('/api', {body: {'client_secret' => 'SECRET'}})
+
+      assert_requested(:get, ELSEWHERE) {|req| req.body.blank?}
+    end
+
     # ⚠ **ホップごとにログが 1 行出る。** 5.x までは最後の答えの 1 行だけだった。
     def test_each_hop_is_logged
       stub_request(:get, @url).to_return(status: 302, headers: {'Location' => ELSEWHERE})
@@ -160,7 +220,7 @@ module Ginseng
       stub_request(:get, SAME_ORIGIN).to_return(status: 200)
 
       assert_equal(200, @http.post('/api', {body: {a: 1}}).code)
-      assert_requested(:get, SAME_ORIGIN)
+      assert_requested(:get, SAME_ORIGIN) {|req| req.body.blank?}
     end
 
     # ⚠ 307 は POST のまま本文ごと撃ち直す（HTTParty と同じ規則）。
@@ -208,6 +268,15 @@ module Ginseng
 
       assert_requested(:post, ELSEWHERE)
       assert_not_requested(:post, ELSEWHERE, headers: {'X-Api-Key' => 'SECRET'})
+    end
+
+    private
+
+    def capture_error_log
+      logged = []
+      @http.instance_variable_get(:@logger).define_singleton_method(:error) {|entry| logged.push(entry)}
+      yield
+      return logged
     end
   end
 end
