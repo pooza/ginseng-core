@@ -55,6 +55,24 @@ module Ginseng
       )
     end
 
+    # ⚠ MultiJSON を使わない (#739)。テスト環境には `multi_json` を入れてあるので
+    # （Gemfile）、`use_multi_json = false` を外すとここで落ちる。
+    def test_does_not_use_multi_json
+      assert_false(JSON::Validator.use_multi_json?)
+      # 警告はプロセスに 1 回なので、先に出ていても見えるように戻す（private）。
+      JSON::Validator.send(:reset_multi_json_deprecation_warning!)
+      stderr = StringIO.new
+      original = $stderr
+      begin
+        $stderr = stderr
+        errors('https://precure.ml')
+      ensure
+        $stderr = original
+      end
+
+      assert_not_match(/MultiJSON/, stderr.string)
+    end
+
     # 型の誤りは type の担当。format が二重に鳴ると 1 つの誤りが 2 行になる。
     def test_leaves_non_strings_to_type
       messages = errors(1)
