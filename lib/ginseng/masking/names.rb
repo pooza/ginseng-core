@@ -58,9 +58,8 @@ module Ginseng
         'accesstoken',
         'api_token',
         'private_token',
-        # ⚠ 近い名前も同じ並びで足す (#738)。🔴 **クエリの一覧にはまだ無い** — 足すと `RedirectGuard` の
-        # 口で 3xx が `GatewayError` になる（major）。⚠⚠ `pwd` は入れない（Hash のキーや `pwd: /path` の
-        # 文では作業ディレクトリを指す）。
+        # ⚠ 近い名前も同じ並びで足す (#738)。⚠ クエリの一覧には 6.0.0 で足した。⚠⚠ `pwd` は入れない
+        # （Hash のキーや `pwd: /path` の文では作業ディレクトリを指す。クエリ側にだけ在る）。
         'api-token',
         'apitoken',
         'auth-token',
@@ -97,17 +96,27 @@ module Ginseng
       # `hmac`、Alibaba OSS（`security-token` / `x-oss-*`）、Tencent COS（`q-signature` /
       # `x-cos-security-token`）、Akamai（`hdnts` / `__token__`）。⚠⚠ `s`（imgix）/ `t`（Slack）/
       # `oh`（Facebook）は汎用すぎるので入れない。
+      #
+      # 🔴 **近い名前が素通りしていた (#738)。** `MASK_FIELDS` には 5.1.0 で足したが、ここは
+      # `RedirectGuard` の判定も変わる（major）ので 6.0.0 で足した。camelCase（`authToken`）は
+      # 小文字化して区切りの無い綴りで当たる。⚠ `pwd` はここにだけ在る — Zoom の参加 URL の
+      # パスコード（`/j/123?pwd=…`）で、クエリでは作業ディレクトリの意味にならない。
       MASK_QUERY_PARAMS = [
         '__token__',
         'access-token',
         'access_token',
         'accesstoken',
         'api-key',
+        'api-token',
         'api_key',
         'api_token',
         'apikey',
+        'apitoken',
         'auth',
+        'auth-token',
+        'auth_token',
         'authorization',
+        'authtoken',
         'client_secret',
         'code',
         'hdnts',
@@ -118,7 +127,10 @@ module Ginseng
         'jwt',
         'key',
         'password',
+        'private-token',
         'private_token',
+        'privatetoken',
+        'pwd',
         'q-signature',
         'refresh_token',
         'secret',

@@ -2,9 +2,13 @@
 
 module Ginseng
   class HTTP
-    # host_validator を渡されたときの経路。リダイレクトを自前で追い、
+    # リダイレクトを自前で追う経路。host_validator を渡されたときは、
     # **ホップごとに**ホストを検証して pinning する (mulukhiya-toot-proxy#4410 /
     # #4524)。
+    #
+    # ⚠⚠ **6.0.0 から、validator を渡さない要求もここを通る (#655)。** 以前は HTTParty に
+    # 追わせていて、1 段目の `Set-Cookie` が別ホストの 2 段目へ送られていた。
+    # ⚠ module の名前は経緯のまま。validator は nil でよい。
     #
     # ⚠ **HTTP 本体から切り出してあるが、置き場所に強い理由は無い。**
     # ByteLimitMethods と同じく Metrics/ClassLength に収めるための分割。
@@ -18,8 +22,8 @@ module Ginseng
       # 変わることになる。
       KEEP_METHOD_STATUSES = [307, 308].freeze
 
-      # ⚠⚠ **HEAD は GET に化けさせない。** HTTParty は化けさせるが、ここは
-      # 従来から HEAD のまま追っており、テストもそれを見ている。
+      # ⚠⚠ **HEAD は GET に化けさせない。** ⚠ HTTParty も HEAD のまま追う（実測で 2 段目は
+      # HEAD だった。2026-11-07・httparty 0.24.3）。
       # 🔴 **`#head` はサイズのプリフライトに使われる** (mulukhiya-toot-proxy#4523)
       # ので、リダイレクトの先で GET に化けると**本文を丸ごと取ってしまい、
       # プリフライトの意味が消える**（max_bytes も効かせられない）。
@@ -49,8 +53,8 @@ module Ginseng
         (limit + 1).times do
           response = request_hop(method, uri, options, validator, max_bytes)
           location = redirect_location(response)
-          # ⚠ **追わないと言われていたら 3xx をそのまま返す。** validator を渡さない
-          # 経路（HTTParty に任せる側）と同じ形にする — 3xx を落とすかどうかは
+          # ⚠ **追わないと言われていたら 3xx をそのまま返す。** 5.x まで validator を渡さない
+          # 経路（HTTParty に任せていた側）と同じ形 — 3xx を落とすかどうかは
           # 呼び出し側（`RedirectGuard#guard_response`）が決める。
           return response unless follow && location
           uri = create_uri(::URI.join(uri.to_s, location).to_s)
@@ -74,8 +78,10 @@ module Ginseng
         # ⚠ **`quiet_statuses` は options に載せたままホップを渡り歩く (#672)。**
         # 取り出すのはここだけ（HTTParty へは渡さない）。リダイレクト先の答えにも効く。
         quiet = options[:quiet_statuses]
-        hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses),
-          validate_host!(uri, validator))
+        # ⚠ **validator が無ければ検証も pinning もしない (#655)。** 既定の経路もここを
+        # 通るようになったが、ホストの判断は持ち込まない（追い方と資格情報の落とし方だけ揃える）。
+        address = validator ? validate_host!(uri, validator) : nil
+        hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses), address)
         return repeat(method, uri, start = Time.now, quiet:) do
           response = execute(method, uri, hop_options, max_bytes)
           # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が

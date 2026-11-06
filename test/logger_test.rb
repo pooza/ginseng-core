@@ -125,6 +125,15 @@ module Ginseng
       'api_token' => 'https://h.example/api?a=AKIDEXAMPLE&api_token=SECRET',
       'access-token' => 'https://h.example/api?a=AKIDEXAMPLE&access-token=SECRET',
       'accesstoken' => 'https://h.example/api?a=AKIDEXAMPLE&accessToken=SECRET',
+      # ⚠ #738 で足した名前（6.0.0）。camelCase は小文字化して当たる。
+      'api-token' => 'https://h.example/api?a=AKIDEXAMPLE&api-token=SECRET',
+      'apitoken' => 'https://h.example/api?a=AKIDEXAMPLE&apiToken=SECRET',
+      'auth-token' => 'https://h.example/api?a=AKIDEXAMPLE&auth-token=SECRET',
+      'auth_token' => 'https://h.example/api?a=AKIDEXAMPLE&auth_token=SECRET',
+      'authtoken' => 'https://h.example/api?a=AKIDEXAMPLE&authToken=SECRET',
+      'private-token' => 'https://gitlab.example/api?a=AKIDEXAMPLE&private-token=SECRET',
+      'privatetoken' => 'https://h.example/api?a=AKIDEXAMPLE&privateToken=SECRET',
+      'pwd' => 'https://zoom.example/j/123?a=AKIDEXAMPLE&pwd=SECRET',
       # ⚠ #701 で足した名前。Alibaba OSS / Tencent COS / Akamai / ほか。
       'x-oss-signature' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-signature=SECRET',
       'x-oss-security-token' => 'https://b.oss-cn-hangzhou.aliyuncs.com/a.png?OSSAccessKeyId=AKIDEXAMPLE&x-oss-security-token=SECRET',
