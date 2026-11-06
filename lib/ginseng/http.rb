@@ -184,12 +184,12 @@ module Ginseng
     end
 
     # options[:host_validator] に「ホスト名を受けて真偽値を返す callable」を渡すと、
-    # リダイレクトを自前で追い、**各ホップのホストを検証**する。
+    # **各ホップのホストを検証**する。⚠ リダイレクトは渡さなくても自前で追う (#655)。
     #
-    # HTTParty は既定でリダイレクトを追従するため、呼び出し側で初段のホストだけ
-    # 検証しても、リダイレクト先は素通りになり "見せかけの安全" にしかならない
-    # (mulukhiya-toot-proxy#4410)。かといって follow_redirects: false で一律に
-    # 追従を切ると、正規に 302 を返す相手（Google Apps Script 等）が壊れる。
+    # 呼び出し側で初段のホストだけ検証しても、リダイレクト先は素通りになり
+    # "見せかけの安全" にしかならない (mulukhiya-toot-proxy#4410)。かといって
+    # follow_redirects: false で一律に追従を切ると、正規に 302 を返す相手
+    # （Google Apps Script 等）が壊れる。
     def get(uri, options = {})
       return request(:get, uri, options)
     end
@@ -236,16 +236,10 @@ module Ginseng
       # が `delete` なのは**先に `options.dup` しているから**で、こちらは dup して
       # いない（`upload_options` が別の hash を組む）。⚠ 揃えようとして `delete` に
       # すると**呼び出し側の hash から validator が消える** — #528 で踏んだ形。
-      if validator = options[:host_validator]
-        # ⚠ `upload_options` は hash を組み直すので、ここで写す (#672)。
-        hop_options = hop_options.merge(options.slice(:quiet_statuses))
-        return request_validating_hops(method, uri, hop_options, validator)
-      end
-      start = Time.now
-      response = HTTParty.public_send(method, uri.normalize, hop_options)
-      log(method:, multipart: true, url: uri, status: response.code, start:)
-      bad_response!(response) unless response.code < 400
-      return response
+      # ⚠ `upload_options` は hash を組み直すので、ここで写す (#672)。
+      hop_options = hop_options.merge(options.slice(:quiet_statuses))
+      # ⚠⚠ **validator が無くても自前で追う (#655)。** → `request`
+      return request_validating_hops(method, uri, hop_options, options[:host_validator])
     end
 
     private
@@ -284,17 +278,9 @@ module Ginseng
       # 🔴 **初段すら検証せずリダイレクトを追い、リンクローカルまで到達した**
       # （webmock で実測）。⚠ 黙って無視するのが最悪で、呼び出し側は「渡した
       # つもりで無検証」になる — `#head` のコメントが言っているのと同じ形。
-      if validator = options.delete(:host_validator)
-        return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
-      end
-      # ⚠ **HTTParty へは渡さない (#672)。** → `quiet_failure?`
-      quiet = options.delete(:quiet_statuses)
-      repeat(method, uri = create_uri(uri), start = Time.now, quiet:) do
-        response = execute(method, uri, options, max_bytes)
-        log(method:, url: uri, status: response.code, start:)
-        bad_response!(response) unless response.code < 400
-        return response
-      end
+      # ⚠⚠ **validator が無くても自前で追う (#655)。** → `request`
+      validator = options.delete(:host_validator)
+      return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
     end
 
     # host_validator を持たない冪等メソッド（GET / HEAD）の共通経路。
@@ -314,17 +300,19 @@ module Ginseng
       options[:headers]['User-Agent'] ||= user_agent
       options[:timeout] ||= timeout
       max_bytes = options.delete(:max_bytes)
-      if validator = options.delete(:host_validator)
-        return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
-      end
-      # ⚠ **HTTParty へは渡さない (#672)。** → `quiet_failure?`
-      quiet = options.delete(:quiet_statuses)
-      repeat(method, uri = create_uri(uri), start = Time.now, quiet:) do
-        response = execute(method, uri, options, max_bytes)
-        log(method:, url: uri, status: response.code, start:)
-        bad_response!(response) unless response.code < 400
-        return response
-      end
+      # 🔴🔴 **validator が無くても、リダイレクトは HTTParty に任せず自前で追う (#655)。**
+      # ⚠⚠ HTTParty の `capture_cookies` は**1 段目の応答の `Set-Cookie` を次のホップの
+      # `Cookie` に積み**、ホストが変わっても落とさない — 実測で、**別ホストの 2 段目へ
+      # 1 段目の cookie が届いた**。上流が別ホストで外すのは `Authorization` と
+      # `basic_auth` だけで、`X-Api-Key` のような名前のヘッダや `cookies:` も素通りする。
+      # ⚠ validator を渡した経路は、オリジンをまたいだら資格情報を落としていた
+      # （`redirect_options`。#527 / #568 / #576）ので、**既定の経路をそれに揃えた**。
+      # ⚠⚠ **変わったこと（6.0.0）:** ホップごとにログが 1 行出る／途中の `Set-Cookie` は
+      # 次のホップへ持ち越さない（同じオリジンでも）／上限は `MAX_REDIRECTS`
+      # （`max_redirects:` で変えられる。HTTParty の既定は 5）で、超えたら `GatewayError`／
+      # 再送はホップごと。⚠ HEAD は HEAD のまま追う（HTTParty も同じ。実測）。
+      validator = options.delete(:host_validator)
+      return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
     end
 
     # 上流のレスポンスを添えて GatewayError を投げる。

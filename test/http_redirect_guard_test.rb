@@ -255,13 +255,17 @@ module Ginseng
     # 🔴🔴 **ガードが無ければ 2 段目へ届くことを測る。** ⚠⚠ これが落ちないと、上の
     # assert が「ガードのおかげ」なのか「HTTParty がもともと追わないから」なのかを
     # 区別できない（pooza/ginseng-style のメモにある「緑は守っている証拠にならない」）。
-    def test_without_the_guard_the_credential_reaches_the_second_hop
+    # ⚠⚠ **6.0.0 から、届くのは本文だけ (#655)。** 既定の経路も自前で追うので、オリジンを
+    # またいだら `Authorization` は落ちる。🔴 それでも本文は 307 で別ホストへ撃ち直される
+    # ので、**本文の資格情報を止めているのはガード**のまま。
+    def test_without_the_guard_the_body_reaches_the_second_hop
       redirect(:post, 307)
       bare = HTTP.new
       bare.base_uri = ORIGIN
       bare.post('/api', {body: {status: '本文'}, headers: {'Authorization' => 'Bearer secret'}})
 
-      assert_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
+      assert_requested(:post, ELSEWHERE, body: {status: '本文'}.to_json)
+      assert_not_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
     end
 
     # 🔴🔴 **`host_validator` を渡した経路でも効くこと (#653 Codex P1)。**
@@ -379,6 +383,20 @@ module Ginseng
         assert_raise(GatewayError, "#{name} が素通りした") do
           @http.get('/api', {headers: {name => 'secret'}})
         end
+        assert_not_requested(:get, ELSEWHERE)
+      end
+    end
+
+    # 🔴 **クエリの近い名前も資格情報 (#738・6.0.0)。** ⚠ 一覧は `Masking` と共有しているので、
+    # マスクに足した名前はここでも「追わない」になる（major にした理由）。
+    def test_near_credential_query_names_are_detected
+      ['api-token', 'apiToken', 'auth-token', 'auth_token', 'authToken', 'private-token', 'privateToken', 'pwd'].each do |name|
+        WebMock.reset!
+        stub_request(:get, @url).with(query: {name => 'secret'})
+          .to_return(status: 302, headers: {'Location' => ELSEWHERE})
+        stub_request(:get, ELSEWHERE).to_return(status: 200)
+
+        assert_raise(GatewayError, "#{name} が素通りした") {@http.get("/api?#{name}=secret")}
         assert_not_requested(:get, ELSEWHERE)
       end
     end
@@ -512,7 +530,8 @@ module Ginseng
       assert_not_requested(:post, ELSEWHERE)
     end
 
-    # 🔴 **ガードが無ければ添付ごと 2 段目へ届くことを測る。**
+    # 🔴 **ガードが無ければ添付が 2 段目へ届くことを測る。** ⚠ 6.0.0 から `Authorization` は
+    # オリジンをまたいだ時点で落ちる (#655)。
     def test_without_the_guard_the_upload_reaches_the_second_hop
       stub_request(:post, @url).to_return(status: 307, headers: {'Location' => ELSEWHERE})
       stub_request(:post, ELSEWHERE).to_return(status: 200)
@@ -520,7 +539,8 @@ module Ginseng
       bare.base_uri = ORIGIN
       bare.upload('/api', image, {headers: {'Authorization' => 'Bearer secret'}})
 
-      assert_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
+      assert_requested(:post, ELSEWHERE)
+      assert_not_requested(:post, ELSEWHERE, headers: {'Authorization' => 'Bearer secret'})
     end
 
     # 🔴🔴 **利用側が `/logger/mask_query_params` に足した名前でも効くこと
