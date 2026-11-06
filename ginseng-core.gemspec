@@ -46,7 +46,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'httparty', '>=0.24.0' # CVE-2025-68696
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail', '>=2.5.5' # CVE-2011-0739, CVE-2012-2139, CVE-2012-2140, CVE-2015-9097
-  spec.add_dependency 'multi_json'
   spec.add_dependency 'net-protocol'
   spec.add_dependency 'net-smtp'
   # ⚠ 1.19.4 の required_ruby_version は `>= 3.2` で、この gem の `>=3.3` より

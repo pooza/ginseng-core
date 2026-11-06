@@ -114,7 +114,14 @@ module Ginseng
   #
   # 非文字列は素通しする。型の誤りは type が報告する担当で、ここで二重に鳴らすと
   # 1 つの誤りが 2 行のエラーになる。
+  #
+  # ⚠ **MultiJSON は使わない (#739)。** json-schema は `multi_json` が入っているだけで
+  # MultiJSON 経由になり、検証のたびに非推奨の警告を標準エラーへ出す（schema を Hash で
+  # 渡すと、キャッシュの鍵を作る `serialize` が必ずそこを通る）。⚠ gemspec から
+  # `multi_json` を外すだけでは足りない — 利用側の別の gem が引けば、また有効になる。
+  # 切ったあとは yajl が入っていれば yajl、無ければ json で読み書きする。
   def self.setup_json_schema
+    JSON::Validator.use_multi_json = false
     JSON::Validator.register_format_validator('uri', proc {|value|
       next unless value.is_a?(String)
       uri = begin

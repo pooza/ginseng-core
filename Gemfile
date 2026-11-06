@@ -5,6 +5,9 @@ gemspec
 
 group :development do
   gem 'pp'
+  # ⚠ この gem は依存に持たない (#739)。利用側で別の gem が引いたときと同じ状態を
+  # 作り、`use_multi_json = false` を外すとテストが落ちるようにするため。
+  gem 'multi_json', require: false
   gem 'ricecream'
   gem 'test-unit'
   gem 'timecop'
