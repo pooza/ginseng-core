@@ -38,6 +38,9 @@ module Ginseng
       # 以降の start が開けなくなる。
       PID_LOCK_REMOVE_FLAGS = PID_LOCK_OPEN_FLAGS & ~File::CREAT
 
+      # pid ファイルを消すときに、ロックを取り直す回数 (#752)。⚠ 間隔は `pid_lock_remove_interval`。
+      PID_LOCK_REMOVE_ATTEMPTS = 5
+
       # 旧版（1.24.0 まで）と排他を合わせるために、既存の pid ファイルへ `flock` を取るときの旗
       # (#643 Codex P1 → `with_old_pid_lock`)。⚠ **書かない**（`O_TRUNC` も無い）。
       # `RDWR` にするのは NFS のため（`PID_LOCK_OPEN_FLAGS` と同じ理由）。
@@ -157,16 +160,33 @@ module Ginseng
       #
       # ⚠⚠ **start と違い abort しない。** `trap` の中や `stop` の後始末から呼ばれる。
       # ⚠ **`LOCK_NB` で待たない**（`lock_pid_file`）。`trap` の中で待つと止まる。
+      # ⚠ 代わりに、短い間隔で `PID_LOCK_REMOVE_ATTEMPTS` 回まで取り直す（6.1.1 のリリース前レビュー）。
+      # 相手（止める側か常駐側の trap）がロックを握るのは読んで消すあいだだけなので、たいてい次で取れる。
+      # ⚠ 同じプロセスの中で握っている（起動失敗の後始末の最中に TERM が来た）ときは、何回待っても取れない。
       # ⚠ ロックを使えないとき（開けない・通常ファイルでない・`flock` が失敗する）は、
       # **ロックなしで走らせる**（従来どおり）。新版の start はその状態では起動しないので、
       # 置き換える相手が居ない。🔴 例外: ロック専用ファイルがまだ無い（旧版から上げた直後の
       # 初回）ときは、開けなかった直後に新版の start が作って取る窓が残る。
-      def with_pid_lock_for_removal
+      def with_pid_lock_for_removal(&)
+        PID_LOCK_REMOVE_ATTEMPTS.times do |i|
+          sleep(pid_lock_remove_interval) if i.positive?
+          outcome = try_pid_lock_for_removal(&)
+          return outcome unless outcome == :busy
+        end
+        return :busy
+      end
+
+      def try_pid_lock_for_removal
         lock = open_pid_lock_file_for_removal
         return :busy if lock && removal_lock_state(lock) == :busy
         return yield
       ensure
         lock&.close
+      end
+
+      # 取り直すまでの秒数 (#752)。⚠ テストのための継ぎ目でもある。
+      def pid_lock_remove_interval
+        return 0.01
       end
 
       def open_pid_lock_file_for_removal

@@ -185,7 +185,8 @@ module Ginseng
         abort_invalid_pid_file!(stat) if stat && !stat.file?
         return with_old_pid_lock(stat) do
           # ⚠⚠ **判断のあいだに中身が変わっていたら置き換えない。** ロックを取らない
-          # 書き手が居る — `remove_pid` と、旧版の start（→ `with_old_pid_lock`）。
+          # 書き手が居る — 旧版の start（→ `with_old_pid_lock`）と旧版の stop、ロックを使えずに
+          # 従来どおり消す `remove_pid`（→ `with_pid_lock_for_removal`。#752）。
           # 置き換えると、その 1 本を孤児にする。⚠ 読み直すのは旧版のロックを取ってから。
           # 🔴 **読み直しが読めなかったときも「変わった」に数える**（リリース前レビュー）。
           # `read_pid_file` は「無い」も「読めない」も nil なので、比べるだけだと
@@ -429,8 +430,19 @@ module Ginseng
       def remove_pid(expected = nil)
         return FileUtils.rm_f(pid_file) if expected.nil?
         outcome = with_pid_lock_for_removal {remove_pid_unless_replaced(expected)}
-        report_pid_lock_busy(expected) if outcome == :busy
+        report_pid_lock_busy(expected) if outcome == :busy && pid_file_left?(expected)
         return nil
+      end
+
+      # 取れなかったあとで、pid ファイルがまだ `expected` のまま残っているか (#752)。
+      #
+      # 🔴 **相手が消したなら黙る（6.1.1 のリリース前レビュー）。** ふつうの `stop` でも、止める側の
+      # `remove_pid` と常駐側の trap の `remove_pid` は重なる。片方が `:busy` になっても、もう片方が
+      # 消しているので**正常な停止**で、鳴らすと誤報になる（#637 と同じ理由）。⚠ 実プロセス 300 回で
+      # 15 回鳴っていた（取り直しを入れる前）。⚠ 別の番号（後継）も黙る。読めないまま残っていれば鳴らす。
+      def pid_file_left?(expected)
+        found = pid
+        return found == expected || (found.nil? && pid_file_present?)
       end
 
       def remove_pid_unless_replaced(expected)
@@ -456,7 +468,9 @@ module Ginseng
       end
 
       # ⚠ **消さなかったことを残す (#752)。** 残った pid ファイルは、中のプロセスが死ねば
-      # 次の start が古いものとして置き換えるので、起動は阻まない。
+      # 次の start が古いものとして置き換える。⚠ ただし番号が再利用されると、`process_pattern` を
+      # 宣言していない利用側では `already running` で止まり、`stop` は無関係なプロセスへ送りうる
+      # （異常終了で残った pid ファイルと同じ危険。→ #637 / #673）。
       def report_pid_lock_busy(expected)
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'pid file left behind', reason: 'pid lock busy', expected:, pid_file:)
