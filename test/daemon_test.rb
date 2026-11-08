@@ -1502,6 +1502,96 @@ module Ginseng
       assert_equal(lock.ino, File.stat(daemon.pid_lock_file).ino, '同じ inode のまま残ること')
     end
 
+    # 別の fd でロック専用ファイルを握る（並行する start の代わり）。⚠ `flock` は開いた
+    # ファイルごとなので、同じプロセスでも別の fd なら排他になる。
+    def hold_pid_lock(daemon)
+      File.open(daemon.pid_lock_file, File::RDWR | File::CREAT, 0o600) do |lock|
+        # ⚠ `flock` は取れたら `0`、取れなければ `false`（`true` ではない）。
+        assert_equal(0, lock.flock(File::LOCK_EX | File::LOCK_NB))
+        yield
+      end
+    end
+
+    # 🔴🔴 **読んでから消すまでを、start と同じロックの中で行う (#752)。** ロックの外だと、
+    # 読んだあと消すまでの間に並行する start が後継の pid ファイルを置き、それを消していた。
+    def test_remove_pid_reads_and_removes_under_the_pid_lock
+      daemon = create
+      daemon.send(:write_pid)
+      File.write(daemon.pid_file, unused_pid.to_s)
+      held = []
+      daemon.define_singleton_method(:remove_pid_unless_replaced) do |expected|
+        File.open(pid_lock_file, File::RDWR) do |other|
+          held.push(other.flock(File::LOCK_EX | File::LOCK_NB) == false)
+        end
+        next super(expected)
+      end
+
+      daemon.send(:run_stop)
+
+      assert_equal([true], held, '読む・比べる・消すのあいだ、ロックを握っていること')
+      assert_path_not_exist(daemon.pid_file)
+    end
+
+    # ⚠⚠ **取れなければ消さずに、残したことを warn で残す (#752)。** 🔴 消すと、並行する
+    # start が置いた後継の pid ファイルかもしれないものを消す。⚠ 待たない（`trap` の中から呼ばれる）。
+    def test_remove_pid_keeps_the_pid_file_while_the_lock_is_busy
+      daemon = create(pid: unused_pid)
+
+      hold_pid_lock(daemon) do
+        assert_nothing_raised {daemon.send(:run_stop)}
+      end
+
+      assert_path_exist(daemon.pid_file, 'ロックを取れないあいだは消さないこと')
+      log = daemon.logs.find {|_, message| message[:reason] == 'pid lock busy'}
+
+      assert_not_nil(log, '消さなかったことを残すこと')
+      assert_equal(:warn, log.first)
+    end
+
+    # ⚠ **取れたあとでパスが別の inode を指していたら、取れなかったと読む (#752)。**
+    # 消されたあとに作り直された inode で、別の start が判断しうる（`acquire_pid_lock` と同じ理由）。
+    def test_remove_pid_does_not_remove_under_a_removed_lock
+      daemon = create
+      daemon.send(:write_pid)
+      File.write(daemon.pid_file, unused_pid.to_s)
+      daemon.define_singleton_method(:lock_pid_file) do |file|
+        locked = super(file)
+        File.unlink(pid_lock_file)
+        next locked
+      end
+
+      daemon.send(:run_stop)
+
+      assert_path_exist(daemon.pid_file, '消されたロックの下では消さないこと')
+      assert(daemon.logs.any? {|_, message| message[:reason] == 'pid lock busy'})
+    end
+
+    # ⚠⚠ **ロック専用ファイルを作らない (#752)。** 🔴 別ユーザー（root の `stop` など）が作ると
+    # `0600` で持ち主が変わり、以降の start が開けなくなる。⚠ 無ければロックなしで従来どおり消す。
+    def test_remove_pid_does_not_create_the_pid_lock_file
+      daemon = create(pid: unused_pid)
+      FileUtils.rm_f(daemon.pid_lock_file)
+
+      daemon.send(:run_stop)
+
+      assert_path_not_exist(daemon.pid_file, '従来どおり消すこと')
+      assert_path_not_exist(daemon.pid_lock_file, 'ロック専用ファイルを作らないこと')
+    end
+
+    # ⚠ **ロックを掛けられないときも、ロックなしで従来どおり消す (#752)。** 新版の start は
+    # その状態では起動しない（`acquire_pid_lock` が止める）ので、置き換える相手が居ない。
+    # 🔴 ここで abort すると、`trap` の中の後始末が例外で抜ける。
+    def test_remove_pid_falls_back_when_the_lock_cannot_be_taken
+      daemon = create(pid: unused_pid)
+      daemon.send(:write_pid)
+      File.write(daemon.pid_file, unused_pid.to_s)
+      daemon.define_singleton_method(:lock_pid_file) {|_file| raise Errno::ENOLCK, 'flock'}
+
+      assert_nothing_raised {daemon.send(:run_stop)}
+
+      assert_path_not_exist(daemon.pid_file)
+    end
+
     # 🔴🔴 **ロック専用ファイルの位置の symlink を辿らない (#643)。**
     # ⚠ 辿ると `O_CREAT` が**リンク先にファイルを作る**。
     def test_write_pid_does_not_follow_a_symlinked_lock_file

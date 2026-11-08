@@ -33,6 +33,11 @@ module Ginseng
       PID_LOCK_OPEN_FLAGS = File::RDWR | File::CREAT | NOFOLLOW_FLAG |
         (defined?(File::NONBLOCK) ? File::NONBLOCK : 0)
 
+      # pid ファイルを消すときにロック専用ファイルを開く旗 (#752)。
+      # ⚠⚠ **`O_CREAT` を外す。** 別ユーザー（root の `stop` など）が作ると `0600` で持ち主が変わり、
+      # 以降の start が開けなくなる。
+      PID_LOCK_REMOVE_FLAGS = PID_LOCK_OPEN_FLAGS & ~File::CREAT
+
       # 旧版（1.24.0 まで）と排他を合わせるために、既存の pid ファイルへ `flock` を取るときの旗
       # (#643 Codex P1 → `with_old_pid_lock`)。⚠ **書かない**（`O_TRUNC` も無い）。
       # `RDWR` にするのは NFS のため（`PID_LOCK_OPEN_FLAGS` と同じ理由）。
@@ -145,6 +150,41 @@ module Ginseng
         ensure
           lock.close
         end
+      end
+
+      # pid ファイルを消すあいだ、start と排他を取る (#752)。ブロックの結果を返し、
+      # 取れなければブロックを走らせずに `:busy` を返す。
+      #
+      # ⚠⚠ **start と違い abort しない。** `trap` の中や `stop` の後始末から呼ばれる。
+      # ⚠ **`LOCK_NB` で待たない**（`lock_pid_file`）。`trap` の中で待つと止まる。
+      # ⚠ ロックを使えないとき（開けない・通常ファイルでない・`flock` が失敗する）は、
+      # **ロックなしで走らせる**（従来どおり）。新版の start はその状態では起動しないので、
+      # 置き換える相手が居ない。🔴 例外: ロック専用ファイルがまだ無い（旧版から上げた直後の
+      # 初回）ときは、開けなかった直後に新版の start が作って取る窓が残る。
+      def with_pid_lock_for_removal
+        lock = open_pid_lock_file_for_removal
+        return :busy if lock && removal_lock_state(lock) == :busy
+        return yield
+      ensure
+        lock&.close
+      end
+
+      def open_pid_lock_file_for_removal
+        return File.open(pid_lock_file, PID_LOCK_REMOVE_FLAGS)
+      rescue SystemCallError
+        return nil
+      end
+
+      # `:locked` / `:busy` / `:none`（start も起動できない形なので、ロックなしでよい）。
+      # ⚠ 取れたあとでパスが別の inode を指していたら `:busy`（`acquire_pid_lock` と同じ理由。
+      # 消されたあとに作り直した inode で、別の start が判断しうる）。
+      def removal_lock_state(lock)
+        stat = lock.stat
+        return :none unless stat.file?
+        return :busy unless lock_pid_file(lock)
+        return same_pid_lock_file?(stat) ? :locked : :busy
+      rescue SystemCallError
+        return :none
       end
 
       # ⚠⚠ **ロックを取れたあとで、そのパスがまだ同じ inode を指しているか確かめる**

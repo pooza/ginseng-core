@@ -422,10 +422,18 @@ module Ginseng
       # ファイルからも辿れなくなり、次の `start` が 2 本目を立てる — #509 で塞いだ
       # 「停止コマンド自身が孤児を作る」の、別のレースとしての再現。
       #
-      # ⚠ **読んでから消すまでの隙間は残る。** 完全に閉じるには削除の責任を 1
-      # プロセスへ寄せる必要があり、それは別の設計判断（#532 に記録）。
+      # 🔴 **読んでから消すまでを、start と同じロックの中で行う (#752)。** ロックの外だと、
+      # 読んだあと消すまでの間に並行する start が後継の pid ファイルを置き、それを消していた。
+      # ⚠ 取れなければ**消さずに** warn を 1 行（→ `with_pid_lock_for_removal`）。
+      # ⚠ 旧版（1.24.0 まで）の start はロック専用ファイルを見ないので、移行期の窓は残る（#678）。
       def remove_pid(expected = nil)
         return FileUtils.rm_f(pid_file) if expected.nil?
+        outcome = with_pid_lock_for_removal {remove_pid_unless_replaced(expected)}
+        report_pid_lock_busy(expected) if outcome == :busy
+        return nil
+      end
+
+      def remove_pid_unless_replaced(expected)
         found = pid
         return FileUtils.rm_f(pid_file) if found == expected
         # 🔴🔴 **読めなかったときにだけ残す (#637)。** ⚠ 別の番号が入っているのは
@@ -445,6 +453,13 @@ module Ginseng
       def report_pid_file_left(expected)
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'pid file left behind', expected:, pid_file:)
+      end
+
+      # ⚠ **消さなかったことを残す (#752)。** 残った pid ファイルは、中のプロセスが死ねば
+      # 次の start が古いものとして置き換えるので、起動は阻まない。
+      def report_pid_lock_busy(expected)
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'pid file left behind', reason: 'pid lock busy', expected:, pid_file:)
       end
 
       # 生きてはいるが、利用側が「うちの常駐ではない」と答えた番号か (#673)。
