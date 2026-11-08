@@ -90,11 +90,12 @@ module Ginseng
         return timeout.is_a?(Numeric) && timeout.positive?
       end
 
-      def capture_until(timeout)
+      # ⚠ `sink` は `exec(io:)` の流し先（→ `Stream`）。nil なら流さない。
+      def capture_until(timeout, sink = nil)
         deadline = monotonic + timeout
         child = nil
         uninterruptible {child = spawn_group}
-        readers = child.pipes.map {|io| reader(io)}
+        readers = child.pipes.map {|io| reader(io, sink)}
         unless await(child, readers, deadline)
           terminate(child, readers)
           expire!(child, readers, timeout)
@@ -123,8 +124,11 @@ module Ginseng
       # 🔴 **中断可能へ戻してから読む。** ⚠⚠ 呼び出し側が中断不可の区間から `exec` を呼ぶと、
       # 読み手がそれを引き継いで `kill` が効かなくなり、パイプを閉じる側が読み手を待って、
       # **止められなかった相手が終わるまで戻らない**（実測: 上限 3.3 秒のはずが 8.7 秒）。
-      def reader(io)
-        return Thread.new {Thread.handle_interrupt(Object => :immediate) {io.read}}
+      # ⚠ 流し先があれば 1 行ずつ流す（→ `Stream#drain`）。締切で止められたら、それまでに流した分は
+      # 流し先に残る。
+      # `stdout` / `stderr` の扱いは流さないときと同じ（→ `expire!`）。
+      def reader(io, sink = nil)
+        return Thread.new {Thread.handle_interrupt(Object => :immediate) {drain(io, sink)}}
       end
 
       # ⚠⚠ **プロセスグループごと起こす。** `to_s` はシェルを経由しうるので、子の番号だけに
