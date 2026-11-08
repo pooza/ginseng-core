@@ -169,7 +169,7 @@ module Ginseng
     # ⚠ **0 と nil は「締切なし」。** 負の数は従来どおり `Timeout.timeout` の `ArgumentError`。
     # ⚠ 前の実行の結果は、始める前に消す（締切で抜けたときに、前回の成功が残らないように）。
     #
-    # 🔴 **`io:` を渡すと、実行しながら出力を 1 行ずつそこへ流す (#745)。** `write` を持つもの
+    # ⚠ **`io:` を渡すと、実行しながら出力を 1 行ずつそこへ流す (#745)。** `write` を持つもの
     # （`$stderr` など）。`stdout` / `stderr` は流さないときと同じ値を持つ。締切とも併せて使える。
     # ⚠ 流す行は `secrets=` の値を伏せる。詳細は `Stream`。
     def exec(timeout: nil, io: nil)

@@ -95,6 +95,7 @@ module Ginseng
         deadline = monotonic + timeout
         child = nil
         uninterruptible {child = spawn_group}
+        sink&.pid = child.pid
         readers = child.pipes.map {|io| reader(io, sink)}
         unless await(child, readers, deadline)
           terminate(child, readers)

@@ -85,6 +85,32 @@ module Ginseng
       assert_equal(plain[0].encoding, @command.stdout.encoding)
     end
 
+    # ⚠ ASCII だけの出力でも符号化が同じ（6.1.0 のリリース前レビュー）。⚠ `assert_equal` は ASCII だけの
+    # 文字列の符号化の違いを見ないので、符号化そのものを比べる。
+    def test_exec_keeps_the_encoding_of_ascii_output
+      @command.args = ['sh', '-c', 'echo out; echo err >&2']
+      @command.exec
+      plain = [@command.stdout.encoding, @command.stderr.encoding]
+      [{}, {timeout: 10}].each do |options|
+        @command.exec(io: Recorder.new, **options)
+
+        assert_equal(plain, [@command.stdout.encoding, @command.stderr.encoding], options.inspect)
+      end
+    end
+
+    # 🔴 **秘密があっても、伏せる手間で締切に掛からない（6.1.0 のリリース前レビュー）。** 行ごとに
+    # `masked` を呼んでいた形では、秘密 3 つ・30 万行で 8 秒を超え、流さなければすぐ終わるコマンドが
+    # 締切で止められた。
+    def test_exec_streams_many_lines_with_secrets_within_the_deadline
+      @command.secrets = ['s3cret', 'an0ther', 'th1rd-secret']
+      @command.args = ['sh', '-c', 'seq 1 300000; echo s3cret']
+      sink = Recorder.new
+
+      assert_equal(0, @command.exec(timeout: 4, io: sink))
+      assert_equal(300_001, sink.lines.size)
+      assert_equal("#{Masking::FILTERED}\n", sink.lines.last)
+    end
+
     # ⚠⚠ 両方のパイプを同時に読むこと。片方ずつだと、stderr が埋まった時点で止まる。
     def test_exec_streams_large_stderr_without_deadlock
       @command.args = ['sh', '-c', 'head -c 300000 /dev/zero | tr "\\0" a >&2; echo ok']
@@ -149,6 +175,32 @@ module Ginseng
       assert_equal(1, sink.calls)
       assert_equal(1, warned.size)
       assert_equal('Errno::EPIPE', warned.first[:error])
+      assert_equal(@command.pid, warned.first[:pid])
+    end
+
+    # ⚠ 締切の経路でも、warn に pid が出る。
+    def test_exec_with_timeout_tells_the_pid_when_the_sink_breaks
+      logger = Logger.new
+      warned = []
+      logger.define_singleton_method(:warn) {|message = nil| warned.push(message)}
+      @command.instance_variable_set(:@logger, logger)
+      @command.args = ['sh', '-c', 'echo 1; echo 2']
+
+      assert_equal(0, @command.exec(timeout: 10, io: BrokenSink.new))
+      assert_equal("1\n2\n", @command.stdout)
+      assert_equal([@command.pid], warned.map {|v| v[:pid]})
+    end
+
+    # ⚠ warn を出す logger が例外を上げても、コマンドも受け取りも止めない（6.1.0 のリリース前レビュー）。
+    def test_exec_survives_a_logger_that_raises
+      logger = Logger.new
+      logger.define_singleton_method(:warn) {|_message = nil| raise IOError, 'syslog is gone'}
+      @command.instance_variable_set(:@logger, logger)
+      @command.args = ['sh', '-c', 'echo 1; echo 2']
+      [{}, {timeout: 10}].each do |options|
+        assert_equal(0, @command.exec(io: BrokenSink.new, **options), options.inspect)
+        assert_equal("1\n2\n", @command.stdout, options.inspect)
+      end
     end
 
     # 🔴 流し先が書けない文字でも同じ (#746 Codex P2)。`EncodingError` は `IOError` の仲間ではない。
