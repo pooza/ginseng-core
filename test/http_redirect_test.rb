@@ -204,8 +204,6 @@ module Ginseng
       assert_equal([[@url, 302], [ELSEWHERE, 200]], logged.map {|v| [v[:url], v[:status]]})
     end
 
-    # ⚠ **HEAD は HEAD のまま追う**（`SAFE_METHODS`）。⚠ HTTParty も HEAD のまま追う（実測）ので、
-    # 5.x から変わっていないことの固定。🔴 GET に化けると、サイズのプリフライトが本文を丸ごと取る。
     # 🔴🔴 **2 段目以降のホップの URL は、クエリとフラグメントを落として行に出す (#717)。**
     # ⚠⚠ 相手が選んだ URL は、伏せる一覧に無い名前の資格情報を運ぶ（OAuth 1.0a・CAS・
     # Google Apps Script の 302 先）。6.0.0 からホップごとの行に平文で出ていた。
@@ -260,6 +258,8 @@ module Ginseng
       assert_equal([[:too_many_redirects, ELSEWHERE]], logged.map {|v| [v[:gave_up], v[:url]]})
     end
 
+    # ⚠ **HEAD は HEAD のまま追う**（`SAFE_METHODS`）。⚠ HTTParty も HEAD のまま追う（実測）ので、
+    # 5.x から変わっていないことの固定。🔴 GET に化けると、サイズのプリフライトが本文を丸ごと取る。
     def test_head_stays_head
       stub_request(:head, @url).to_return(status: 302, headers: {'Location' => ELSEWHERE})
       stub_request(:head, ELSEWHERE).to_return(status: 200)

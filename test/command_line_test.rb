@@ -1105,6 +1105,8 @@ module Ginseng
       {
         exec: proc {@command.exec},
         exec_with_timeout: proc {@command.exec(timeout: 10)},
+        exec_with_io: proc {@command.exec(io: StringIO.new)},
+        exec_with_io_and_timeout: proc {@command.exec(io: StringIO.new, timeout: 10)},
         exec_system: proc {@command.exec_system},
       }.each do |name, run|
         Tempfile.create('ginseng_708') do |file|
