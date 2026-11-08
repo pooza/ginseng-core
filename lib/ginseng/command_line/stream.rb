@@ -18,6 +18,11 @@ module Ginseng
     #   warn を 1 行残す。出力は最後まで読む（`stdout` / `stderr` は欠けない）
     module Stream
       # 流し先。2 本の読み手から書かれるので、1 行ずつ排他で書く。
+      #
+      # 🔴 **流し先の例外は種類を問わず受ける (#746 Codex P2)。** `IOError` / `SystemCallError` だけを
+      # 受けていたので、流し先が書けない文字（`w:US-ASCII` のファイルに `あ`）で上がる
+      # `Encoding::UndefinedConversionError` が読み手を落とし、`exec` が例外になって `stdout` も
+      # 欠けた。⚠ 利用側が渡す流し先は任意のオブジェクトなので、何が上がるかはこちらで列挙できない。
       class Sink
         def initialize(io, &on_failure)
           @io = io
@@ -30,7 +35,7 @@ module Ginseng
           @lock.synchronize do
             return unless @live
             @io.write(line)
-          rescue IOError, SystemCallError => e
+          rescue => e
             @live = false
             @on_failure&.call(e)
           end

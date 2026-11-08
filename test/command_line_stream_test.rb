@@ -151,6 +151,20 @@ module Ginseng
       assert_equal('Errno::EPIPE', warned.first[:error])
     end
 
+    # 🔴 流し先が書けない文字でも同じ (#746 Codex P2)。`EncodingError` は `IOError` の仲間ではない。
+    def test_exec_keeps_reading_when_the_sink_cannot_encode
+      @command.args = ['sh', '-c', 'printf "ok\\n\\343\\201\\202\\nlast\\n"']
+      Tempfile.create('ginseng_746') do |file|
+        File.open(file.path, 'w:US-ASCII') do |sink|
+          assert_equal(0, @command.exec(io: sink))
+        end
+
+        assert_equal("ok\n", File.read(file.path))
+      end
+
+      assert_equal("ok\n\u3042\nlast\n", @command.stdout)
+    end
+
     # ⚠ 受け取る側で検査する。`write` を持たないものは、子を起こす前に拒む。
     def test_exec_rejects_io_without_write
       Tempfile.create('ginseng_745') do |file|
