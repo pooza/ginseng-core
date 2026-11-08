@@ -13,6 +13,9 @@ module Ginseng
     # ⚠ 締切つきの `exec` の中身は別ファイル (#684)。→ `Deadline`
     include Deadline
 
+    # ⚠ 実行しながら出力を流す `exec(io:)` の中身も別ファイル (#745)。→ `Stream`
+    include Stream
+
     # サブプロセスへ引き継がせない環境変数。詳細は child_env のコメント (#480)。
     UNSET_ENV_KEYS = ['RBENV_VERSION'].freeze
 
@@ -165,13 +168,18 @@ module Ginseng
     # ⚠ Windows はプロセスグループへのシグナルが使えないので、従来の形のまま（締切は効かない）。
     # ⚠ **0 と nil は「締切なし」。** 負の数は従来どおり `Timeout.timeout` の `ArgumentError`。
     # ⚠ 前の実行の結果は、始める前に消す（締切で抜けたときに、前回の成功が残らないように）。
-    def exec(timeout: nil)
+    #
+    # 🔴 **`io:` を渡すと、実行しながら出力を 1 行ずつそこへ流す (#745)。** `write` を持つもの
+    # （`$stderr` など）。`stdout` / `stderr` は流さないときと同じ値を持つ。締切とも併せて使える。
+    # ⚠ 流す行は `secrets=` の値を伏せる。詳細は `Stream`。
+    def exec(timeout: nil, io: nil)
+      sink = stream_sink(io)
       @stdout, @stderr, @status, @pid = nil
       secs = Time.elapse do
         if deadline?(timeout) && !environment_class.win?
-          capture_until(timeout)
+          capture_until(timeout, sink)
         else
-          block = proc {@stdout, @stderr, @status = Open3.capture3(*spawn_args, **spawn_options)}
+          block = proc {capture(sink)}
           timeout ? Timeout.timeout(timeout, &block) : block.call
         end
       end
@@ -228,6 +236,12 @@ module Ginseng
     end
 
     private
+
+    # ⚠ 流さないときは従来どおり `Open3.capture3`。
+    def capture(sink)
+      return capture_streaming(sink) if sink
+      @stdout, @stderr, @status = Open3.capture3(*spawn_args, **spawn_options)
+    end
 
     # 伏せる形を、**本文側の符号化に寄せてから**返す (#642 Codex P2)。
     #
