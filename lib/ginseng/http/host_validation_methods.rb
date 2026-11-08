@@ -53,14 +53,15 @@ module Ginseng
         options = options.merge(follow_redirects: false)
         limit = options.delete(:max_redirects) || MAX_REDIRECTS
         origin = origin_of(uri)
-        (limit + 1).times do
-          response = request_hop(method, uri, options, validator, max_bytes)
+        (limit + 1).times do |hop|
+          log_uri = hop_log_uri(uri, hop)
+          response = request_hop(method, uri, options.merge(log_uri:), validator, max_bytes)
           location = redirect_location(response)
           # ⚠ **追わないと言われていたら 3xx をそのまま返す。** 5.x まで validator を渡さない
           # 経路（HTTParty に任せていた側）と同じ形 — 3xx を落とすかどうかは
           # 呼び出し側（`RedirectGuard#guard_response`）が決める。
           return response unless follow && location
-          uri = redirect_uri(method, uri, location)
+          uri = redirect_uri(method, log_uri, uri, location)
           # ⚠ **メソッドはホップごとに変わりうる (#569)。** GET / HEAD しか
           # 通っていなかった頃は `method` が不変だったが、body 付きメソッドを
           # 通すようになったので追従させる。
@@ -78,7 +79,7 @@ module Ginseng
         # ⚠ **諦めた行を 1 本残す（6.0.0 のリリース前レビュー）。** ここは `repeat` の外なので、
         # 残さないと info 行が並ぶだけで error 行が 1 本も出ない（5.x は HTTParty の例外が `repeat` で出ていた）。
         error = GatewayError.new("Too many redirects (#{limit})")
-        log_retry_error(error, method, uri, Time.now, gave_up: :too_many_redirects)
+        log_retry_error(error, method, hop_log_uri(uri), Time.now, gave_up: :too_many_redirects)
         raise error
       end
 
@@ -97,15 +98,16 @@ module Ginseng
       # **ログのマスクは `scheme://` の形しか伏せないので平文で出た**（#703 で塞いだ形が別の欄から）。
       # しかも送れない行き先なのに、`UnsupportedURIScheme` を `retry_limit` 回撃ち直していた。
       # ⚠ 行には直前のホップの URL を残し、行き先はスキームだけにする（`uri_origin`）。
-      def redirect_uri(method, uri, location)
+      # ⚠ 行に出すのは `log_uri`（2 段目以降はクエリを落とした形。→ `hop_log_uri`）。
+      def redirect_uri(method, log_uri, uri, location)
         target = ::URI.join(uri.to_s, location)
         return create_uri(target.to_s) if REDIRECT_SCHEMES.include?(target.scheme.to_s.downcase)
         error = GatewayError.new("Unsupported redirect to '#{uri_origin(location.to_s)}'")
-        log_retry_error(error, method, uri, Time.now, gave_up: :invalid_location)
+        log_retry_error(error, method, log_uri, Time.now, gave_up: :invalid_location)
         raise error
       rescue *RetryMethods::URI_ERRORS => e
         redacted = redact_uri_error(e)
-        log_retry_error(redacted, method, uri, Time.now, gave_up: :invalid_location)
+        log_retry_error(redacted, method, log_uri, Time.now, gave_up: :invalid_location)
         raise_gateway_error(redacted, e)
       end
 
@@ -117,20 +119,43 @@ module Ginseng
         # ⚠ **`quiet_statuses` は options に載せたままホップを渡り歩く (#672)。**
         # 取り出すのはここだけ（HTTParty へは渡さない）。リダイレクト先の答えにも効く。
         quiet = options[:quiet_statuses]
+        # ⚠ 行に出す URL（→ `hop_log_uri`）。要求は `uri` へ送る。⚠ これも HTTParty へは渡さない。
+        # 呼ぶ側がホップごとに載せ直す。
+        log_uri = options[:log_uri] || uri
         # ⚠ **validator が無ければ検証も pinning もしない (#655)。** 既定の経路もここを
         # 通るようになったが、ホストの判断は持ち込まない（追い方と資格情報の落とし方だけ揃える）。
         address = validator ? validate_host!(uri, validator) : nil
-        hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses), address)
-        return repeat(method, uri, start = Time.now, quiet:) do
+        hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses, :log_uri), address)
+        return repeat(method, log_uri, start = Time.now, quiet:) do
           response = execute(method, uri, hop_options, max_bytes)
           # ⚠ **`multipart` はホップごとに変わる (#578)。** `upload_options` が
           # 立てた印は body と一緒に落ちるので、`slice` でそのまま写す。
           # ⚠ キーの順は `method:, multipart:, url:, status:`。5.x の `upload` の直行経路と同じ
           # 並び（6.0.0 で直行経路は無くなったが、行の形は変えない）。
-          log(method:, **hop_options.slice(:multipart), url: uri, status: response.code, start:)
+          log(method:, **hop_options.slice(:multipart), url: log_uri, status: response.code, start:)
           bad_response!(response) unless response.code < 400
           next response
         end
+      end
+
+      # 2 段目以降のホップの、ログに出す形。🔴🔴 **クエリとフラグメントを落とす (#717)。**
+      #
+      # ⚠⚠ 2 段目以降の URL は**相手が選んだもの**で、伏せる一覧に無い名前の資格情報を普通に運ぶ
+      # （OAuth 1.0a の `oauth_token` / `oauth_verifier`、CAS の `ticket`、Google Apps Script の
+      # 302 先の `user_content_key`）。🔴 6.0.0 で既定の経路もここを通るようになり（#655）、
+      # それがホップごとの info / error 行の `url:` に**平文で**出ていた（5.x は初段の URL だけ）。
+      # ⚠ 名前を一覧（`MASK_QUERY_PARAMS`）に足す形にしないのは、知らない名前を塞げないうえ、
+      # `RedirectGuard` の判定まで変わる（major）ため。
+      # ⚠ 初段は落とさない — 呼び出し側が組んだ URL で、従来どおり名前で伏せる。
+      # ⚠ パスに入った token は残る（`mask_url_paths` の接頭辞に無いもの）。
+      # ⚠ 要求そのものは変えない。ログに出す形だけ。
+      # ⚠ `hop` は 0 始まり（0 が初段）。諦めた行のように、どのホップか数えない呼び方は 2 段目以降として扱う。
+      def hop_log_uri(uri, hop = 1)
+        return uri if hop.zero?
+        stripped = uri.dup
+        stripped.query = nil
+        stripped.fragment = nil
+        return stripped
       end
 
       # リダイレクト先へ持ち越す options を作る (#527)。
