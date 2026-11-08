@@ -258,12 +258,16 @@ module Ginseng
       # `myapp:/callback?code=…`（OAuth の callback）や `mailto:…?access_token=…` は
       # `URI.join` を通るが、マスクが伏せるのは `scheme://` の形だけなので素通りする。
       # ⚠ 絶対形にできないときも同じく、クエリと fragment を落とす。
+      # 🔴🔴 **`scheme://` の形でも、クエリは落とす (#717)。** 行き先は相手が選んだ URL で、伏せる
+      # 一覧に無い名前の資格情報（`oauth_token` / `ticket` など）を運ぶ。追った先のホップの `url:` と
+      # 同じ扱い（→ `HostValidationMethods#hop_log_uri`）。
       # ⚠ `mkcol` の応答（`Net::HTTPResponse`）は `headers` を持たない（`response_header`）。
       def redirect_target(response, base)
         location = response_header(response, 'location').to_s.strip
         return nil if location.empty?
         target = ::URI.join(base.to_s, location)
         target.fragment = nil
+        target.query = nil
         return target.to_s if target.to_s.match?(Masking::URL_PATTERN)
         return strip_query(target.to_s)
       rescue StandardError

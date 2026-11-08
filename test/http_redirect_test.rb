@@ -206,6 +206,60 @@ module Ginseng
 
     # ⚠ **HEAD は HEAD のまま追う**（`SAFE_METHODS`）。⚠ HTTParty も HEAD のまま追う（実測）ので、
     # 5.x から変わっていないことの固定。🔴 GET に化けると、サイズのプリフライトが本文を丸ごと取る。
+    # 🔴🔴 **2 段目以降のホップの URL は、クエリとフラグメントを落として行に出す (#717)。**
+    # ⚠⚠ 相手が選んだ URL は、伏せる一覧に無い名前の資格情報を運ぶ（OAuth 1.0a・CAS・
+    # Google Apps Script の 302 先）。6.0.0 からホップごとの行に平文で出ていた。
+    # ⚠ 初段は呼び出し側が組んだ URL なので落とさない。要求そのものはクエリ付きで送る。
+    def test_later_hops_are_logged_without_query
+      moved = "#{ELSEWHERE}?oauth_token=SECRET&user_content_key=SECRET#ticket=SECRET"
+      stub_request(:get, "#{@url}?page=2").to_return(status: 302, headers: {'Location' => moved})
+      stub_request(:get, "#{ELSEWHERE}?oauth_token=SECRET&user_content_key=SECRET").to_return(status: 200)
+      logged = []
+      @http.instance_variable_get(:@logger).define_singleton_method(:info) {|entry| logged.push(entry)}
+
+      @http.get('/api?page=2')
+
+      assert_equal([["#{@url}?page=2", 302], [ELSEWHERE, 200]], logged.map {|v| [v[:url], v[:status]]})
+      assert_not_include(logged.map {|v| Logger.new.create_message(v)}.to_s, 'SECRET')
+      assert_requested(:get, "#{ELSEWHERE}?oauth_token=SECRET&user_content_key=SECRET")
+    end
+
+    # ⚠ 2 段目で落ちた行（`repeat` の error）も同じ。
+    def test_failure_of_a_later_hop_is_logged_without_query
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => "#{ELSEWHERE}?ticket=ST-SECRET"})
+      stub_request(:get, "#{ELSEWHERE}?ticket=ST-SECRET").to_return(status: 404)
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api')}}
+
+      assert_equal([ELSEWHERE], logged.map {|v| v[:url]})
+      assert_not_include(logged.map {|v| Logger.new.create_message(v)}.to_s, 'SECRET')
+    end
+
+    # ⚠ 2 段目が読めない行き先へ飛ばしたとき、行に残す「直前のホップ」も同じ。
+    def test_invalid_location_after_a_later_hop_is_logged_without_query
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => "#{ELSEWHERE}?ticket=ST-SECRET"})
+      stub_request(:get, "#{ELSEWHERE}?ticket=ST-SECRET").to_return(
+        status: 302, headers: {'Location' => 'myapp:/cb?code=SECRET'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api')}}
+
+      assert_equal([[:invalid_location, ELSEWHERE]], logged.map {|v| [v[:gave_up], v[:url]]})
+      assert_not_include(logged.map {|v| Logger.new.create_message(v)}.to_s, 'SECRET')
+    end
+
+    # ⚠ 諦めた行（`too_many_redirects`）の URL も同じ。
+    def test_too_many_redirects_is_logged_without_query
+      stub_request(:get, @url).to_return(status: 302, headers: {'Location' => "#{ELSEWHERE}?ticket=ST-SECRET"})
+      stub_request(:get, "#{ELSEWHERE}?ticket=ST-SECRET").to_return(
+        status: 302, headers: {'Location' => "#{ELSEWHERE}?ticket=ST-SECRET"},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api', {max_redirects: 2})}}
+
+      assert_equal([[:too_many_redirects, ELSEWHERE]], logged.map {|v| [v[:gave_up], v[:url]]})
+    end
+
     def test_head_stays_head
       stub_request(:head, @url).to_return(status: 302, headers: {'Location' => ELSEWHERE})
       stub_request(:head, ELSEWHERE).to_return(status: 200)

@@ -175,7 +175,8 @@ module Ginseng
       logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
 
       assert_equal(1, logged.size)
-      assert_equal("#{ORIGIN}/api/?access_token=TOKEN", logged.first[:location])
+      # ⚠ クエリも落とす (#717)。行き先は相手が選んだ URL で、一覧に無い名前を運ぶ。
+      assert_equal("#{ORIGIN}/api/", logged.first[:location])
       # ⚠⚠ `create_message` は Hash を返す。`include?` を Hash に掛けるとキーしか見ない
       # ので、文字列にしてから見る。
       message = Ginseng::Logger.new.create_message(logged.first).to_s
@@ -192,7 +193,7 @@ module Ginseng
 
       logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
 
-      assert_equal('https://elsewhere.example.com/cb?access_token=TOKEN', logged.first[:location])
+      assert_equal('https://elsewhere.example.com/cb', logged.first[:location])
       assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'TOKEN')
     end
 
@@ -212,6 +213,19 @@ module Ginseng
         assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'SECRET', location)
         assert_equal(location.sub(/\?.*/, ''), logged.first[:location])
       end
+    end
+
+    # 🔴🔴 **一覧に無い名前も、拒んだ行の `location:` に出さない (#717)。** 名前で伏せる形では
+    # `oauth_token` / `ticket` が平文で残っていた。
+    def test_refused_line_drops_unlisted_names_in_the_location
+      stub_request(:get, "#{@url}?access_token=TOKEN").to_return(
+        status: 302, headers: {'Location' => 'https://elsewhere.example.com/cb?oauth_token=SECRET&ticket=ST-SECRET'},
+      )
+
+      logged = capture_error_log {assert_raise(GatewayError) {@http.get('/api?access_token=TOKEN')}}
+
+      assert_equal('https://elsewhere.example.com/cb', logged.first[:location])
+      assert_not_include(Ginseng::Logger.new.create_message(logged.first).to_s, 'SECRET')
     end
 
     # ⚠ 並行して動く利用側では直前の `info` 行と対応が付かないので、`method` / `url` を添える。
