@@ -845,7 +845,7 @@ module Ginseng
 
     # 🔴🔴 **判断のあいだに中身が変わったら置き換えない (#643)。**
     #
-    # ⚠ ロックを取らない書き手が居る（移行期の旧版の start・`remove_pid`）。
+    # ⚠ ロックを取らない書き手が居る（移行期の旧版の start / stop・ロックを使えずに従来どおり消す `remove_pid`）。
     # ⚠⚠ **pid として読めない中身の経路**を測る — こちらは `alive_state` を通らないので、
     # `test_write_pid_keeps_pid_file_taken_by_another_start` では押さえられない。
     def test_write_pid_keeps_a_pid_file_written_while_deciding
@@ -1508,7 +1508,7 @@ module Ginseng
       File.open(daemon.pid_lock_file, File::RDWR | File::CREAT, 0o600) do |lock|
         # ⚠ `flock` は取れたら `0`、取れなければ `false`（`true` ではない）。
         assert_equal(0, lock.flock(File::LOCK_EX | File::LOCK_NB))
-        yield
+        yield lock
       end
     end
 
@@ -1536,6 +1536,11 @@ module Ginseng
     # start が置いた後継の pid ファイルかもしれないものを消す。⚠ 待たない（`trap` の中から呼ばれる）。
     def test_remove_pid_keeps_the_pid_file_while_the_lock_is_busy
       daemon = create(pid: unused_pid)
+      waits = 0
+      daemon.define_singleton_method(:pid_lock_remove_interval) do
+        waits += 1
+        next 0
+      end
 
       hold_pid_lock(daemon) do
         assert_nothing_raised {daemon.send(:run_stop)}
@@ -1546,6 +1551,7 @@ module Ginseng
 
       assert_not_nil(log, '消さなかったことを残すこと')
       assert_equal(:warn, log.first)
+      assert_equal(Daemon::PidLock::PID_LOCK_REMOVE_ATTEMPTS - 1, waits, '決めた回数だけ取り直すこと')
     end
 
     # ⚠ **取れたあとでパスが別の inode を指していたら、取れなかったと読む (#752)。**
@@ -1554,16 +1560,71 @@ module Ginseng
       daemon = create
       daemon.send(:write_pid)
       File.write(daemon.pid_file, unused_pid.to_s)
+      # ⚠ 消すだけだと、取り直したときに「無い」としてロックなしで消す経路に入る（それは文書化した
+      # 扱い）。inode の確かめだけを測るため、毎回作り直す（＝別の start が新しい inode で握りうる形）。
       daemon.define_singleton_method(:lock_pid_file) do |file|
         locked = super(file)
         File.unlink(pid_lock_file)
+        File.open(pid_lock_file, File::RDWR | File::CREAT, 0o600) {nil}
         next locked
       end
+      daemon.define_singleton_method(:pid_lock_remove_interval) {0}
 
       daemon.send(:run_stop)
 
       assert_path_exist(daemon.pid_file, '消されたロックの下では消さないこと')
       assert(daemon.logs.any? {|_, message| message[:reason] == 'pid lock busy'})
+    end
+
+    # 🔴 **ふつうの停止で誤報を出さない（6.1.1 のリリース前レビュー）。** 止める側と常駐側の trap の
+    # `remove_pid` は重なる。相手が読んで消して手放すのを待って取り直し、消えていれば黙る。
+    # ⚠ 取り直しを入れる前は、実プロセス 300 回で 15 回「pid file left behind」が鳴っていた。
+    def test_remove_pid_retries_and_stays_quiet_after_the_other_side_removed
+      daemon = create(pid: unused_pid)
+      waits = 0
+      hold_pid_lock(daemon) do |lock|
+        daemon.define_singleton_method(:pid_lock_remove_interval) do
+          waits += 1
+          # 相手（止める側）が消して手放した、を作る。
+          FileUtils.rm_f(pid_file)
+          lock.flock(File::LOCK_UN)
+          next 0
+        end
+        daemon.send(:remove_pid, File.read(daemon.pid_file).to_i)
+      end
+
+      assert_equal(1, waits, '1 回待って取り直すこと')
+      assert_path_not_exist(daemon.pid_file)
+      assert_empty(daemon.logs.select {|_, message| message[:message] == 'pid file left behind'})
+    end
+
+    # ⚠ **取り直しても取れないまま、相手が消していたら黙る（6.1.1 のリリース前レビュー）。**
+    def test_remove_pid_stays_quiet_when_the_pid_file_is_gone_while_busy
+      daemon = create(pid: unused_pid)
+      expected = File.read(daemon.pid_file).to_i
+      daemon.define_singleton_method(:pid_lock_remove_interval) {0}
+      hold_pid_lock(daemon) do
+        File.unlink(daemon.pid_file)
+        daemon.send(:remove_pid, expected)
+      end
+
+      assert_empty(daemon.logs.select {|_, message| message[:message] == 'pid file left behind'})
+    end
+
+    # ⚠ **ロック専用ファイルの位置が通常ファイルでなければ、ロックなしで従来どおり消す (#752)。**
+    # 新版の start はその状態では起動しない（`abort_invalid_pid_lock_file!`）ので、置き換える相手が居ない。
+    # ⚠ FIFO は `O_NONBLOCK` で開けてしまうので、開いたあとの型の確かめで分ける。
+    def test_remove_pid_falls_back_when_the_pid_lock_file_is_not_a_regular_file
+      daemon = create(pid: unused_pid)
+      FileUtils.rm_f(daemon.pid_lock_file)
+      File.mkfifo(daemon.pid_lock_file)
+
+      daemon.send(:run_stop)
+
+      assert_path_not_exist(daemon.pid_file)
+      assert_empty(daemon.logs.select {|_, message| message[:reason] == 'pid lock busy'})
+    ensure
+      FileUtils.rm_f(daemon.pid_lock_file) if daemon
     end
 
     # ⚠⚠ **ロック専用ファイルを作らない (#752)。** 🔴 別ユーザー（root の `stop` など）が作ると
