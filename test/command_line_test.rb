@@ -1097,6 +1097,35 @@ module Ginseng
       assert_includes(@command.stdout, 'RBENV_VERSION=3.4.9')
     end
 
+    # 🔴 **`sudo` の経路では、`env=` の値を `sudo` 自身へ渡さない (#708)。** 子へは `env K=V` が渡す。
+    # ⚠ 本物の `sudo` は走らせられないので、`sudo_command` を差し替えて `sudo` が受け取る環境を見る。
+    def test_sudo_does_not_receive_the_env_itself
+      @command.user = 'nobody'
+      @command.env = {'GINSENG_TEST_708' => 'given'}
+      {
+        exec: proc {@command.exec},
+        exec_with_timeout: proc {@command.exec(timeout: 10)},
+        exec_system: proc {@command.exec_system},
+      }.each do |name, run|
+        Tempfile.create('ginseng_708') do |file|
+          line = "echo \"${GINSENG_TEST_708-unset} ${BUNDLE_GEMFILE-unset} ${RBENV_VERSION-unset}\" > #{file.path}"
+          @command.define_singleton_method(:sudo_command) {line}
+          run.call
+
+          assert_equal('unset unset unset', File.read(file.path).chomp, name)
+        end
+      end
+    end
+
+    # ⚠ 子へは従来どおり `env K=V` で渡る。
+    def test_sudo_command_still_passes_the_env_to_the_child
+      @command.user = 'nobody'
+      @command.env = {'GINSENG_TEST_708' => 'given'}
+      @command.args = ['env']
+
+      assert_includes(@command.send(:sudo_command), 'GINSENG_TEST_708=given'.shellescape)
+    end
+
     def test_sudo_command_unsets_rbenv_version
       @command.user = 'nobody'
       @command.args = ['env']

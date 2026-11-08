@@ -318,7 +318,19 @@ module Ginseng
     end
 
     def spawn_args
-      return [spawn_env, @user ? sudo_command : to_s]
+      return [sudo_spawn_env, sudo_command] if @user
+      return [spawn_env, to_s]
+    end
+
+    # `sudo` の経路で、`sudo` プロセス自身へ渡す環境 (#708)。
+    #
+    # 🔴 **`env=` の値は `sudo` 自身へ渡さない。** 子へは `sudo_command` の `env K=V` が渡す。
+    # ⚠⚠ #710 で `exec_system` の `sudo` 経路も `spawn_env` を渡すようになり、`@env` が `sudo` の
+    # 環境にも載っていた（`exec` の経路は以前から同じ形）。ふつうは sudoers の `env_reset` で落ちるが、
+    # 🔴 `!env_reset` / `env_keep` / `SETENV` を許すホストでは、`sudo` 越しに別のユーザーへ渡っていた。
+    # ⚠ 親の bundler の痕跡を剥がすのと、`RBENV_VERSION` を外すのは同じ（`spawn_env` から `@env` だけ抜いた形）。
+    def sudo_spawn_env
+      return Bundler.unbundled_env.merge(UNSET_ENV_KEYS.to_h {|key| [key, nil]})
     end
 
     # ⚠ `spawn_env` は環境の全体なので、親の `ENV` を引き継がせない（`unsetenv_others`）。
@@ -329,6 +341,8 @@ module Ginseng
     # 🔴🔴 **`env` の値は argv に載り、同じホストの誰でも `ps` で読める (#708)。** ログの経路
     # ではないので `secrets=` では伏せられない。⚠ `user=` と一緒に使うときは、`env` に資格情報を
     # 置かないこと。
+    # ⚠ argv に載せない渡し方（`sudo --preserve-env` / 一時ファイル / 標準入力）は、対象ホストの
+    # sudoers に左右されるので選んでいない（2026-11-08 オーナー判断・保留）。
     def sudo_command
       parts = ['sudo', '-u', @user, 'env']
       UNSET_ENV_KEYS.each {|key| parts.push('-u', key)}
