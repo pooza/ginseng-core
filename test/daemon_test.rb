@@ -504,7 +504,8 @@ module Ginseng
     # 🔴🔴 **`process_pattern` を宣言していて、コマンド行が読めないなら送らない (#756)。**
     # ⚠⚠ 起動の側（`alive_state_of`）は従来どおり「うちの常駐」と答える — 二重起動を避ける。
     def test_run_stop_does_not_signal_when_the_identity_is_unavailable
-      ['', '[ruby]', '[ruby] <defunct>'].each do |line|
+      {'' => 'command line empty', '[ruby]' => 'command line unreadable',
+       '[kworker/0:1-events]' => 'command line unreadable'}.each do |line, reason|
         daemon = identified(/exp_daemon\.rb start/, line)
         File.write(daemon.pid_file, Process.pid.to_s)
 
@@ -513,10 +514,65 @@ module Ginseng
 
         assert_empty(daemon.signals, line)
         assert_equal(Process.pid, daemon.pid, line)
-        assert_match(/could not be identified\. Not stopping /, stderr)
+        assert_match(/could not be identified \(check process_pattern, or `ps -ww -o command= -p #{Process.pid}`\)\. Not stopping /, stderr)
         assert_equal([:error, 'not stopped', 'identity unavailable'],
           daemon.logs.last.then {|severity, message| [severity, message[:message], message[:reason]]},
           line)
+        # 🔴 **番号と種類は、その前の行に残る**（`abort_stop!` の行には無い。リリース前レビュー）。
+        assert_include(daemon.logs, [:warn, {
+          daemon: daemon.app_name, version: daemon.package_class.version,
+          message: 'process identity unavailable', pid: Process.pid, reason:
+        }], line)
+      end
+    end
+
+    # 🔴 **読めない姿にパターンが一致しても、確かめられない側に置く (#758 Codex P2)。**
+    def test_run_stop_does_not_trust_a_pattern_that_matches_an_unreadable_line
+      [[/\[ruby\]|exp_daemon/, '[ruby]'], [/|exp_daemon/, ''], [/.*/, '[kworker/0:1]']].each do |pattern, line|
+        daemon = identified(pattern, line)
+        File.write(daemon.pid_file, Process.pid.to_s)
+
+        capture_stderr {assert_raise(SystemExit) {daemon.send(:run_stop)}}
+
+        assert_empty(daemon.signals, line)
+        assert_equal('identity unavailable', daemon.logs.last.last[:reason], line)
+      end
+    end
+
+    # ⚠ **ゾンビは送って片付ける（リリース前レビュー）。** TERM は効かず、回収されるまで番号は
+    # 再利用されない。🔴 止めたままだと、回収されるまで `start` も `stop` も通らない。
+    def test_run_stop_cleans_up_a_zombie
+      daemon = identified(/exp_daemon\.rb start/, '[ruby] <defunct>')
+      File.write(daemon.pid_file, Process.pid.to_s)
+
+      daemon.send(:run_stop)
+
+      assert_equal([['TERM', Process.pid]], daemon.signals)
+      assert_false(File.exist?(daemon.pid_file))
+      # ⚠ 起動の側は従来どおり生きている扱い。
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+    end
+
+    # 🔴 **確かめている途中で居なくなったら、従来どおり片付けて正常終了（リリース前レビュー）。**
+    # `ps` は居ない番号に空を返すので、⚠⚠ 自分で終わりかけた常駐への `stop` が exit 1 で
+    # pid ファイルを残していた。
+    def test_run_stop_cleans_up_when_the_process_exits_during_the_check
+      child = fork {sleep 60}
+      daemon = identified(/exp_daemon\.rb start/, nil)
+      daemon.define_singleton_method(:process_command_line) do |found|
+        Process.kill('KILL', found)
+        Process.wait(found)
+        ''
+      end
+      File.write(daemon.pid_file, child.to_s)
+
+      assert_nothing_raised {capture_stderr {daemon.send(:run_stop)}}
+      assert_false(File.exist?(daemon.pid_file))
+      child = nil
+    ensure
+      if child
+        Process.kill('KILL', child) rescue nil
+        Process.wait(child) rescue nil
       end
     end
 
@@ -531,6 +587,8 @@ module Ginseng
 
         assert_empty(daemon.signals)
         assert_equal(Process.pid, daemon.pid)
+        # ⚠ どの出口で止まったかまで見る（別の `abort_stop!` でも上の 2 つは成り立つ）。
+        assert_equal('identity unavailable', daemon.logs.last.last[:reason])
       end
     end
 
@@ -693,7 +751,10 @@ module Ginseng
         daemon = identified(/exp_daemon\.rb start/, line)
 
         assert_equal(:alive, daemon.alive_state_of(Process.pid), line)
-        assert_empty(daemon.logs, line)
+        # ⚠ 読めなかったことは番号つきで残す（ゾンビは除く）(#756 リリース前レビュー)。
+        expected = line.end_with?('<defunct>') ? [] : ['process identity unavailable']
+
+        assert_equal(expected, daemon.logs.map {|_severity, message| message[:message]}, line)
       end
       # ⚠ 角括弧で始まるだけの、読めている行は別（不一致なら他人）。
       daemon = identified(/exp_daemon\.rb start/, '[ruby] bin/other.rb start')

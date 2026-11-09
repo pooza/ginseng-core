@@ -476,17 +476,17 @@ module Ginseng
           message: 'pid file left behind', reason: 'pid lock busy', expected:, pid_file:)
       end
 
-      # 生きてはいるが、利用側が「うちの常駐ではない」と答えた番号か (#673)。
+      # その番号へ TERM を送ってよいか。:foreign / :unknown / :ours の 3 値 (#673 / #756)。
       #
       # 🔴🔴 **`stop` も身元を見る。** ⚠⚠ `alive_state_of` を通っていたのは `start` /
       # `restart` / `status` の入口だけで、**`stop` は読んだ番号へそのまま TERM を送っていた** —
       # pid が再利用されていると、🔴 **無関係なプロセスを止める**（モロヘイヤのステージングで、
       # 同じユーザーで動く Mastodon の puma を実際に止めた。pooza/mulukhiya-toot-proxy#4792）。
       #
-      # ⚠ **`process_pattern` を宣言していない既定の `alive_state_of` では真にならない**
-      # （生死しか見ないため。2 回の問いのあいだに死んだ場合だけ真になるが、帰結は
+      # ⚠ **`process_pattern` を宣言していない既定の `alive_state_of` では :foreign にならない**
+      # （生死しか見ないため。2 回の問いのあいだに死んだ場合だけ :foreign になるが、帰結は
       # `ESRCH` の経路と同じ）。上書きも宣言もしていない利用側のふるまいは変わらない。
-      # ⚠ 宣言すれば、上書きしなくても真になる (#676)。→ `ProcessIdentity`
+      # ⚠ 宣言すれば、上書きしなくても :foreign を返せる (#676)。→ `ProcessIdentity`
       # ⚠ 「居ない」（素の生死が :dead）は `ESRCH` の経路に任せる。
       #
       # ⚠⚠ **訊くのは `alive_state_of` だけ。`alive_state` の上書きは見ない (#674 Codex P1)。**
@@ -504,17 +504,31 @@ module Ginseng
       # ⚠⚠ 上書き側の例外を外へ漏らさない — 🔴 **`Errno::ESRCH` だと `run_stop` の rescue が
       # 「既に居ない」と取り違え、生きている常駐の pid ファイルを消す**。
       #
+      # ⚠⚠ **上書きの答えより、上流の照合の :unknown が勝つ。** 上書きが `super` のあとで
+      # 自分で確かめて :alive と答えても、`super` が「確かめられない」だったなら止める。
+      # ⚠ 上書きから「送るな」を伝えるなら :dead（＝他人。pid ファイルを片付ける）か例外。
+      # :unknown は「触れない」の意味で、従来どおり送って `EPERM` の枝に任せる (#509)。
+      #
+      # 🔴 **確かめている途中で居なくなったなら、従来の `ESRCH` の枝へ流す（リリース前レビュー）。**
+      # `ps` は居ない番号に空を返すので「確かめられない」に見え、⚠⚠ **自分で終わりかけた
+      # 常駐への `stop` が exit 1 で pid ファイルを残していた**（6.1.1 では正常終了）。
+      # ⚠ ゾンビは送って片付ける — TERM は効かず、回収されるまで番号は再利用されない。
+      #
       # 戻り値: :foreign（他人）/ :unknown（確かめられない）/ :ours（送ってよい）。
       def stop_identity(found)
         return :ours unless Process.alive_state(found) == :alive
         forget_identity_state
         return :foreign if alive_state_of(found) == :dead
-        return :unknown if last_identity_state(found) == :unknown
-        return :ours
+        return :ours unless last_identity_state(found) == :unknown
+        return still_alive?(found) ? :unknown : :ours
       rescue StandardError => e
         @logger.error(daemon: app_name, version: package_class.version, message: 'stop',
-          reason: 'identity check failed', error: e, pid_file:)
-        return :unknown
+          reason: 'identity check failed', error: e, pid: found, pid_file:)
+        return still_alive?(found) ? :unknown : :ours
+      end
+
+      def still_alive?(found)
+        return Process.alive_state(found) != :dead
       end
 
       # ⚠ **シグナルは送らず、古い pid ファイルだけ片付ける (#673)。** 中身がまだ

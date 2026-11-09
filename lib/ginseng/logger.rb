@@ -30,8 +30,14 @@ module Ginseng
       # ⚠ マスクを通せなかったので中身を出さなかったことの印 (#529)。
       MASK_ERROR_FIELD = :_mask_error
 
-      # 設定の水準が読めないときに倒す先 (#755)。
-      FALLBACK_LEVEL = 'info'
+      # `/logger/level` が無いときの水準 (#755)。⚠ 従来どおり（`Syslog::Logger` の既定）。
+      # 🔴 **`config/lib.yaml` には置かない** — 利用側では gem の `lib.yaml` が読まれない
+      # （`Config#dirs` は利用側の `Environment.dir` を見る）ので、置いても届かず、
+      # 利用側だけ別の既定になる（リリース前レビューの赤）。`MASK_FIELDS` と同じ理由。
+      DEFAULT_LEVEL = 'DEBUG'
+
+      # `/logger/level` が読めないときに倒す先 (#755)。
+      FALLBACK_LEVEL = 'INFO'
 
       # 設定で受ける水準の名前 (#755)。⚠ `Logger::Severity.constants` から作らない —
       # 水準でない定数が増えると、それも通ってしまう。
@@ -41,22 +47,11 @@ module Ginseng
         @config = config_class.instance
         name ||= package_class.name
         super
-        self.level = configured_level
-      end
-
-      # 設定の `/logger/level` から読んだ水準 (#755)。
-      #
-      # ⚠⚠ **読めなくても例外を上げない。** ログの出口が設定の不備で落ちると、その例外を
-      # 書く先も無い。⚠ 倒す先は info — **黙る方向（error など）へは倒さない**。
-      def configured_level
-        name = begin
-          @config['/logger/level']
-        rescue ConfigError
-          nil
-        end
-        name = name.to_s.upcase
-        name = FALLBACK_LEVEL.upcase unless LEVELS.include?(name)
-        return ::Logger::Severity.const_get(name)
+        value = configured_level
+        self.level = ::Logger::Severity.const_get(level_name(value) || FALLBACK_LEVEL)
+        return if level_name(value)
+        # ⚠ **倒したことは残す**（`level: warning` の書き違いに気づけるように）。⚠ 値は短く切る。
+        warn(message: 'logger level is invalid', value: value.to_s[0, 32], level: FALLBACK_LEVEL)
       end
 
       # error はバックトレース展開があるので個別に定義している。ブロック形式と
@@ -175,6 +170,23 @@ module Ginseng
       end
 
       private
+
+      # 設定の `/logger/level` (#755)。⚠⚠ **読めなくても例外を上げない。** ログの出口が設定の
+      # 不備で落ちると、その例外を書く先も無い。
+      def configured_level
+        return @config['/logger/level']
+      rescue ConfigError
+        return nil
+      end
+
+      # 受ける水準の名前。読めない値なら nil（→ info。⚠ **黙る方向（error など）へは倒さない**）。
+      # ⚠ 無ければ（未設定・`nil`）従来どおり debug。
+      def level_name(value)
+        return DEFAULT_LEVEL if value.nil?
+        name = value.to_s.upcase
+        return name if LEVELS.include?(name)
+        return nil
+      end
 
       # ⚠⚠ **scrub してから create_message をやり直す。** mask を通し直さないと
       # マスクが外れたままになる（上記）。

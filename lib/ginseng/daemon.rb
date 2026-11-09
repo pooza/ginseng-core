@@ -117,7 +117,8 @@ module Ginseng
     # ⚠⚠ **起動の途中の姿も「うちの常駐」と答えること** — `exec` する前のランチャや、
     # プロセス名を書き換える前の姿を :dead と答えると、**起動中の `stop` が pid ファイル
     # だけ消し、常駐が孤児になる**。⚠ **例外を上げないこと** — `stop` は「確かめられない」と
-    # 読んで、送らずに止める（→ `PidFile#stop_identity`。#756）。
+    # 読んで、送らずに止める（→ `PidFile#stop_identity`。#756）。⚠ :unknown は「触れない」の
+    # 意味（`EPERM`）で、`stop` は従来どおり送る。「送るな」を伝える答えは :dead だけ。
     # ⚠ **`run_stop` だけは `alive_state` を通さず、ここを直に呼ぶ** — 読んだ番号について
     # 訊きたいので（`alive_state` は引数を取れず、pid ファイルを読み直す）。
     #
@@ -257,9 +258,10 @@ module Ginseng
       abort_stop_without_pid! unless (p = pid)
       # ⚠ **身元が違うなら送らない (#673)。確かめられないなら止める (#756)。** → `stop_identity`
       case stop_identity(p)
-      in :foreign then return release_foreign_pid(p)
-      in :unknown then abort_stop!("PID '#{p}' could not be identified.", 'identity unavailable')
-      in :ours then nil
+      when :foreign then return release_foreign_pid(p)
+      when :unknown
+        hint = "check process_pattern, or `ps -ww -o command= -p #{p}`"
+        abort_stop!("PID '#{p}' could not be identified (#{hint}).", 'identity unavailable')
       end
       send_signal('TERM', p)
       # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
