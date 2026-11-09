@@ -526,6 +526,19 @@ module Ginseng
       end
     end
 
+    # 🔴 **読めない姿にパターンが一致しても、確かめられない側に置く (#758 Codex P2)。**
+    def test_run_stop_does_not_trust_a_pattern_that_matches_an_unreadable_line
+      [[/\[ruby\]|exp_daemon/, '[ruby]'], [/|exp_daemon/, ''], [/.*/, '[kworker/0:1]']].each do |pattern, line|
+        daemon = identified(pattern, line)
+        File.write(daemon.pid_file, Process.pid.to_s)
+
+        capture_stderr {assert_raise(SystemExit) {daemon.send(:run_stop)}}
+
+        assert_empty(daemon.signals, line)
+        assert_equal('identity unavailable', daemon.logs.last.last[:reason], line)
+      end
+    end
+
     # ⚠ **ゾンビは送って片付ける（リリース前レビュー）。** TERM は効かず、回収されるまで番号は
     # 再利用されない。🔴 止めたままだと、回収されるまで `start` も `stop` も通らない。
     def test_run_stop_cleans_up_a_zombie

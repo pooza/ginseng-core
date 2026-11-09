@@ -146,8 +146,10 @@ module Ginseng
           raise TypeError, "process_pattern must be a Regexp (#{pattern.class})"
         end
         line = readable_command_line(found)
-        return :match if pattern.match?(line)
+        # 🔴 **読めないかを、照合より先に見る (#758 Codex P2)。** 広いパターン（`[mydaemon]` や
+        # 空の選択肢を含むもの）が読めない姿に一致すると、確かめられないのに「一致」になり TERM が飛ぶ。
         return unreadable_identity_state(found, line) if unreadable_command_line?(line)
+        return :match if pattern.match?(line)
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'process identity mismatch', pid: found)
         return :mismatch
