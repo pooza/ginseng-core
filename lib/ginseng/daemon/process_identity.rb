@@ -44,8 +44,9 @@ module Ginseng
       # 「分からない」にしていると、**起動中の本物を他人と答える** — そこへ `stop` が重なると
       # TERM を送らずに pid ファイルを消し、`start` が重なると 2 本目が立つ（実測）。
       # ⚠⚠ **利用側のパターンでは塞げない**（`[ruby]` は「うちの常駐」の姿として書けない）。
-      # ⚠ ゾンビ（`<defunct>`）と kernel thread もこの形。どちらも「分からない」＝従来どおり
-      # 生きている扱いへ倒す。
+      # ⚠ ゾンビ（`<defunct>`）と kernel thread もこの形。起動の側はどちらも「分からない」＝
+      # 従来どおり生きている扱いへ倒す。⚠ 止める側は、kernel thread は「確かめられない」で
+      # 止まり、ゾンビは送って片付ける（TERM が効かず番号も再利用されないので害が無い）(#756)。
       UNREADABLE_COMMAND_LINE = /\A\[[^\]]*\](?: <defunct>)?\z/
 
       # コマンド行が読めないときに読み直す回数と間隔 (#756)。
@@ -67,6 +68,7 @@ module Ginseng
       # 錨を打たない — 書き換えの途中の姿が見えることがある。
       # 🔴 **`Regexp` を返すこと。** 文字列を返すと「分からない」扱いになり、身元は
       # 見られない（error を 1 行残す）。⚠ 例外を上げた場合も同じ。
+      # 🔴🔴 **7.0.0 から、そのとき `stop` / `restart` は送らずに exit 1 で止まる (#756)。**
       def process_pattern
         return nil
       end
@@ -115,7 +117,8 @@ module Ginseng
         return identity_state(found) == :mismatch
       end
 
-      # 身元の答え。:match / :mismatch / :unknown（確かめられない）/ :undeclared（宣言が無い）。
+      # 身元の答え。:match / :mismatch / :unknown（確かめられない）/ :defunct（ゾンビ）/
+      # :undeclared（宣言が無い）。⚠ :defunct は起動の側では :unknown と同じ（生きている扱い）。
       #
       # ⚠ **答えは `last_identity_state` に残す (#756)。** 止める側は `alive_state_of`
       # （利用側の上書き点）を通して訊くので、戻り値の :alive からは「一致した」と
@@ -142,8 +145,9 @@ module Ginseng
         unless pattern.is_a?(Regexp)
           raise TypeError, "process_pattern must be a Regexp (#{pattern.class})"
         end
-        return :unknown unless line = readable_command_line(found)
+        line = readable_command_line(found)
         return :match if pattern.match?(line)
+        return unreadable_identity_state(found, line) if unreadable_command_line?(line)
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'process identity mismatch', pid: found)
         return :mismatch
@@ -153,18 +157,34 @@ module Ginseng
         return :unknown
       end
 
-      # 読めたコマンド行。読めなければ nil。
+      # コマンド行。読めなければ、最後に見た姿（空か `[プロセス名]`）。
       #
       # ⚠ **読めないときは数回だけ読み直す (#756)。** `exec` の最中の空白（1〜2 ms）は
       # すぐ抜けるので、そこで止める側が「確かめられない」と止まらないようにする。
-      # ⚠ ゾンビ・kernel thread・`ps` が無いなどは読み直しても変わらず、nil のまま。
+      # ⚠ ゾンビ・kernel thread・`ps` の失敗などは読み直しても変わらない。
       def readable_command_line(found)
+        line = ''
         IDENTITY_READ_ATTEMPTS.times do |i|
           sleep(IDENTITY_READ_INTERVAL) if i.positive?
           line = process_command_line(found)
-          return line unless line.empty? || UNREADABLE_COMMAND_LINE.match?(line)
+          return line unless unreadable_command_line?(line)
         end
-        return nil
+        return line
+      end
+
+      def unreadable_command_line?(line)
+        return line.empty? || UNREADABLE_COMMAND_LINE.match?(line)
+      end
+
+      # ⚠ **読めなかったことを、番号と姿の種類つきで残す (#756 リリース前レビュー)。** 🔴 止める側は
+      # このあと `abort_stop!` で止まるが、そちらの行には番号も理由も無い。⚠ コマンド行そのものは
+      # 載せない（他人の引数は資格情報を含みうる。`[プロセス名]` の形でも同じ扱いにする）。
+      def unreadable_identity_state(found, line)
+        return :defunct if line.end_with?(' <defunct>')
+        @logger.warn(daemon: app_name, version: package_class.version,
+          message: 'process identity unavailable', pid: found,
+          reason: line.empty? ? 'command line empty' : 'command line unreadable')
+        return :unknown
       end
 
       # ⚠ **`/proc` ではなく `ps` を使う。** FreeBSD では `/proc` が既定でマウントされて

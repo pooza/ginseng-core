@@ -23,10 +23,19 @@ module Ginseng
       assert_kind_of(Syslog::Logger, @logger)
     end
 
-    # ⚠ **既定は従来どおり debug (#755)。** `Syslog::Logger` の既定と同じで、上げると
-    # いま出ている debug の行が黙って消える。
+    # ⚠ **無ければ従来どおり debug (#755)。** `Syslog::Logger` の既定と同じで、上げると
+    # いま出ている debug の行が黙って消える。🔴🔴 **設定から消して測る** — 利用側では gem の
+    # `config/lib.yaml` が読まれないので、gem の設定に頼った既定は利用側に届かない
+    # （リリース前レビューの赤。`lib.yaml` に `debug` を置いた版は、利用側だけ info だった）。
     def test_level_defaults_to_debug
-      assert_equal(::Logger::DEBUG, @logger.level)
+      [ABSENT, nil].each do |value|
+        with_logger_level(value) do
+          logger, warned = create_logger
+
+          assert_equal(::Logger::DEBUG, logger.level, value.inspect)
+          assert_empty(warned, value.inspect)
+        end
+      end
     end
 
     # 🔴 **設定の `/logger/level` を読む (#755)。** 大文字小文字は問わない。
@@ -39,12 +48,17 @@ module Ginseng
 
     # 🔴🔴 **読めない値でも落ちず、info に倒す (#755)。** ⚠⚠ ログの出口が設定の不備で
     # 例外を上げると、その例外を書く先も無い。⚠ 黙る方向へは倒さない。
+    # ⚠ **倒したことは warn で残す**（書き違いに気づけるように）。
     def test_level_falls_back_to_info
-      [nil, '', 'verbose', 'severity', 3, true, ['warn'], {'level' => 'warn'}].each do |value|
-        with_logger_level(value) {assert_equal(::Logger::INFO, Logger.new.level, value.inspect)}
-      end
+      ['', 'verbose', 'warning', 'severity', 3, true, ['warn'], {'level' => 'warn'}].each do |value|
+        with_logger_level(value) do
+          logger, warned = create_logger
 
-      with_logger_level(ABSENT) {assert_equal(::Logger::INFO, Logger.new.level)}
+          assert_equal(::Logger::INFO, logger.level, value.inspect)
+          assert_equal([{message: 'logger level is invalid', value: value.to_s[0, 32], level: 'INFO'}],
+            warned, value.inspect)
+        end
+      end
     end
 
     # ⚠ 水準を上げたら、下の行は出ない（`level` が本当に効いている）。
@@ -1612,6 +1626,15 @@ module Ginseng
     end
 
     private
+
+    # `initialize` の中で出す warn を拾う。
+    def create_logger
+      warned = []
+      logger = Logger.allocate
+      logger.define_singleton_method(:warn) {|message = nil| warned.push(message)}
+      logger.send(:initialize)
+      return logger, warned
+    end
 
     # ⚠ `ABSENT` なら設定から消した状態で測る。
     def with_logger_level(value)
