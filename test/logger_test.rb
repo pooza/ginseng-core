@@ -23,6 +23,41 @@ module Ginseng
       assert_kind_of(Syslog::Logger, @logger)
     end
 
+    # ⚠ **既定は従来どおり debug (#755)。** `Syslog::Logger` の既定と同じで、上げると
+    # いま出ている debug の行が黙って消える。
+    def test_level_defaults_to_debug
+      assert_equal(::Logger::DEBUG, @logger.level)
+    end
+
+    # 🔴 **設定の `/logger/level` を読む (#755)。** 大文字小文字は問わない。
+    def test_level_reads_the_config
+      {'info' => ::Logger::INFO, 'WARN' => ::Logger::WARN, 'Error' => ::Logger::ERROR,
+       'fatal' => ::Logger::FATAL, 'unknown' => ::Logger::UNKNOWN, :debug => ::Logger::DEBUG}.each do |value, level|
+        with_logger_level(value) {assert_equal(level, Logger.new.level, value.inspect)}
+      end
+    end
+
+    # 🔴🔴 **読めない値でも落ちず、info に倒す (#755)。** ⚠⚠ ログの出口が設定の不備で
+    # 例外を上げると、その例外を書く先も無い。⚠ 黙る方向へは倒さない。
+    def test_level_falls_back_to_info
+      [nil, '', 'verbose', 'severity', 3, true, ['warn'], {'level' => 'warn'}].each do |value|
+        with_logger_level(value) {assert_equal(::Logger::INFO, Logger.new.level, value.inspect)}
+      end
+
+      with_logger_level(ABSENT) {assert_equal(::Logger::INFO, Logger.new.level)}
+    end
+
+    # ⚠ 水準を上げたら、下の行は出ない（`level` が本当に効いている）。
+    def test_level_suppresses_lower_severities
+      with_logger_level('error') do
+        logger = Logger.new
+
+        assert_false(logger.info?)
+        assert_false(logger.warn?)
+        assert_predicate(logger, :error?)
+      end
+    end
+
     def test_create_message
       assert_kind_of(Hash, @logger.create_message(StandardError.new('a')))
       assert_kind_of(Hash, @logger.create_message(Error.new('a')))
@@ -1577,6 +1612,24 @@ module Ginseng
     end
 
     private
+
+    # ⚠ `ABSENT` なら設定から消した状態で測る。
+    def with_logger_level(value)
+      config = config_class.instance
+      original = config['/logger/level'] rescue ABSENT
+      if value.equal?(ABSENT)
+        config.delete('/logger/level')
+      else
+        config['/logger/level'] = value
+      end
+      yield
+    ensure
+      if original.equal?(ABSENT)
+        config.delete('/logger/level')
+      else
+        config['/logger/level'] = original
+      end
+    end
 
     # Syslog::Logger の各 severity は add へ集約されるので、そこで捕まえる。
     def capture_syslog

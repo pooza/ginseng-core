@@ -48,6 +48,10 @@ module Ginseng
       # 生きている扱いへ倒す。
       UNREADABLE_COMMAND_LINE = /\A\[[^\]]*\](?: <defunct>)?\z/
 
+      # コマンド行が読めないときに読み直す回数と間隔 (#756)。
+      IDENTITY_READ_ATTEMPTS = 3
+      IDENTITY_READ_INTERVAL = 0.01
+
       # うちの常駐のコマンド行に一致する `Regexp`。⚠ **利用側の宣言点。** nil なら見ない。
       #
       # 🔴🔴 **常駐が取りうる姿を全部挙げること。** 挙げ漏らした姿は「他人」になり、
@@ -104,21 +108,63 @@ module Ginseng
       # 奪うので、ここで残さないと**挙げ漏らしによる二重起動の瞬間が、どこにも記録されない**。
       # ⚠⚠ **コマンド行そのものは載せない** — 他人のプロセスの引数で、資格情報を含みうる。
       # 番号があれば、運用者が `ps` で見られる。
+      #
+      # ⚠⚠ **この倒し方は起動の側のもの。** 止める側は「分からない」を別に受け取って
+      # 送らずに止める (#756) → `identity_state` / `last_identity_state`。
       def identity_mismatch?(found)
-        return false unless pattern = process_pattern
+        return identity_state(found) == :mismatch
+      end
+
+      # 身元の答え。:match / :mismatch / :unknown（確かめられない）/ :undeclared（宣言が無い）。
+      #
+      # ⚠ **答えは `last_identity_state` に残す (#756)。** 止める側は `alive_state_of`
+      # （利用側の上書き点）を通して訊くので、戻り値の :alive からは「一致した」と
+      # 「分からなかった」を見分けられない。⚠ もう一度 `ps` を撃つと、2 回の間に
+      # 姿が変わりうる（`exec` の最中）ので、同じ答えを読む。
+      def identity_state(found)
+        @last_identity_state = [found, read_identity_state(found)]
+        return @last_identity_state.last
+      end
+
+      # 直前の `identity_state` の答え（番号が違えば nil）。
+      def last_identity_state(found)
+        recorded, state = @last_identity_state
+        return state if recorded == found
+        return nil
+      end
+
+      def forget_identity_state
+        @last_identity_state = nil
+      end
+
+      def read_identity_state(found)
+        return :undeclared unless pattern = process_pattern
         unless pattern.is_a?(Regexp)
           raise TypeError, "process_pattern must be a Regexp (#{pattern.class})"
         end
-        line = process_command_line(found)
-        return false if line.empty? || UNREADABLE_COMMAND_LINE.match?(line)
-        return false if pattern.match?(line)
+        return :unknown unless line = readable_command_line(found)
+        return :match if pattern.match?(line)
         @logger.warn(daemon: app_name, version: package_class.version,
           message: 'process identity mismatch', pid: found)
-        return true
+        return :mismatch
       rescue StandardError => e
         @logger.error(daemon: app_name, version: package_class.version,
           message: 'process identity unavailable', error: e, pid: found)
-        return false
+        return :unknown
+      end
+
+      # 読めたコマンド行。読めなければ nil。
+      #
+      # ⚠ **読めないときは数回だけ読み直す (#756)。** `exec` の最中の空白（1〜2 ms）は
+      # すぐ抜けるので、そこで止める側が「確かめられない」と止まらないようにする。
+      # ⚠ ゾンビ・kernel thread・`ps` が無いなどは読み直しても変わらず、nil のまま。
+      def readable_command_line(found)
+        IDENTITY_READ_ATTEMPTS.times do |i|
+          sleep(IDENTITY_READ_INTERVAL) if i.positive?
+          line = process_command_line(found)
+          return line unless line.empty? || UNREADABLE_COMMAND_LINE.match?(line)
+        end
+        return nil
       end
 
       # ⚠ **`/proc` ではなく `ps` を使う。** FreeBSD では `/proc` が既定でマウントされて

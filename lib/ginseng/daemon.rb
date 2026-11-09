@@ -112,10 +112,12 @@ module Ginseng
     #
     # 🔴 **`stop` もここへ訊く (#673)。** 生きている番号に :dead と答えると、**`stop` は
     # TERM を送らず、pid ファイルだけ片付けて正常終了する**（:unknown は従来どおり送る）。
+    # ⚠ `process_pattern` の照合が「確かめられない」だったときは、:alive のままでも
+    # `stop` は送らずに止める (#756)。
     # ⚠⚠ **起動の途中の姿も「うちの常駐」と答えること** — `exec` する前のランチャや、
     # プロセス名を書き換える前の姿を :dead と答えると、**起動中の `stop` が pid ファイル
-    # だけ消し、常駐が孤児になる**。⚠ **例外を上げないこと** — `stop` は「分からない」と
-    # 読んで、従来どおり送る（→ `PidFile#foreign_pid?`）。
+    # だけ消し、常駐が孤児になる**。⚠ **例外を上げないこと** — `stop` は「確かめられない」と
+    # 読んで、送らずに止める（→ `PidFile#stop_identity`。#756）。
     # ⚠ **`run_stop` だけは `alive_state` を通さず、ここを直に呼ぶ** — 読んだ番号について
     # 訊きたいので（`alive_state` は引数を取れず、pid ファイルを読み直す）。
     #
@@ -248,13 +250,17 @@ module Ginseng
     # 判断して 2 本目を立て、1 本目はどの pid ファイルからも辿れない孤児になる。
     # ⚠ **停止コマンド自身が孤児を作る**という形だった。
     # ⚠ **送らずに消すのは、利用側が「うちの常駐ではない」と答えた番号のときだけ**
-    # (#673。→ `foreign_pid?`)。
+    # (#673。→ `stop_identity`)。⚠ 確かめられないときは送らず、pid ファイルも残して止める (#756)。
     def run_stop
       reset_pid_file_error
       # ⚠ 番号が取れない理由は 3 通りある → `abort_stop_without_pid!`
       abort_stop_without_pid! unless (p = pid)
-      # ⚠ **身元が違うなら送らない (#673)。** → `foreign_pid?`
-      return release_foreign_pid(p) if foreign_pid?(p)
+      # ⚠ **身元が違うなら送らない (#673)。確かめられないなら止める (#756)。** → `stop_identity`
+      case stop_identity(p)
+      in :foreign then return release_foreign_pid(p)
+      in :unknown then abort_stop!("PID '#{p}' could not be identified.", 'identity unavailable')
+      in :ours then nil
+      end
       send_signal('TERM', p)
       # ⚠ **後継の pid ファイルを消さない (#532)。** 中身がまだ p のときだけ消す。
       remove_pid(p)

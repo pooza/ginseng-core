@@ -495,17 +495,26 @@ module Ginseng
       # ⚠ `alive_state` だけを上書きしている利用側は、**従来どおり送られる**（悪化はしない）。
       # 2026-10-08 に利用側 11 本を実測して該当ゼロ（上書きは 2 本とも `alive_state_of`）。
       #
-      # 🔴 **上書き側の例外は「分からない」と読み、従来どおり送る（リリース前レビュー）。**
-      # ⚠⚠ 漏らすと `stop` が**無音で**止められなくなる（`abort_stop!` を通らない）うえ、
-      # 🔴 **`Errno::ESRCH` だと `run_stop` の rescue が「既に居ない」と取り違え、
-      # 生きている常駐の pid ファイルを消す**。
-      def foreign_pid?(found)
-        return false unless Process.alive_state(found) == :alive
-        return alive_state_of(found) == :dead
+      # 🔴🔴 **確かめられないなら送らずに止める (#756)。** 起動の側（`alive_state_of`）は
+      # 「分からない」を「うちの常駐」へ倒すが、止める側は破壊的なので逆へ倒す。
+      # → :unknown を返し、`run_stop` が `abort_stop!` で止める（pid ファイルは残す。
+      # EPERM の枝と同じ — 消した瞬間に孤児が確定する）。
+      # ⚠ 「確かめられない」は 2 つ: `process_pattern` の照合が :unknown だった
+      # （コマンド行が読めない・宣言が読めない）／上書き側が例外を上げた。
+      # ⚠⚠ 上書き側の例外を外へ漏らさない — 🔴 **`Errno::ESRCH` だと `run_stop` の rescue が
+      # 「既に居ない」と取り違え、生きている常駐の pid ファイルを消す**。
+      #
+      # 戻り値: :foreign（他人）/ :unknown（確かめられない）/ :ours（送ってよい）。
+      def stop_identity(found)
+        return :ours unless Process.alive_state(found) == :alive
+        forget_identity_state
+        return :foreign if alive_state_of(found) == :dead
+        return :unknown if last_identity_state(found) == :unknown
+        return :ours
       rescue StandardError => e
         @logger.error(daemon: app_name, version: package_class.version, message: 'stop',
           reason: 'identity check failed', error: e, pid_file:)
-        return false
+        return :unknown
       end
 
       # ⚠ **シグナルは送らず、古い pid ファイルだけ片付ける (#673)。** 中身がまだ

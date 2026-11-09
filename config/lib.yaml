@@ -1,5 +1,5 @@
 package:
-  version: 6.1.1
+  version: 7.0.0
   url: https://github.com/pooza/ginseng-core
   authors:
     - Tatsuya Koishi
@@ -31,6 +31,9 @@ line:
     api: https://api.line.me
   to: U00
 logger:
+  # 出す水準（#755）。debug / info / warn / error / fatal / unknown（大文字小文字は問わない）。
+  # ⚠ 既定の debug は従来の挙動（`Syslog::Logger` の既定）。⚠ 読めない値は info に倒す。
+  level: debug
   # ログに出す Hash の「キー名」で落とすもの。⚠ 利用側の
   # `/logger/mask_fields` は**この既定に足す**（減らせない。#586）。
   #
