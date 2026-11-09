@@ -30,10 +30,33 @@ module Ginseng
       # ⚠ マスクを通せなかったので中身を出さなかったことの印 (#529)。
       MASK_ERROR_FIELD = :_mask_error
 
+      # 設定の水準が読めないときに倒す先 (#755)。
+      FALLBACK_LEVEL = 'info'
+
+      # 設定で受ける水準の名前 (#755)。⚠ `Logger::Severity.constants` から作らない —
+      # 水準でない定数が増えると、それも通ってしまう。
+      LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL', 'UNKNOWN'].freeze
+
       def initialize(name = nil)
         @config = config_class.instance
         name ||= package_class.name
         super
+        self.level = configured_level
+      end
+
+      # 設定の `/logger/level` から読んだ水準 (#755)。
+      #
+      # ⚠⚠ **読めなくても例外を上げない。** ログの出口が設定の不備で落ちると、その例外を
+      # 書く先も無い。⚠ 倒す先は info — **黙る方向（error など）へは倒さない**。
+      def configured_level
+        name = begin
+          @config['/logger/level']
+        rescue ConfigError
+          nil
+        end
+        name = name.to_s.upcase
+        name = FALLBACK_LEVEL.upcase unless LEVELS.include?(name)
+        return ::Logger::Severity.const_get(name)
       end
 
       # error はバックトレース展開があるので個別に定義している。ブロック形式と

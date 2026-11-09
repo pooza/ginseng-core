@@ -483,20 +483,102 @@ module Ginseng
       assert_equal(Process.pid, entry[:pid])
     end
 
-    # 🔴 **上書き側が例外を上げても、止められなくならない（リリース前レビュー）。**
+    # 🔴🔴 **上書き側が例外を上げたら、送らずに止める (#756)。** 確かめられないので。
     # ⚠⚠ `Errno::ESRCH` を漏らすと `run_stop` の rescue が「既に居ない」と取り違え、
-    # **TERM を送らないまま pid ファイルを消す**。
-    def test_run_stop_still_signals_when_the_override_raises
+    # **TERM を送らないまま pid ファイルを消す**（リリース前レビュー）。⚠ pid ファイルは残す。
+    def test_run_stop_does_not_signal_when_the_override_raises
       [Errno::ESRCH, RuntimeError].each do |error|
         daemon = create(pid: Process.pid)
         daemon.define_singleton_method(:alive_state_of) {|_found| raise error}
 
-        daemon.send(:run_stop)
+        stderr = capture_stderr {assert_raise(SystemExit) {daemon.send(:run_stop)}}
 
-        assert_equal([['TERM', Process.pid]], daemon.signals)
-        assert_include(daemon.logs.map {|_severity, message| message[:reason]},
-          'identity check failed')
+        assert_empty(daemon.signals, error.name)
+        assert_equal(Process.pid, daemon.pid, error.name)
+        assert_match(/PID '#{Process.pid}' could not be identified/, stderr)
+        assert_equal(['identity check failed', 'identity unavailable'],
+          daemon.logs.map {|_severity, message| message[:reason]}, error.name)
       end
+    end
+
+    # 🔴🔴 **`process_pattern` を宣言していて、コマンド行が読めないなら送らない (#756)。**
+    # ⚠⚠ 起動の側（`alive_state_of`）は従来どおり「うちの常駐」と答える — 二重起動を避ける。
+    def test_run_stop_does_not_signal_when_the_identity_is_unavailable
+      ['', '[ruby]', '[ruby] <defunct>'].each do |line|
+        daemon = identified(/exp_daemon\.rb start/, line)
+        File.write(daemon.pid_file, Process.pid.to_s)
+
+        assert_equal(:alive, daemon.alive_state_of(Process.pid), line)
+        stderr = capture_stderr {assert_raise(SystemExit) {daemon.send(:run_stop)}}
+
+        assert_empty(daemon.signals, line)
+        assert_equal(Process.pid, daemon.pid, line)
+        assert_match(/could not be identified\. Not stopping /, stderr)
+        assert_equal([:error, 'not stopped', 'identity unavailable'],
+          daemon.logs.last.then {|severity, message| [severity, message[:message], message[:reason]]},
+          line)
+      end
+    end
+
+    # ⚠ **宣言が読めない（例外・`Regexp` でない）も「確かめられない」 (#756)。**
+    def test_run_stop_does_not_signal_when_the_pattern_is_unusable
+      [-> {raise 'no config'}, -> {'exp_daemon.rb start'}].each do |pattern|
+        daemon = identified(nil, 'ruby bin/exp_daemon.rb start')
+        daemon.define_singleton_method(:process_pattern, &pattern)
+        File.write(daemon.pid_file, Process.pid.to_s)
+
+        capture_stderr {assert_raise(SystemExit) {daemon.send(:run_stop)}}
+
+        assert_empty(daemon.signals)
+        assert_equal(Process.pid, daemon.pid)
+      end
+    end
+
+    # ⚠ 一致すれば、従来どおり送って消す。
+    def test_run_stop_signals_a_process_that_matches_the_pattern
+      daemon = identified(/exp_daemon\.rb start/, 'ruby bin/exp_daemon.rb start')
+      File.write(daemon.pid_file, Process.pid.to_s)
+
+      daemon.send(:run_stop)
+
+      assert_equal([['TERM', Process.pid]], daemon.signals)
+      assert_false(File.exist?(daemon.pid_file))
+    end
+
+    # 🔴 **`exec` の最中の一瞬で止まらない (#756)。** 読めないときは数回だけ読み直す。
+    def test_run_stop_reads_the_command_line_again_while_it_is_unreadable
+      daemon = identified(/exp_daemon\.rb start/, nil)
+      lines = ['[ruby]', '', 'ruby bin/exp_daemon.rb start']
+      daemon.define_singleton_method(:process_command_line) {|_found| lines.shift || 'unexpected'}
+      File.write(daemon.pid_file, Process.pid.to_s)
+
+      daemon.send(:run_stop)
+
+      assert_equal([['TERM', Process.pid]], daemon.signals)
+      assert_empty(lines)
+    end
+
+    # ⚠ 読み直しは有限。⚠⚠ ゾンビなど、読み直しても変わらないものは何度でも同じ。
+    def test_identity_read_attempts_are_bounded
+      daemon = identified(/exp_daemon/, nil)
+      asked = 0
+      daemon.define_singleton_method(:process_command_line) {|_found| (asked += 1) && '[ruby]'}
+
+      assert_equal(:unknown, daemon.send(:identity_state, Process.pid))
+      assert_equal(3, asked)
+    end
+
+    # ⚠⚠ **前の判断の「確かめられない」を持ち越さない (#756)。** `alive_state_of` を
+    # `super` 無しで上書きしている利用側では、身元は訊かれない＝従来どおり送る。
+    def test_run_stop_does_not_reuse_an_earlier_identity_answer
+      daemon = identified(/exp_daemon/, '')
+      File.write(daemon.pid_file, Process.pid.to_s)
+
+      assert_equal(:alive, daemon.alive_state_of(Process.pid))
+      daemon.define_singleton_method(:alive_state_of) {|_found| :alive}
+      daemon.send(:run_stop)
+
+      assert_equal([['TERM', Process.pid]], daemon.signals)
     end
 
     # ⚠ 利用側が「うちの常駐」と答えたなら、従来どおり止める。
