@@ -1445,6 +1445,47 @@ module Ginseng
       assert_equal(['{"a":1}'], captured)
     end
 
+    # ⚠ 水準は `Syslog::Logger` の対応どおりの重要度で出る（`add` を上書きしても水準を落とさない）。
+    # ⚠ バックトレースの行も 1 行目と同じ重要度。
+    def test_severities_keep_the_syslog_priority
+      {debug: ::Logger::DEBUG, info: ::Logger::INFO, warn: ::Logger::WARN,
+       error: ::Logger::ERROR, fatal: ::Logger::FATAL, unknown: ::Logger::UNKNOWN}.each do |severity, level|
+        captured = capture_syslog_with_priority {@logger.send(severity, a: 1)}
+
+        assert_equal([[Syslog::Logger::LEVEL_MAP[level], '{"a":1}']], captured, severity)
+      end
+      error = StandardError.new('raised')
+      error.set_backtrace(['/app/foo.rb:1'])
+      priorities = capture_syslog_with_priority {@logger.error(error)}.map(&:first)
+
+      assert_equal([Syslog::Logger::LEVEL_MAP[::Logger::ERROR]] * 2, priorities)
+    end
+
+    # ⚠ 本文もブロックも無ければ `progname` を本文にする（標準の `::Logger` と同じ）。マスクも通す。
+    # ⚠⚠ formatter を差し替えても、`progname` が素のまま出ないこと。
+    def test_add_takes_progname_as_message
+      url = 'https://example.com/?access_token=SECRET'
+
+      assert_equal(['"https://example.com/?access_token=[FILTERED]"'], capture_syslog {@logger.add(::Logger::INFO, nil, url)})
+
+      original = @logger.formatter
+      @logger.formatter = proc {|_severity, _time, progname, message| "#{progname} #{message}"}
+      captured = capture_syslog {@logger.add(::Logger::INFO, 'm', url)}
+
+      assert_not_include(captured.first, 'SECRET')
+    ensure
+      @logger.formatter = original
+    end
+
+    # 🔴 バックトレースの行も URL はマスクする（`eval` のファイル名や `set_backtrace` で入る）。
+    def test_error_masks_urls_in_backtrace_lines
+      error = StandardError.new('raised')
+      error.set_backtrace(['https://example.com/?access_token=SECRET:1'])
+      captured = capture_syslog {@logger.error(error)}
+
+      assert_not_include(captured.last, 'SECRET')
+    end
+
     # ⚠ バックトレースの行は従来どおり JSON にせず 1 行ずつ出す。
     def test_error_writes_backtrace_lines
       error = StandardError.new('raised')
@@ -1714,15 +1755,19 @@ module Ginseng
       end
     end
 
-    # Syslog::Logger の各 severity は add へ集約されるので、そこで捕まえる。
     # ⚠⚠ **syslog の出口で捕まえる (#759)。** 以前は `@logger` の `add` を差し替えて
     # いたが、マスクを `add` で通すようになったので、そこで捕まえるとマスクの前の値を
     # 見ることになる。⚠ 実際に syslog へ渡る文字列（formatter を通したあと）を見る。
-    def capture_syslog
+    def capture_syslog(&)
+      return capture_syslog_with_priority(&).map(&:last)
+    end
+
+    # `[重要度, 文字列]` の組で返す。⚠ 重要度は facility を外した値（`LOG_ALERT` など）。
+    def capture_syslog_with_priority
       captured = []
       device = Object.new
-      device.define_singleton_method(:log) {|_priority, _format, message| captured.push(message)}
-      original = Syslog::Logger.class_variable_get(:@@syslog)
+      device.define_singleton_method(:log) {|priority, _format, message| captured.push([priority & 7, message])}
+      original = Syslog::Logger.syslog
       Syslog::Logger.syslog = device
       yield
       return captured
@@ -1785,6 +1830,15 @@ module Ginseng
         SEVERITIES.each do |severity|
           assert_nothing_raised {logger.public_send(severity) {'probe'}}
         end
+      end
+    end
+
+    # ⚠ `add` も同じ口を持つ (#759)。無いと Windows でだけ NoMethodError。
+    def test_add_accepts_the_same_arguments
+      [WindowsLogger.new, Logger.new].each do |logger|
+        assert_nothing_raised {logger.add(::Logger::WARN) {'probe'}}
+        assert_nothing_raised {logger.add(::Logger::WARN, 'probe', 'prog')}
+        assert_nothing_raised {logger.add(nil, 'probe')}
       end
     end
 
