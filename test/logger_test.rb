@@ -1388,6 +1388,7 @@ module Ginseng
     data('fatal', :fatal)
     data('info', :info)
     data('error', :error)
+    data('unknown', :unknown)
     def test_severity_goes_through_create_message(severity)
       captured = capture_syslog {@logger.send(severity, url: 'https://example.com/?token=SECRET', password: 'hoge')}
       # JSON であること（Hash#to_s へ倒れていない）。
@@ -1396,6 +1397,62 @@ module Ginseng
       assert_equal(1, captured.size)
       assert_not_include(body['url'], 'SECRET')
       assert_not_include(body.keys, 'password')
+    end
+
+    # 🔴🔴 **`add` を直に呼んでもマスクを通る (#759)。** `Syslog::Logger` の水準の
+    # メソッドはどれも `add` を呼ぶので、ここが唯一のマスク点。⚠ 以前は
+    # `logger.add(Logger::WARN, password: 'x')` が `{password: "x"}` のまま出ていた。
+    data('引数', false)
+    data('ブロック', true)
+    def test_add_goes_through_create_message(block_form)
+      message = {url: 'https://example.com/?token=SECRET', password: 'hoge'}
+      captured = capture_syslog do
+        block_form ? @logger.add(::Logger::WARN) {message} : @logger.add(::Logger::WARN, message)
+      end
+      body = JSON.parse(captured.first)
+
+      assert_equal(1, captured.size)
+      assert_not_include(body['url'], 'SECRET')
+      assert_not_include(body.keys, 'password')
+    end
+
+    # ⚠ 水準が無効なら `add` もブロックを評価しない。⚠ 水準 nil は `Logger` と同じく UNKNOWN。
+    def test_add_respects_level
+      called = false
+      @logger.level = ::Logger::Severity::ERROR
+      captured = capture_syslog do
+        @logger.add(::Logger::WARN) {called = true}
+        @logger.add(nil, password: 'hoge')
+      end
+
+      assert_false(called)
+      assert_equal(['{}'], captured)
+    ensure
+      @logger.level = ::Logger::Severity::DEBUG
+    end
+
+    # ⚠ **1 回だけマスクする。** `error` の 1 行目も `add` を通すので、`error` 側でも
+    # `create_entry` を通すと JSON の文字列をもう一度 JSON にしてしまう。
+    data('debug', :debug)
+    data('info', :info)
+    data('warn', :warn)
+    data('error', :error)
+    data('fatal', :fatal)
+    data('unknown', :unknown)
+    def test_severity_masks_once(severity)
+      captured = capture_syslog {@logger.send(severity, a: 1)}
+
+      assert_equal(['{"a":1}'], captured)
+    end
+
+    # ⚠ バックトレースの行は従来どおり JSON にせず 1 行ずつ出す。
+    def test_error_writes_backtrace_lines
+      error = StandardError.new('raised')
+      error.set_backtrace(['/app/foo.rb:1:in `bar\'', '/app/baz.rb:2'])
+      captured = capture_syslog {@logger.error(error)}
+
+      assert_equal('raised', JSON.parse(captured.first)['message'])
+      assert_equal(["/app/foo.rb:1:in `bar'", '/app/baz.rb:2'], captured.drop(1))
     end
 
     # ⚠⚠ **raise していない例外を error に渡すと、バックトレース展開が nil を
@@ -1423,6 +1480,7 @@ module Ginseng
     data('warn', :warn)
     data('fatal', :fatal)
     data('error', :error)
+    data('unknown', :unknown)
     def test_severity_accepts_block_form(severity)
       captured = capture_syslog {@logger.send(severity) {{url: 'https://example.com/?token=SECRET'}}}
       body = JSON.parse(captured.first)
@@ -1437,9 +1495,11 @@ module Ginseng
     data('warn', :warn)
     data('fatal', :fatal)
     data('error', :error)
+    data('unknown', :unknown)
     def test_severity_skips_block_when_disabled(severity)
       called = false
-      @logger.level = ::Logger::Severity::UNKNOWN
+      # ⚠ UNKNOWN より上に置かないと unknown が出てしまう（Logger::Severity の最大は UNKNOWN）。
+      @logger.level = ::Logger::Severity::UNKNOWN + 1
       captured = capture_syslog do
         @logger.send(severity) do
           called = true
@@ -1655,14 +1715,19 @@ module Ginseng
     end
 
     # Syslog::Logger の各 severity は add へ集約されるので、そこで捕まえる。
+    # ⚠⚠ **syslog の出口で捕まえる (#759)。** 以前は `@logger` の `add` を差し替えて
+    # いたが、マスクを `add` で通すようになったので、そこで捕まえるとマスクの前の値を
+    # 見ることになる。⚠ 実際に syslog へ渡る文字列（formatter を通したあと）を見る。
     def capture_syslog
       captured = []
-      @logger.define_singleton_method(:add) do |_severity, message = nil, _progname = nil|
-        captured.push(message)
-        true
-      end
+      device = Object.new
+      device.define_singleton_method(:log) {|_priority, _format, message| captured.push(message)}
+      original = Syslog::Logger.class_variable_get(:@@syslog)
+      Syslog::Logger.syslog = device
       yield
       return captured
+    ensure
+      Syslog::Logger.syslog = original
     end
   end
 
@@ -1678,7 +1743,7 @@ module Ginseng
     # `mask` / `mask_url` / `mask_urls_in` は **public として配っている** API
     # (masking.rb の冒頭。Sentry の before_send から呼ばれる)。
     MASKING_METHODS = [:mask, :mask_url, :mask_urls_in].freeze
-    SEVERITIES = [:debug, :info, :warn, :error, :fatal].freeze
+    SEVERITIES = [:debug, :info, :warn, :error, :fatal, :unknown].freeze
 
     def test_masking_is_public_on_windows
       assert_include(WindowsLogger.ancestors, Masking)
