@@ -47,5 +47,12 @@ module Ginseng
 
     def fatal(message = nil)
     end
+
+    # ⚠ 実装側と同じ口を持たせる (#759)。`unknown` / `add` が無いと Windows でだけ NoMethodError。
+    def unknown(message = nil)
+    end
+
+    def add(_severity, message = nil, _progname = nil)
+    end
   end
 end

@@ -54,44 +54,49 @@ module Ginseng
         warn(message: 'logger level is invalid', value: value.to_s[0, 32], level: FALLBACK_LEVEL)
       end
 
-      # error はバックトレース展開があるので個別に定義している。ブロック形式と
-      # severity の判定は下のループと同じ扱いにする。
+      # `Syslog::Logger#add`（マスクを通さない）。⚠ **バックトレースの行のためだけに使う** (#759)。
+      # 🔴 **下の `def add` より前に置くこと** — 後ろに置くと上書きした `add` を指す。
+      alias write_unmasked add
+      private :write_unmasked
+
+      # ⚠⚠ **マスクはここ 1 か所で通す (#759)。** `Syslog::Logger` の水準のメソッド
+      # （`debug` / `info` / `warn` / `fatal` / `unknown`）はどれも `add` を呼ぶので、
+      # ここを塞げば水準を問わず届く。
+      #
+      # 🔴 以前は水準のメソッドを 1 つずつ上書きして `create_entry` を通しており、
+      # **上書きしていない `unknown` と、`add` を直に呼ぶ形が平文で出ていた**
+      # （`logger.unknown(password: 'x')` が `{password: "x"}` のまま syslog へ。実測）。
+      # ⚠ #755 で `/logger/level` に `unknown` を受けるようにしたので、選べる水準の口だけ
+      # マスクが外れている形だった。⚠ 1 つずつ足す形は #499 でも info / error が漏れた。
+      #
+      # ⚠ **ブロック形式 (`logger.warn {expensive}`) を殺さないこと。** 水準が無効なら
+      # ブロックを評価しない（遅延の意味が失われる）。
+      # ⚠ `progname` は `Syslog::Logger` と同じく使わない（出さないので漏れもしない）。
+      def add(severity, message = nil, progname = nil)
+        severity ||= ::Logger::UNKNOWN
+        return true if severity < level
+        message = yield if message.nil? && block_given?
+        return super(severity, create_entry(message), progname)
+      end
+
+      # error はバックトレース展開があるので個別に定義している。1 行目は `add` を通す
+      # （ブロック形式と水準の判定も `add` と同じ扱い）。
       #
       # ⚠⚠ **backtrace は nil になりうる。** raise していない例外を渡す呼び方
       # (`logger.error(StandardError.new('x'))`) があり、`create_message` 側は
       # #518 で塞いである（`test_create_message_accepts_unraised_error`）のに
       # ここだけ素で `each` を呼んでいて NoMethodError で**呼び出し側が落ちて
       # いた**。⚠ ログを出そうとした側が落ちる型は #518 で踏んだのと同じ。
+      #
+      # ⚠ バックトレースの行は JSON にしない（従来どおり 1 行ずつ素の文字列）ので、
+      # `add` を通さず `write_unmasked` で書く（中身はファイル・行番号・メソッド名）。
       def error(message = nil)
         return true unless error?
         message = yield if message.nil? && block_given?
-        super(create_entry(message))
+        add(::Logger::ERROR, message)
         return unless message.is_a?(StandardError)
         message.backtrace&.each do |entry|
-          super("  #{scrub(entry)}")
-        end
-      end
-
-      # ⚠ **すべての severity を create_message に通すこと** (#499)。
-      # ここを空けておくと、`warn` を使った瞬間に出力が Hash#to_s へ戻り、
-      # mask / mask_url（#478、pooza/mulukhiya-toot-proxy#4511）が丸ごと効かなく
-      # なる。severity は syslog の重要度として正当な使い分けなので、呼び出し側を
-      # info へ書き換えて回るのではなくここで塞ぐ。
-      # error はバックトレース展開があるので上で個別に定義している。
-      #
-      # ⚠ **ブロック形式 (`logger.warn {expensive}`) を殺さないこと。**Syslog::Logger
-      # の severity メソッドは message 省略 + ブロックを受けるので、必須引数にすると
-      # 既存の呼び出しが ArgumentError になる。severity が無効なときはブロックを
-      # 評価しない（遅延の意味が失われる）。
-      #
-      # ⚠⚠ **info もここに入れる。**#499 で 3 つだけ直したときに info / error が
-      # 残っており、**いちばん使われる 2 つでブロック形式が ArgumentError のまま**
-      # だった（`pooza/makoto2#107` の実機確認で発覚）。
-      [:debug, :info, :warn, :fatal].each do |severity|
-        define_method(severity) do |message = nil, &block|
-          return true unless send(:"#{severity}?")
-          message = block.call if message.nil? && block
-          super(create_entry(message))
+          write_unmasked(::Logger::ERROR, "  #{scrub(entry)}")
         end
       end
 
