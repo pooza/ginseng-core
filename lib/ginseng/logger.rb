@@ -55,7 +55,7 @@ module Ginseng
       end
 
       # `Syslog::Logger#add`（マスクを通さない）。⚠ **バックトレースの行のためだけに使う** (#759)。
-      # 🔴 **下の `def add` より前に置くこと** — 後ろに置くと上書きした `add` を指す。
+      # ⚠⚠ **下の `def add` より前に置くこと** — 後ろに置くと上書きした `add` を指す。
       alias write_unmasked add
       private :write_unmasked
 
@@ -67,16 +67,21 @@ module Ginseng
       # **上書きしていない `unknown` と、`add` を直に呼ぶ形が平文で出ていた**
       # （`logger.unknown(password: 'x')` が `{password: "x"}` のまま syslog へ。実測）。
       # ⚠ #755 で `/logger/level` に `unknown` を受けるようにしたので、選べる水準の口だけ
-      # マスクが外れている形だった。⚠ 1 つずつ足す形は #499 でも info / error が漏れた。
+      # マスクが外れている形だった。⚠ 1 つずつ足す形は #499 の前にも、上書きしていなかった
+      # debug / warn / fatal が平文で出ていた（info / error は #499 の残りでブロック形式を取りこぼした）。
+      # ⚠ 水準は syslog の重要度として正当な使い分けなので、呼び出し側を info へ書き換えて回るのでは
+      # なく、ここで塞ぐ（#478・pooza/mulukhiya-toot-proxy#4511 で warn に URL が出ていた）。
       #
       # ⚠ **ブロック形式 (`logger.warn {expensive}`) を殺さないこと。** 水準が無効なら
       # ブロックを評価しない（遅延の意味が失われる）。
-      # ⚠ `progname` は `Syslog::Logger` と同じく使わない（出さないので漏れもしない）。
+      # ⚠ `progname` は標準の `::Logger` と同じく、本文もブロックも無いときだけ本文として扱う
+      # （`add(sev, nil, 'message')` の形。捨てると本文が黙って消える）。⚠⚠ **`super` には渡さない** —
+      # formatter を差し替えると、マスクを通していない `progname` がそのまま出る（実測）。
       def add(severity, message = nil, progname = nil)
         severity ||= ::Logger::UNKNOWN
         return true if severity < level
-        message = yield if message.nil? && block_given?
-        return super(severity, create_entry(message), progname)
+        message = block_given? ? yield : progname if message.nil?
+        return super(severity, create_entry(message), nil)
       end
 
       # error はバックトレース展開があるので個別に定義している。1 行目は `add` を通す
@@ -89,14 +94,16 @@ module Ginseng
       # いた**。⚠ ログを出そうとした側が落ちる型は #518 で踏んだのと同じ。
       #
       # ⚠ バックトレースの行は JSON にしない（従来どおり 1 行ずつ素の文字列）ので、
-      # `add` を通さず `write_unmasked` で書く（中身はファイル・行番号・メソッド名）。
+      # `add` を通さず `write_unmasked` で書く。⚠ 中身は普通はファイル・行番号・メソッド名だが、
+      # `eval` のファイル名や `set_backtrace` で任意の文字列が入るので、URL のマスクだけは通す（実測で
+      # `access_token=` が平文で出た。7.0.0 から）。
       def error(message = nil)
         return true unless error?
         message = yield if message.nil? && block_given?
         add(::Logger::ERROR, message)
         return unless message.is_a?(StandardError)
         message.backtrace&.each do |entry|
-          write_unmasked(::Logger::ERROR, "  #{scrub(entry)}")
+          write_unmasked(::Logger::ERROR, "  #{mask_urls_in(scrub(entry))}")
         end
       end
 
