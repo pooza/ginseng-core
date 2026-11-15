@@ -35,7 +35,7 @@ module Ginseng
       REDIRECT_SCHEMES = ['http', 'https'].freeze
 
       # validator が `uri:` を受けると宣言しているか、を見るときの引数の種類。→ `host_validator_takes_uri?`
-      KEYWORD_TYPES = [:key, :keyreq].freeze
+      URI_KEYWORD_TYPES = [:key, :keyreq].freeze
 
       private
 
@@ -244,36 +244,44 @@ module Ginseng
       # ときに行を残す（#653）のに、ここは 0 行で、利用側に見えるのは `Rejected host '<host>'`
       # だけだった（どの URL のどのホップかが残らない）。⚠ 行の URL は `log_uri`（2 段目以降は
       # クエリを落とした形）。
-      # ⚠ 例外は `RejectedHostError`。validator が自分で上げた `RejectedHostError`
-      # （`PublicHost` の `HostResolutionError` を含む）も同じく行を残してそのまま上げる。
-      # ⚠ それ以外の例外（validator の不具合）は握らない。
+      # ⚠ 例外は `GatewayError`（`rejection: :rejected_host`）。validator が自分で上げた拒否
+      # （`rejected_host?` が真のもの。`PublicHost` の `:unresolvable_host` を含む）も同じく行を残して
+      # そのまま上げる。⚠ それ以外の例外（validator の不具合・素の `GatewayError`）は握らず、行も足さない。
+      # ⚠ `cause: nil` — validator を呼んだのが別の例外の rescue の中だと、`raise` はそれを `cause` に
+      # 付けて連れて行く（Sentry は連鎖を送る）。
       def validate_host!(method, uri, log_uri, validator)
         result = call_host_validator(validator, uri)
-        raise RejectedHostError, "Rejected host '#{uri.host}'" unless result
+        raise GatewayError.rejected_host("Rejected host '#{uri.host}'"), cause: nil unless result
         return result.is_a?(String) ? result : nil
-      rescue RejectedHostError => e
-        log_retry_error(e, method, log_uri, Time.now, gave_up: rejected_reason(e))
+      rescue GatewayError => e
+        log_retry_error(e, method, log_uri, Time.now, gave_up: e.rejection) if e.rejected_host?
         raise
       end
 
-      def rejected_reason(error)
-        return error.is_a?(HostResolutionError) ? :unresolvable_host : :rejected_host
-      end
-
-      # 🔴 **validator は `uri:` を受けると宣言したときだけ URI ごと受け取る (#695)。**
+      # ⚠⚠ **validator は `uri:` を受けると宣言したときだけ URI ごと受け取る (#695)。**
       # ホスト名だけでは「同じホストの別ポート」「https → http」を初段と区別できない
       # （pooza/tomato-shrieker#1785）。⚠ 既存の validator（ホスト名 1 つを受ける callable）は
       # そのまま動く。⚠ 判定は名前つきの `uri` キーワード（`uri:` / `uri: nil`）だけで、
       # `**opts` では渡さない（受け取る気の無い validator に知らない値を渡さない）。
-      # ⚠ 渡すのは複製（validator が書き換えても要求の先は変わらない）。
+      # ⚠ 渡すのは複製（validator が書き換えても要求の先は変わらない）。⚠ 初段の URI は userinfo と
+      # クエリを含み、2 段目以降も `Location` のクエリが付いたまま — validator の中でログに出さない。
+      # ⚠ ホスト名の位置引数は必須（`->(uri:)` だけの validator は `ArgumentError`）。
       def call_host_validator(validator, uri)
         return validator.call(uri.host, uri: uri.dup) if host_validator_takes_uri?(validator)
         return validator.call(uri.host)
       end
 
+      # ⚠ 引数の一覧を読むのは `Proc` / `Method` だけ（`parameters` という属性を持つ別物を読まない）。
+      # それ以外は `call` のメソッドを取り、取れなければ（`method_missing` で受ける形）受けないとみなす
+      # — 7.0.x までどおり `call(host)` を呼ぶ（7.1.0 のリリース前レビュー）。
       def host_validator_takes_uri?(validator)
-        callable = validator.respond_to?(:parameters) ? validator : validator.method(:call)
-        return callable.parameters.any? {|type, name| KEYWORD_TYPES.include?(type) && name == :uri}
+        callable = validator
+        callable = validator.method(:call) unless [Proc, Method].any? {|v| validator.is_a?(v)}
+        return callable.parameters.any? do |type, name|
+          URI_KEYWORD_TYPES.include?(type) && name == :uri
+        end
+      rescue NameError
+        return false
       end
     end
   end

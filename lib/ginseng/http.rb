@@ -186,11 +186,12 @@ module Ginseng
       return request(:head, uri, options)
     end
 
-    # options[:host_validator] に「ホスト名を受けて真偽値を返す callable」を渡すと、
+    # options[:host_validator] に「ホスト名を受けて真偽値（か接続先の IP アドレス文字列）を返す callable」を渡すと、
     # **各ホップのホストを検証**する。⚠ リダイレクトは渡さなくても自前で追う (#655)。
     # ⚠ 文字列（IP アドレス）を返すとその IP へ接続を固定する。`uri:` キーワードを宣言した
     # callable には、ホップの URI も渡す（scheme / port で比べたいとき。#695）。
-    # ⚠ 通さなかったら `RejectedHostError`（名前が解決できなかったなら `HostResolutionError`）。
+    # ⚠ 通さなかったら `GatewayError` で、`rejection` が `:rejected_host`（名前が解決できなかったなら
+    # `:unresolvable_host`）。
     # ⚠ `host_validator: false` / `nil` は「渡していない」と同じ（検証しない）。
     #
     # 呼び出し側で初段のホストだけ検証しても、リダイレクト先は素通りになり

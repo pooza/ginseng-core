@@ -19,16 +19,50 @@ module Ginseng
     # --- PublicHost: 拒否と「解決できない」を分ける
 
     def test_public_host_raises_resolution_error_on_empty
-      error = assert_raise(HostResolutionError) do
+      error = assert_raise(GatewayError) do
         PublicHost.resolved_address('example.com', resolver: ->(_) {[]})
       end
 
       assert_true(error.message.start_with?("Rejected host 'example.com'"))
+      assert_equal(:unresolvable_host, error.rejection)
+      assert_true(error.unresolvable_host?)
+      assert_nil(error.cause)
+    end
+
+    # ⚠ 型は `GatewayError` のまま（利用側の `assert_raise(GatewayError)` は完全一致を見る）。
+    def test_rejection_keeps_the_exact_class
+      error = assert_raise(GatewayError) {@http.get('https://a.example/', host_validator: ->(_host) {false})}
+
+      assert_instance_of(GatewayError, error)
+      assert_equal(:rejected_host, error.rejection)
+      assert_true(error.rejected_host?)
+      assert_false(error.unresolvable_host?)
+    end
+
+    # ⚠ 拒否でない `GatewayError` は `rejection` を持たない。
+    def test_plain_gateway_error_has_no_rejection
+      error = GatewayError.new('Bad response 500')
+
+      assert_nil(error.rejection)
+      assert_false(error.rejected_host?)
+    end
+
+    # ⚠ 別の例外の rescue の中から呼んでも、それを `cause` に連れて行かない。
+    def test_rejection_does_not_carry_an_outer_exception
+      [->(_host) {false}, ->(_host) {PublicHost.resolved_address('example.com', resolver: ->(_) {[]})}].each do |v|
+        error = begin
+          raise 'outer https://x/?token=OUTER'
+        rescue
+          assert_raise(GatewayError) {@http.get('https://a.example/', host_validator: v)}
+        end
+
+        assert_nil(error.cause)
+      end
     end
 
     def test_public_host_raises_resolution_error_on_resolver_failure
       [Resolv::ResolvError, Timeout::Error, SocketError, Errno::EMFILE].each do |klass|
-        error = assert_raise(HostResolutionError, klass.name) do
+        error = assert_raise(GatewayError, klass.name) do
           PublicHost.resolved_address('example.com', resolver: ->(_) {raise klass})
         end
 
@@ -53,7 +87,7 @@ module Ginseng
 
     def test_public_host_validator_raises_resolution_error
       with_resolver(->(*) {[]}) do
-        assert_raise(HostResolutionError) {PublicHost.validator.call('example.com')}
+        assert_raise(GatewayError) {PublicHost.validator.call('example.com')}
       end
       with_resolver(->(*) {['93.184.215.14']}) do
         assert_equal('93.184.215.14', PublicHost.validator.call('example.com'))
@@ -66,21 +100,22 @@ module Ginseng
       stub = WebMock.stub_request(:get, 'https://example.com/feed')
       logged = error_log
       error = with_resolver(->(*) {raise Timeout::Error}) do
-        assert_raise(HostResolutionError) do
+        assert_raise(GatewayError) do
           @http.get('https://example.com/feed', host_validator: PublicHost.validator)
         end
       end
 
       assert_true(error.message.start_with?("Rejected host 'example.com'"))
-      assert_kind_of(GatewayError, error)
+      assert_equal(:unresolvable_host, error.rejection)
       assert_not_requested(stub)
       assert_equal([:unresolvable_host], logged.map {|v| v[:gave_up]})
     end
 
     def test_rejection_leaves_an_error_line
       logged = capture_error_log do
-        assert_raise(RejectedHostError) do
-          @http.get('https://internal.example/a?token=SECRET', host_validator: ->(_host) {false})
+        assert_raise(GatewayError) do
+          # ⚠ 伏せるのは Logger の責務（`error` を差し替えているのでここでは見ない）。
+          @http.get('https://internal.example/a?q=1', host_validator: ->(_host) {false})
         end
       end
 
@@ -88,7 +123,8 @@ module Ginseng
       assert_equal(:rejected_host, logged.first[:gave_up])
       assert_equal(:GET, logged.first[:method])
       assert_include(logged.first[:url], 'internal.example/a')
-      assert_instance_of(RejectedHostError, logged.first[:error])
+      assert_instance_of(GatewayError, logged.first[:error])
+      assert_equal(:rejected_host, logged.first[:error].rejection)
     end
 
     # ⚠ 2 段目以降の行はクエリを落とした形（`hop_log_uri`・#717）。拒否した先の URL も残る。
@@ -96,7 +132,7 @@ module Ginseng
       WebMock.stub_request(:get, 'https://a.example/start')
         .to_return(status: 302, headers: {'Location' => 'https://b.example/next?code=SECRET'})
       logged = capture_error_log do
-        assert_raise(RejectedHostError) do
+        assert_raise(GatewayError) do
           @http.get('https://a.example/start', host_validator: ->(host) {host == 'a.example'})
         end
       end
@@ -106,7 +142,7 @@ module Ginseng
       assert_equal('https://b.example/next', rejected.first[:url])
     end
 
-    # ⚠ validator の不具合（`RejectedHostError` 以外）は握らず、行も足さない。
+    # ⚠ validator の不具合（拒否でない例外）は握らず、行も足さない。
     def test_validator_bug_is_not_swallowed
       logged = capture_error_log do
         assert_raise(ZeroDivisionError) do
@@ -115,6 +151,48 @@ module Ginseng
       end
 
       assert_equal([], logged)
+    end
+
+    # ⚠ validator が素の `GatewayError`（拒否でないもの）を上げたら、そのまま上げて行は足さない。
+    def test_plain_gateway_error_from_validator_is_not_logged
+      logged = capture_error_log do
+        error = assert_raise(GatewayError) do
+          @http.get('https://a.example/', host_validator: ->(_host) {raise GatewayError, 'x'})
+        end
+
+        assert_nil(error.rejection)
+      end
+
+      assert_equal([], logged)
+    end
+
+    # ⚠ 7.0.x の validator（`call` を `method_missing` で受ける・`parameters` という属性を持つ）も動く。
+    def test_unusual_callables_still_work
+      WebMock.stub_request(:get, 'https://a.example/')
+      ghost = Class.new do
+        def method_missing(name, *args)
+          return name == :call ? args.first == 'a.example' : super
+        end
+
+        def respond_to_missing?(*) = false
+      end.new
+      with_attr = Struct.new(:parameters) do
+        def call(host) = host == 'a.example'
+      end.new(nil)
+
+      [ghost, with_attr].each do |validator|
+        assert_nothing_raised(validator.class.to_s) {@http.get('https://a.example/', host_validator: validator)}
+      end
+    end
+
+    # ⚠ `uri` 以外の名前のキーワードを持つ validator には渡さない。
+    def test_other_keyword_does_not_get_uri
+      WebMock.stub_request(:get, 'https://a.example/')
+      seen = []
+
+      @http.get('https://a.example/', host_validator: ->(host, port: nil) {seen.push([host, port])})
+
+      assert_equal([['a.example', nil]], seen)
     end
 
     # --- validator が URI を受け取る口
@@ -128,7 +206,7 @@ module Ginseng
         next uri.scheme == 'https'
       end
 
-      assert_raise(RejectedHostError) {@http.get('https://a.example/start', host_validator: validator)}
+      assert_raise(GatewayError) {@http.get('https://a.example/start', host_validator: validator)}
       assert_equal([['a.example', 'https', 443], ['a.example', 'http', 8080]], seen)
     end
 
