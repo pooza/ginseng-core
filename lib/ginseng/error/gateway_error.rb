@@ -22,6 +22,33 @@ module Ginseng
       @response = value
     end
 
+    # host_validator がホストを通さなかった理由 (#695)。通さなかったのでなければ nil。
+    # - `:rejected_host`: validator が通さなかった（内部アドレス・IP アドレスのリテラル・偽を返した）
+    # - `:unresolvable_host`: 名前が解決できなかった（`PublicHost.validator`）
+    #
+    # ⚠⚠ **型（子クラス）ではなく属性で分ける（7.1.0 のリリース前レビュー）。** test-unit の
+    # `assert_raise(GatewayError)` はクラスの完全一致を見るので、子クラスにすると利用側のテストが
+    # 落ちる（実測: fediverse 5 件・web 1 件・tomato-shrieker 5 件）。メッセージも従来どおり
+    # `Rejected host '<host>'` で始まる。
+    # ⚠ `:unresolvable_host` には NXDOMAIN・NODATA（恒久的なもの）も入る。やり直すなら回数に上限を付ける。
+    attr_accessor :rejection
+
+    def rejected_host?
+      return !rejection.nil?
+    end
+
+    def unresolvable_host?
+      return rejection == :unresolvable_host
+    end
+
+    # 拒否の例外を作る。⚠ `raise` は rescue の外でも `$!` を `cause` に付けるので、呼ぶ側で
+    # `cause:` を明示する（無関係な外側の例外を連れて行かない）。
+    def self.rejected_host(message, rejection = :rejected_host)
+      error = new(message)
+      error.rejection = rejection
+      return error
+    end
+
     def status
       return 502
     end

@@ -90,7 +90,7 @@ module Ginseng
       WebMock.stub_request(:get, 'https://example.com/exec')
         .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/latest/meta-data/'})
 
-      error = assert_raise(RejectedHostError) do
+      error = assert_raise(GatewayError) do
         @http.get('https://example.com/exec', host_validator: public_hosts('example.com'))
       end
 
@@ -99,7 +99,7 @@ module Ginseng
     end
 
     def test_rejects_first_hop
-      error = assert_raise(RejectedHostError) do
+      error = assert_raise(GatewayError) do
         @http.get('http://127.0.0.1/secret', host_validator: public_hosts('example.com'))
       end
 
@@ -138,7 +138,7 @@ module Ginseng
     # サイズのプリフライトで GET の前に HEAD を撃つ呼び出し側があり、GET だけ
     # 守っても HEAD が素通りするなら SSRF 対策にならない。
     def test_head_rejects_first_hop
-      error = assert_raise(RejectedHostError) do
+      error = assert_raise(GatewayError) do
         @http.head('http://127.0.0.1/secret', host_validator: public_hosts('example.com'))
       end
 
@@ -150,7 +150,7 @@ module Ginseng
       WebMock.stub_request(:head, 'https://example.com/exec')
         .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/latest/meta-data/'})
 
-      error = assert_raise(RejectedHostError) do
+      error = assert_raise(GatewayError) do
         @http.head('https://example.com/exec', host_validator: public_hosts('example.com'))
       end
 
@@ -193,7 +193,7 @@ module Ginseng
       uri = URI.parse('https://example.com/exec')
 
       assert_nil(@http.send(:validate_host!, :get, uri, uri, ->(_host) {true}))
-      assert_raise(RejectedHostError) {@http.send(:validate_host!, :get, uri, uri, ->(_host) {false})}
+      assert_raise(GatewayError) {@http.send(:validate_host!, :get, uri, uri, ->(_host) {false})}
     end
 
     def test_pin_address_wires_adapter
@@ -624,7 +624,7 @@ module Ginseng
       WebMock.stub_request(:post, 'https://a.example/exec')
         .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/latest/meta-data/'})
 
-      error = assert_raise(RejectedHostError) do
+      error = assert_raise(GatewayError) do
         @http.post('https://a.example/exec', body: {}, host_validator: public_hosts('a.example'))
       end
 
@@ -649,7 +649,7 @@ module Ginseng
         WebMock.stub_request(method, 'https://a.example/exec')
           .to_return(status: 302, headers: {'Location' => 'http://169.254.169.254/meta'})
 
-        assert_raise(RejectedHostError) do
+        assert_raise(GatewayError) do
           @http.public_send(method, 'https://a.example/exec', body: {}, host_validator: public_hosts('a.example'))
         end
 
@@ -724,7 +724,7 @@ module Ginseng
         f.flush
         f.rewind
 
-        assert_raise(RejectedHostError) do
+        assert_raise(GatewayError) do
           @http.upload('https://a.example/up', f, host_validator: public_hosts('a.example'))
         end
       end

@@ -21,7 +21,8 @@ module Ginseng
     # 引き延ばす権威 DNS を立てられるだけで、呼び出し側のスレッドを占有される。
     DNS_TIMEOUT = 3
 
-    # 名前解決の失敗（環境要因）。⚠ fail-closed で拒否に倒す。
+    # 名前解決の失敗（環境要因）。⚠ fail-closed で通さない。validator の経路では
+    # `rejection: :unresolvable_host` の `GatewayError`、`allowed_address` では nil。
     # ⚠ `Timeout::Error` は `resolve_addresses` の締め切り。
     # ⚠ `SystemCallError` は `Errno::*` の親（実測で `EACCES` / `EMFILE` が素のまま
     # 呼び出し側へ漏れていた）。
@@ -91,10 +92,11 @@ module Ginseng
     # ⚠ **真偽値ではなく IP アドレスを返す**（拒否なら nil）。`HTTP` は文字列が返ると
     # その IP アドレスへ接続を固定する — 名前で検証して名前で接続すると DNS リバインディングで抜けられる。
     #
-    # 🔴 **7.1.0 から、名前が解決できないときは nil ではなく `HostResolutionError` を上げる (#695)。**
-    # 拒否（nil → `HTTP` が `RejectedHostError`）と区別できないと、一時的な DNS の揺れと
-    # 攻撃の拒否を利用側が分けられない。⚠ どちらも `RejectedHostError` で、メッセージも
-    # `Rejected host '<host>'` で始まるので、拒否として受けている利用側はそのまま動く。
+    # ⚠⚠ **7.1.0 から、名前が解決できないときは nil ではなく `GatewayError`
+    # （`rejection: :unresolvable_host`）を上げる (#695)。** 拒否（nil → `HTTP` が
+    # `rejection: :rejected_host`）と区別できないと、一時的な DNS の揺れと攻撃の拒否を利用側が
+    # 分けられない。⚠ 型もメッセージの頭（`Rejected host '<host>'`）も拒否と同じなので、拒否として
+    # 受けている利用側はそのまま動く。
     # ⚠ `allowed_address` / `public?` は従来どおり nil / false（真偽だけが要る呼び方のため）。
     def self.validator
       return ->(host) {resolved_address(host)}
@@ -104,19 +106,22 @@ module Ginseng
     # ⚠ 名前が解決できないときも nil（→ `resolved_address`）。
     def self.allowed_address(host, resolver: method(:resolve_addresses))
       return resolved_address(host, resolver:)
-    rescue HostResolutionError
+    rescue GatewayError => e
+      raise unless e.unresolvable_host?
       return nil
     end
 
     # 許可できるなら接続に使う IP アドレスを、拒否なら nil を返す。名前が解決できなければ
-    # `HostResolutionError` を上げる。
+    # `GatewayError`（`rejection: :unresolvable_host`）を上げる。⚠ 自前の validator が「解決できない」を
+    # 分けたいときは、`allowed_address` ではなくこちらを使う。
     #
     # ⚠ **IP アドレスのリテラルと、ドットを含まない名前は拒否する**（`localhost` や社内の
     # 短い名前）。⚠ これは「解決できない」ではなく拒否（名前解決へ進めない）。
     # ⚠⚠ **1 本でも内部アドレスを含めば拒否する。** 公開のほうを選べばよい、ではない —
     # 混ぜて返してくるのはリバインディングそのもの。
-    # ⚠ 空の結果も「解決できない」に入れる。`Resolv::DNS#getaddresses` は応答の無いネーム
-    # サーバーにも NXDOMAIN にも空配列を返す（実測）ので、ここでは区別できない。
+    # ⚠ 空の結果も「解決できない」に入れる。`Resolv::DNS#getaddresses` は NXDOMAIN・NODATA・
+    # SERVFAIL に空配列を返し、区別できない。⚠ 応答の無いネームサーバーは、既定の resolver
+    # （`resolve_addresses`）では全体の締め切りが先に切れて `Timeout::Error` になる。
     def self.resolved_address(host, resolver: method(:resolve_addresses))
       name = normalize(host)
       return nil unless name
@@ -127,13 +132,15 @@ module Ginseng
     end
 
     # ⚠ メッセージのホストは `HTTP` の拒否と同じく、渡された形（正規化前）にする。
-    # ⚠ 元の例外は `cause` に残る（rescue の中で上げるため）。
+    # ⚠ resolver の例外は `cause` に残す。空の結果では `cause` を付けない。
     def self.resolve_or_raise(host, name, resolver)
       addrs = resolver.call(name)
       return addrs unless addrs.empty?
-      raise HostResolutionError, "Rejected host '#{host}' (unresolvable)"
+      message = "Rejected host '#{host}' (unresolvable)"
+      raise GatewayError.rejected_host(message, :unresolvable_host), cause: nil
     rescue *RESOLUTION_ERRORS => e
-      raise HostResolutionError, "Rejected host '#{host}' (unresolvable: #{e.class})"
+      message = "Rejected host '#{host}' (unresolvable: #{e.class})"
+      raise GatewayError.rejected_host(message, :unresolvable_host)
     end
     private_class_method :resolve_or_raise
 
@@ -171,7 +178,7 @@ module Ginseng
       return RESERVED_RANGES.any? {|range| range.include?(addr)}
     end
 
-    # ⚠ 解決できなければ空配列か例外になり、`allowed_address` は拒否に倒れる。
+    # ⚠ 解決できなければ空配列か例外になる（→ `resolve_or_raise`）。
     #
     # 🔴🔴 **`Resolv::DNS#timeouts=` は問い合わせ 1 回ぶんの上限でしかない (pooza/ginseng-web#140 Codex P1)。**
     # `getaddresses` は A と AAAA を別々に引き、それぞれ**ネームサーバーを 1 台ずつ**待つので、
