@@ -90,27 +90,52 @@ module Ginseng
     # `Ginseng::HTTP#get` の `host_validator` へ渡す callable。リダイレクトの各ホップがこれを通る。
     # ⚠ **真偽値ではなく IP アドレスを返す**（拒否なら nil）。`HTTP` は文字列が返ると
     # その IP アドレスへ接続を固定する — 名前で検証して名前で接続すると DNS リバインディングで抜けられる。
+    #
+    # 🔴 **7.1.0 から、名前が解決できないときは nil ではなく `HostResolutionError` を上げる (#695)。**
+    # 拒否（nil → `HTTP` が `RejectedHostError`）と区別できないと、一時的な DNS の揺れと
+    # 攻撃の拒否を利用側が分けられない。⚠ どちらも `RejectedHostError` で、メッセージも
+    # `Rejected host '<host>'` で始まるので、拒否として受けている利用側はそのまま動く。
+    # ⚠ `allowed_address` / `public?` は従来どおり nil / false（真偽だけが要る呼び方のため）。
     def self.validator
-      return ->(host) {allowed_address(host)}
+      return ->(host) {resolved_address(host)}
     end
 
     # 許可できるなら接続に使う IP アドレスを、拒否なら nil を返す。
+    # ⚠ 名前が解決できないときも nil（→ `resolved_address`）。
+    def self.allowed_address(host, resolver: method(:resolve_addresses))
+      return resolved_address(host, resolver:)
+    rescue HostResolutionError
+      return nil
+    end
+
+    # 許可できるなら接続に使う IP アドレスを、拒否なら nil を返す。名前が解決できなければ
+    # `HostResolutionError` を上げる。
     #
     # ⚠ **IP アドレスのリテラルと、ドットを含まない名前は拒否する**（`localhost` や社内の
-    # 短い名前）。
+    # 短い名前）。⚠ これは「解決できない」ではなく拒否（名前解決へ進めない）。
     # ⚠⚠ **1 本でも内部アドレスを含めば拒否する。** 公開のほうを選べばよい、ではない —
     # 混ぜて返してくるのはリバインディングそのもの。
-    def self.allowed_address(host, resolver: method(:resolve_addresses))
-      host = normalize(host)
-      return nil unless host
-      addrs = resolver.call(host)
-      return nil if addrs.empty?
+    # ⚠ 空の結果も「解決できない」に入れる。`Resolv::DNS#getaddresses` は応答の無いネーム
+    # サーバーにも NXDOMAIN にも空配列を返す（実測）ので、ここでは区別できない。
+    def self.resolved_address(host, resolver: method(:resolve_addresses))
+      name = normalize(host)
+      return nil unless name
+      addrs = resolve_or_raise(host, name, resolver)
       return nil if addrs.any? {|ip| internal_address?(ip)}
       # ⚠ IPv4 があれば IPv4 を採る（A と AAAA が混ざって返る）。
       return addrs.find {|ip| IPV4_LITERAL.match?(ip)} || addrs.first
-    rescue *RESOLUTION_ERRORS
-      return nil
     end
+
+    # ⚠ メッセージのホストは `HTTP` の拒否と同じく、渡された形（正規化前）にする。
+    # ⚠ 元の例外は `cause` に残る（rescue の中で上げるため）。
+    def self.resolve_or_raise(host, name, resolver)
+      addrs = resolver.call(name)
+      return addrs unless addrs.empty?
+      raise HostResolutionError, "Rejected host '#{host}' (unresolvable)"
+    rescue *RESOLUTION_ERRORS => e
+      raise HostResolutionError, "Rejected host '#{host}' (unresolvable: #{e.class})"
+    end
+    private_class_method :resolve_or_raise
 
     # 名前解決へ渡してよい形に直す。渡せなければ nil。
     #
