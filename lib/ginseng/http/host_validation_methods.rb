@@ -34,6 +34,9 @@ module Ginseng
       # 追ってよい行き先のスキーム。→ `redirect_uri`
       REDIRECT_SCHEMES = ['http', 'https'].freeze
 
+      # validator が `uri:` を受けると宣言しているか、を見るときの引数の種類。→ `host_validator_takes_uri?`
+      KEYWORD_TYPES = [:key, :keyreq].freeze
+
       private
 
       def request_validating_hops(method, uri, options, validator, max_bytes = nil)
@@ -124,7 +127,7 @@ module Ginseng
         log_uri = options[:log_uri] || uri
         # ⚠ **validator が無ければ検証も pinning もしない (#655)。** 既定の経路もここを
         # 通るようになったが、ホストの判断は持ち込まない（追い方と資格情報の落とし方だけ揃える）。
-        address = validator ? validate_host!(uri, validator) : nil
+        address = validator ? validate_host!(method, uri, log_uri, validator) : nil
         hop_options = PinnedAddressAdapter.pin(options.except(:quiet_statuses, :log_uri), address)
         return repeat(method, log_uri, start = Time.now, quiet:) do
           response = execute(method, uri, hop_options, max_bytes)
@@ -236,10 +239,41 @@ module Ginseng
       # validator が **IP アドレス文字列**を返した場合は、その IP を接続先として
       # 返す (pooza/mulukhiya-toot-proxy#4524)。真偽値を返す従来の validator は
       # そのまま動く（検証のみで pinning はしない）。
-      def validate_host!(uri, validator)
-        result = validator.call(uri.host)
-        raise GatewayError, "Rejected host '#{uri.host}'" unless result
+      #
+      # 🔴 **通さなかったら error を 1 行残す (#695)。** `RedirectGuard#guard_response` は落とす
+      # ときに行を残す（#653）のに、ここは 0 行で、利用側に見えるのは `Rejected host '<host>'`
+      # だけだった（どの URL のどのホップかが残らない）。⚠ 行の URL は `log_uri`（2 段目以降は
+      # クエリを落とした形）。
+      # ⚠ 例外は `RejectedHostError`。validator が自分で上げた `RejectedHostError`
+      # （`PublicHost` の `HostResolutionError` を含む）も同じく行を残してそのまま上げる。
+      # ⚠ それ以外の例外（validator の不具合）は握らない。
+      def validate_host!(method, uri, log_uri, validator)
+        result = call_host_validator(validator, uri)
+        raise RejectedHostError, "Rejected host '#{uri.host}'" unless result
         return result.is_a?(String) ? result : nil
+      rescue RejectedHostError => e
+        log_retry_error(e, method, log_uri, Time.now, gave_up: rejected_reason(e))
+        raise
+      end
+
+      def rejected_reason(error)
+        return error.is_a?(HostResolutionError) ? :unresolvable_host : :rejected_host
+      end
+
+      # 🔴 **validator は `uri:` を受けると宣言したときだけ URI ごと受け取る (#695)。**
+      # ホスト名だけでは「同じホストの別ポート」「https → http」を初段と区別できない
+      # （pooza/tomato-shrieker#1785）。⚠ 既存の validator（ホスト名 1 つを受ける callable）は
+      # そのまま動く。⚠ 判定は名前つきの `uri` キーワード（`uri:` / `uri: nil`）だけで、
+      # `**opts` では渡さない（受け取る気の無い validator に知らない値を渡さない）。
+      # ⚠ 渡すのは複製（validator が書き換えても要求の先は変わらない）。
+      def call_host_validator(validator, uri)
+        return validator.call(uri.host, uri: uri.dup) if host_validator_takes_uri?(validator)
+        return validator.call(uri.host)
+      end
+
+      def host_validator_takes_uri?(validator)
+        callable = validator.respond_to?(:parameters) ? validator : validator.method(:call)
+        return callable.parameters.any? {|type, name| KEYWORD_TYPES.include?(type) && name == :uri}
       end
     end
   end

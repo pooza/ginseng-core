@@ -97,7 +97,7 @@ module Ginseng
       WebMock.disable_net_connect!
       stub = stub_request(:get, 'http://127.0.0.1/')
 
-      error = assert_raise(GatewayError) do
+      error = assert_raise(RejectedHostError) do
         HTTP.new.get('http://127.0.0.1/', {host_validator: PublicHost.validator})
       end
 
