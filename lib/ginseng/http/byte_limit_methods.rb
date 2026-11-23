@@ -17,11 +17,12 @@ module Ginseng
       # ⚠ **stream_body は使わない。**あれを付けると HTTParty が本文を組み立て
       # なくなり `response.body` が nil になる＝**呼び出し側の契約が変わる**。
       # ブロックだけ渡せば、上限までは従来どおりの応答が返り、超えた分は読まずに
-      # 中断できる（メモリは max_bytes + 断片 1 つぶんで頭打ちになる）。
+      # 中断できる（メモリは max_bytes + 断片 1 つぶんで頭打ちになる）。⚠ ただし
+      # `to_s` だけは、`restore_raw_body` で戻さないと従来どおりにならない (#765)。
       def execute(method, uri, options, max_bytes = nil)
         return HTTParty.public_send(method, uri.normalize, options) unless max_bytes
         received = 0
-        return HTTParty.public_send(method, uri.normalize, options) do |fragment|
+        response = HTTParty.public_send(method, uri.normalize, options) do |fragment|
           received += fragment.bytesize
           next if received <= max_bytes
           # ⚠⚠ **メッセージに URL を入れない (#689)。** 🔴 例外のメッセージは**ロガーの外**
@@ -31,6 +32,19 @@ module Ginseng
           # フィールドの URL も同じ形に伏せられる（`Masking#mask_urls_in`。実測）。
           raise TooLargeError, "Response body exceeded #{max_bytes} bytes"
         end
+        return restore_raw_body(response)
+      end
+
+      # 🔴 **ブロックを渡すと、`to_s` が本文を返さなくなる (#765)。** Net::HTTP は
+      # `read_body` にブロックを渡されると `Net::HTTPResponse#body` を `Net::ReadAdapter`
+      # にし、HTTParty の `Response#to_s` / `#nil?` / `#display` はそちらを読む
+      # （HTTParty 0.24.3 で実測）。⚠ `body` と `parsed_response` は HTTParty が断片を
+      # つないだ文字列を持っているので正しい。それを Net 側にも戻し、上限なしと同じ見え方にする。
+      # ⚠ 本文の無い応答（HEAD・204）は Net 側が nil のままなので触らない。
+      def restore_raw_body(response)
+        raw = response.response
+        raw.body = response.body if raw.body.is_a?(Net::ReadAdapter)
+        return response
       end
     end
   end
