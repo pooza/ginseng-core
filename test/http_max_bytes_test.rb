@@ -29,6 +29,30 @@ module Ginseng
       assert_equal(100, response.body.bytesize)
     end
 
+    # 🔴 **上限を付けても、応答の見え方を変えないこと (#765)。** HTTParty はブロックを
+    # 渡されると `Net::HTTPResponse#body` を `Net::ReadAdapter` にしたまま返し、`to_s` は
+    # そちらを読む。⚠ 実例: `File.write(path, response)` が本文ではなく
+    # `#<Net::ReadAdapter…>` を書いた（pooza/ginseng-fediverse#340）。
+    # ⚠ `host_validator` の経路（ホップごとに撃ち直す）も同じ。
+    data('plain', {})
+    data('host_validator', {host_validator: ->(_host) {true}})
+    def test_to_s_returns_the_body_within_limit(options)
+      WebMock.stub_request(:get, URL).to_return(status: 200, body: 'x' * 100)
+
+      response = @http.get(URL, max_bytes: 200, **options)
+
+      assert_equal('x' * 100, response.to_s)
+      assert_equal(@http.get(URL, **options).to_s, response.to_s)
+      assert_false(response.response.body.is_a?(Net::ReadAdapter))
+    end
+
+    # ⚠ 本文の無い応答（HEAD）は、上限なしと同じく `body` が nil のまま。
+    def test_head_without_body_matches_no_limit
+      WebMock.stub_request(:head, URL).to_return(status: 200)
+
+      assert_equal(@http.head(URL).response.body, @http.head(URL, max_bytes: 100).response.body)
+    end
+
     # ⚠ **Content-Length を申告しない相手でも効くこと。**ここが事前チェックとの差。
     def test_rejects_body_over_limit
       WebMock.stub_request(:get, URL).to_return(status: 200, body: 'x' * 1000)
