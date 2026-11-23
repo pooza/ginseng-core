@@ -47,8 +47,14 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE, headers: {'Cookie' => 'sid=SECRET'})
     end
 
-    # 🔴 **対照: HTTParty に追わせると届く。** ⚠⚠ これが落ちたら、上のテストは「直したから」ではなく
-    # 「上流がもともと送らないから」緑になっている（「緑は守っている証拠にならない」）。
+    # 🔴 **対照: HTTParty に追わせると、0.25.1 より前は届く。** ⚠⚠ これが落ちたら、上のテストは
+    # 「直したから」ではなく「上流がもともと送らないから」緑になっている（「緑は守っている証拠に
+    # ならない」）。
+    #
+    # ⚠⚠ **0.25.1 で上流が直した (#767)。** 別オリジンへのリダイレクトでは Cookie を一切送らない
+    # （jnunemaker/httparty#916）。🔴 **その版の上では、上のテストは上流の修正でも緑になる** —
+    # 自前の追い方を HTTParty 任せへ戻しても気づけない。床（`>= 0.24.0`）が 0.24 系を許す限り、
+    # 自前の守りは 0.24 系の利用側のために要る。ここでは、どちらの版で走っているかを固定する。
     def test_httparty_alone_forwards_the_cookie
       stub_request(:get, @url).to_return(
         status: 302, headers: {'Location' => ELSEWHERE, 'Set-Cookie' => 'sid=SECRET; Path=/'},
@@ -57,7 +63,12 @@ module Ginseng
 
       HTTParty.get(@url)
 
-      assert_requested(:get, ELSEWHERE, headers: {'Cookie' => 'sid=SECRET'})
+      if Gem::Version.new(HTTParty::VERSION) < Gem::Version.new('0.25.1')
+        assert_requested(:get, ELSEWHERE, headers: {'Cookie' => 'sid=SECRET'})
+      else
+        assert_requested(:get, ELSEWHERE)
+        assert_not_requested(:get, ELSEWHERE, headers: {'Cookie' => /SECRET/})
+      end
     end
 
     # ⚠ **同じオリジンでも、途中の `Set-Cookie` は持ち越さない。** validator を渡した経路と同じ
