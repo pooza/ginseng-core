@@ -52,10 +52,10 @@ module Ginseng
     # ならない」）。
     #
     # ⚠⚠ **0.25.1 で上流が直した (#767)。** 別オリジンへのリダイレクトでは Cookie を一切送らない
-    # （jnunemaker/httparty#916）。🔴 **その版の上では、上のテストは上流の修正でも緑になる** —
+    # （jnunemaker/httparty#916）。⚠⚠ **その版の上では、上のテストは上流の修正でも緑になる** —
     # 自前の追い方を HTTParty 任せへ戻しても気づけない。床（`>= 0.24.0`）が 0.24 系を許す限り、
     # 自前の守りは 0.24 系の利用側のために要る。ここでは、どちらの版で走っているかを固定する。
-    def test_httparty_alone_forwards_the_cookie
+    def test_cookie_forwarding_of_httparty_alone_depends_on_its_version
       stub_request(:get, @url).to_return(
         status: 302, headers: {'Location' => ELSEWHERE, 'Set-Cookie' => 'sid=SECRET; Path=/'},
       )
