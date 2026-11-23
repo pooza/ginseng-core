@@ -43,14 +43,31 @@ module Ginseng
 
       assert_equal('x' * 100, response.to_s)
       assert_equal(@http.get(URL, **options).to_s, response.to_s)
-      assert_false(response.response.body.is_a?(Net::ReadAdapter))
+      assert_not_kind_of(Net::ReadAdapter, response.response.body)
     end
 
-    # ⚠ 本文の無い応答（HEAD）は、上限なしと同じく `body` が nil のまま。
-    def test_head_without_body_matches_no_limit
-      WebMock.stub_request(:head, URL).to_return(status: 200)
+    # ⚠ 空本文では `display` も Net 側へ落ちる（`parsed_response` が nil）。
+    def test_display_of_empty_body_matches_no_limit
+      WebMock.stub_request(:get, URL).to_return(status: 200, body: '')
+      displayed = [{}, {max_bytes: 100}].map do |options|
+        StringIO.new.tap {|port| @http.get(URL, **options).display(port)}.string
+      end
 
-      assert_equal(@http.head(URL).response.body, @http.head(URL, max_bytes: 100).response.body)
+      assert_equal(['', ''], displayed)
+    end
+
+    # ⚠⚠ **本文の無い応答（HEAD・204・304）は、Net 側の `body` を nil のまま残す。** 無条件に
+    # 戻すと `""` になり、`to_s` が上限なしと変わる。🔴 WebMock はスタブに本文を書かなくても
+    # `""` を持って `ReadAdapter` にするので、HTTP を撃つ形ではこの条件を確かめられない
+    # （外しても緑だった）。本物の Net::HTTP が返す形（読み終えて body が nil）を直接渡す。
+    def test_restore_raw_body_keeps_nil_body
+      raw = Net::HTTPNoContent.new('1.1', '204', 'No Content')
+      raw.instance_variable_set(:@read, true)
+      response = Struct.new(:response, :body).new(raw, '')
+
+      @http.send(:restore_raw_body, response)
+
+      assert_nil(raw.body)
     end
 
     # ⚠ **Content-Length を申告しない相手でも効くこと。**ここが事前チェックとの差。

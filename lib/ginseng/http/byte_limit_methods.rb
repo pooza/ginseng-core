@@ -17,8 +17,9 @@ module Ginseng
       # ⚠ **stream_body は使わない。**あれを付けると HTTParty が本文を組み立て
       # なくなり `response.body` が nil になる＝**呼び出し側の契約が変わる**。
       # ブロックだけ渡せば、上限までは従来どおりの応答が返り、超えた分は読まずに
-      # 中断できる（メモリは max_bytes + 断片 1 つぶんで頭打ちになる）。⚠ ただし
-      # `to_s` だけは、`restore_raw_body` で戻さないと従来どおりにならない (#765)。
+      # 中断できる（メモリは max_bytes + 断片 1 つぶんで頭打ちになる）。⚠ ただし Net 側の
+      # 本文を読むメソッド（`to_s` / `nil?` / 空本文の `display`）は、`restore_raw_body` で
+      # 戻さないと従来どおりにならない (#765)。
       def execute(method, uri, options, max_bytes = nil)
         return HTTParty.public_send(method, uri.normalize, options) unless max_bytes
         received = 0
@@ -37,10 +38,13 @@ module Ginseng
 
       # 🔴 **ブロックを渡すと、`to_s` が本文を返さなくなる (#765)。** Net::HTTP は
       # `read_body` にブロックを渡されると `Net::HTTPResponse#body` を `Net::ReadAdapter`
-      # にし、HTTParty の `Response#to_s` / `#nil?` / `#display` はそちらを読む
-      # （HTTParty 0.24.3 で実測）。⚠ `body` と `parsed_response` は HTTParty が断片を
-      # つないだ文字列を持っているので正しい。それを Net 側にも戻し、上限なしと同じ見え方にする。
-      # ⚠ 本文の無い応答（HEAD・204）は Net 側が nil のままなので触らない。
+      # にし、HTTParty の `Response#to_s` と `#nil?` はそちらを読む（`nil?` は
+      # `NoMethodError` を上げていた）。`#display` は `parsed_response` が nil のとき
+      # （空本文）だけそちらへ落ちる（HTTParty 0.24.3 / 0.25.1 で実測）。⚠ `body` と
+      # `parsed_response` は HTTParty が断片をつないだ文字列を持っているので正しい。
+      # それを Net 側にも戻し、上限なしと同じ見え方にする。
+      # ⚠ 本文の無い応答（HEAD・204・304）は Net 側が nil のままなので触らない。⚠⚠ 無条件に
+      # 戻すと nil が `""` になり、`to_s` が上限なしと変わる。
       def restore_raw_body(response)
         raw = response.response
         raw.body = response.body if raw.body.is_a?(Net::ReadAdapter)
