@@ -212,7 +212,7 @@ module Ginseng
       # ⚠⚠ **実測で HTTParty 自身が巻き戻していた** — `request/body.rb` の
       # `content_body` が `file.read` のあと `file.rewind` を呼び、
       # `request/streaming_multipart_body.rb` の `#rewind` も各 part を戻す
-      # （`>= 0.24.0` の全域で確認）。**この行を消しても撃ち直しの本文は揃う。**
+      # （0.24.0〜0.25.1 で確認）。**この行を消しても撃ち直しの本文は揃う。**
       #
       # ⚠ **それでも残すのは、上流の実装詳細に寄りかからないため。** 巻き戻しを
       # HTTParty に任せると、**向こうが止めた日に静かに空の本文を送る**ことに
