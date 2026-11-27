@@ -108,22 +108,15 @@ module Ginseng
         return status >= 500
       end
 
-      # ⚠⚠ **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** HTTParty の
-      # `UnsupportedURIScheme` は `'<URL>' Must be HTTP, HTTPS or Generic`、`URI::InvalidURIError` は
-      # `bad URI (is not URI?): "<URL>"`。🔴 ログのマスクは `scheme://` の形で**読める** URL しか
-      # 伏せないので、`myapp:/callback?code=SECRET` のような `Location` も、読めない URL も
-      # **ログの行と包み直した `GatewayError` の両方に平文で出ていた**。
-      #
-      # ⚠ **スキームとホストだけ残す。** 要求先の URL はログの `url:` に（伏せた形で）残るので、
-      # 診断に要るのは「どんな形の URL だったか」まで。⚠ 同じクラスで作り直す（`retryable?` と
-      # 利用側の `rescue` がクラスで見ている）。
       # 要求先の URL を読む。🔴🔴 **読めない URL も `repeat` と同じ形で包む (#770)。**
       # ⚠⚠ addressable 2.10.0 から `Addressable::URI.parse` が読む段階で弾くようになり、
       # `create_uri` は `repeat` の外なので、素の `InvalidURIError` が `GatewayError` に包まれず
-      # 呼び出し側へ抜けていた（2.9 系では `execute` の中の stdlib の `URI.parse` で落ち、
-      # `repeat` が包んでいた）。⚠ 包むのは `redirect_uri` と同じ形で、行も 1 本残す。
+      # 呼び出し側へ抜けていた。⚠ 2.9 系でも、ホストに空白を含む形はここで抜けていた。
+      # ⚠ 包むのは `redirect_uri` と同じ形で、行も 1 本残す（URI の形は撃ち直しても変わらない）。
       # ⚠ 行の `url:` はスキームまで（読めない URL はログのマスクが伏せられない。→ `uri_origin`）。
-      # ⚠ `count:` と `gave_up:` は 2.9 系の行と同じ（URI の例外は再送しない）。
+      # ⚠⚠ **2.9 系の行とは揃わない。** 2.9 系で Addressable を通って stdlib の `URI.parse` で
+      # 落ちる形（`https://[::1/a`）は、`repeat` の中で `retry_limit` 回撃ち直して行を
+      # その本数出していた（最後が `gave_up: :retry_limit`）。ここは 1 本で `:not_retryable`。
       def parse_request_uri(method, uri)
         return create_uri(uri)
       rescue *URI_ERRORS => e
@@ -133,6 +126,15 @@ module Ginseng
         raise_gateway_error(redacted, e)
       end
 
+      # ⚠⚠ **URI の例外は、メッセージに URL を丸ごと載せる (#703)。** HTTParty の
+      # `UnsupportedURIScheme` は `'<URL>' Must be HTTP, HTTPS or Generic`、`URI::InvalidURIError` は
+      # `bad URI (is not URI?): "<URL>"`。🔴 ログのマスクは `scheme://` の形で**読める** URL しか
+      # 伏せないので、`myapp:/callback?code=SECRET` のような `Location` も、読めない URL も
+      # **ログの行と包み直した `GatewayError` の両方に平文で出ていた**。
+      #
+      # ⚠ **スキームとホストだけ残す。** 要求先の URL はログの `url:` に（伏せた形で）残るので、
+      # 診断に要るのは「どんな形の URL だったか」まで。⚠ 同じクラスで作り直す（`retryable?` と
+      # 利用側の `rescue` がクラスで見ている）。
       def redact_uri_error(error)
         return error unless URI_ERRORS.any? {|klass| error.is_a?(klass)}
         redacted = error.class.new(redact_uri_message(error.message))
