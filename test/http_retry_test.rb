@@ -474,9 +474,15 @@ module Ginseng
     # 秘密が平文で出ていた。⚠ 3 つの形を、ログの行（実際に書き出す形）と例外の両方で見る。
     def test_uri_errors_do_not_carry_the_url
       stub_request(:get, @url).to_return(status: 302, headers: {'Location' => 'myapp:/callback?code=SECRET'})
+      # ⚠ addressable 2.10.0 からは `create_uri` の段階で弾かれ、文言が Addressable のものになる (#770)。
+      bracket = if Gem::Version.new(Addressable::VERSION::STRING) < Gem::Version.new('2.10.0')
+        'bad URI (is not URI?): "https:[FILTERED]"'
+      else
+        "Brackets in a host must enclose an IPv6 address or an IPvFuture literal: '[FILTERED]'"
+      end
       {
         'ftp://h.example/a?sig=SECRET' => "'ftp://h.example[FILTERED]' Must be HTTP, HTTPS or Generic",
-        'https://[::1/a?sig=SECRET' => 'bad URI (is not URI?): "https:[FILTERED]"',
+        'https://[::1/a?sig=SECRET' => bracket,
         # ⚠ 6.0.0 から、送れないスキームへのリダイレクトは追う前に止める（`redirect_uri`）。
         '/api' => "Unsupported redirect to 'myapp:[FILTERED]'",
       }.each do |url, expected|
@@ -489,6 +495,38 @@ module Ginseng
         # `myapp:/callback?code=SECRET` が平文で出ていたのを捕まえられなかった。
         logged.each do |entry|
           assert_not_include(@http.instance_variable_get(:@logger).create_message(entry).to_json, 'SECRET', url)
+        end
+      end
+    end
+
+    # 🔴🔴 **読めない要求先の URL も `GatewayError` に包む (#770)。** addressable 2.10.0 は
+    # `create_uri`（`repeat` の外）で弾くので、素の `InvalidURIError` が抜けていた。
+    # ⚠ 入口は 4 つ（`request` / `request_with_body` / `upload` / `mkcol`）。行も 1 本残し、
+    # 例外・`cause` の連鎖・行のどこにも秘密もホストも出さない。
+    def test_unparsable_request_uri_is_wrapped
+      urls = ['https://ho st.example/?token=SECRET', 'https://user:SECRET@ho st/']
+      # ⚠ ポートの範囲は 2.10.0 からの検査（2.9 系は通して、そのまま接続しに行く）。
+      urls.push('http://h.example:99999/?k=SECRET') if Gem::Version.new(Addressable::VERSION::STRING) >= Gem::Version.new('2.10.0')
+      calls = {
+        get: ->(url) {@http.get(url)},
+        post: ->(url) {@http.post(url, body: {})},
+        upload: ->(url) {@http.upload(url, StringIO.new('x'))},
+        mkcol: ->(url) {@http.mkcol(url)},
+      }
+      urls.product(calls.to_a).each do |url, (name, call)|
+        label = "#{name} #{url}"
+        error = nil
+        logged = capture_log {error = assert_raise(GatewayError, label) {call.call(url)}}
+        chain = []
+        while error
+          chain.push("#{error.class}: #{error.message}")
+          error = error.cause
+        end
+
+        assert_equal(1, logged.size, label)
+        [chain.join("\n"), logged.map {|v| @http.instance_variable_get(:@logger).create_message(v).to_json}.join].each do |text|
+          assert_not_include(text, 'SECRET', label)
+          assert_not_include(text, 'ho st', label)
         end
       end
     end

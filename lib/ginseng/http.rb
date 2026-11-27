@@ -215,7 +215,8 @@ module Ginseng
     end
 
     def mkcol(uri, options = {})
-      repeat(:mkcol, uri = create_uri(uri), start = Time.now, quiet: options[:quiet_statuses]) do
+      uri = parse_request_uri(:mkcol, uri)
+      repeat(:mkcol, uri, start = Time.now, quiet: options[:quiet_statuses]) do
         net_uri = ::URI.parse(uri.normalize.to_s)
         http = Net::HTTP.new(net_uri.host, net_uri.port)
         http.use_ssl = net_uri.scheme == 'https'
@@ -231,8 +232,8 @@ module Ginseng
 
     def upload(uri, file, options = {})
       return File.open(file, 'rb') {|f| upload(uri, f, options)} if file.is_a?(String)
-      uri = create_uri(uri)
       method = options[:method] || :post
+      uri = parse_request_uri(method, uri)
       hop_options = upload_options(file, options)
       # ⚠⚠ **ここも validator を黙って捨てていた (#569)。** 利用側は「あれは
       # version / filename を見るリクエストパラメータの hash だから」と解釈して
@@ -288,7 +289,8 @@ module Ginseng
       # つもりで無検証」になる — `#head` のコメントが言っているのと同じ形。
       # ⚠⚠ **validator が無くても自前で追う (#655)。** → `request`
       validator = options.delete(:host_validator)
-      return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
+      uri = parse_request_uri(method, uri)
+      return request_validating_hops(method, uri, options, validator, max_bytes)
     end
 
     # 冪等メソッド（GET / HEAD）の共通経路。⚠ 6.0.0 から validator の有無を問わない (#655)。
@@ -320,7 +322,8 @@ module Ginseng
       # （`max_redirects:` で変えられる。HTTParty の既定は 5）で、超えたら `GatewayError`／
       # 再送はホップごと。⚠ HEAD は HEAD のまま追う（HTTParty も同じ。実測）。
       validator = options.delete(:host_validator)
-      return request_validating_hops(method, create_uri(uri), options, validator, max_bytes)
+      uri = parse_request_uri(method, uri)
+      return request_validating_hops(method, uri, options, validator, max_bytes)
     end
 
     # 上流のレスポンスを添えて GatewayError を投げる。

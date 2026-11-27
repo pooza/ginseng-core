@@ -117,6 +117,22 @@ module Ginseng
       # ⚠ **スキームとホストだけ残す。** 要求先の URL はログの `url:` に（伏せた形で）残るので、
       # 診断に要るのは「どんな形の URL だったか」まで。⚠ 同じクラスで作り直す（`retryable?` と
       # 利用側の `rescue` がクラスで見ている）。
+      # 要求先の URL を読む。🔴🔴 **読めない URL も `repeat` と同じ形で包む (#770)。**
+      # ⚠⚠ addressable 2.10.0 から `Addressable::URI.parse` が読む段階で弾くようになり、
+      # `create_uri` は `repeat` の外なので、素の `InvalidURIError` が `GatewayError` に包まれず
+      # 呼び出し側へ抜けていた（2.9 系では `execute` の中の stdlib の `URI.parse` で落ち、
+      # `repeat` が包んでいた）。⚠ 包むのは `redirect_uri` と同じ形で、行も 1 本残す。
+      # ⚠ 行の `url:` はスキームまで（読めない URL はログのマスクが伏せられない。→ `uri_origin`）。
+      # ⚠ `count:` と `gave_up:` は 2.9 系の行と同じ（URI の例外は再送しない）。
+      def parse_request_uri(method, uri)
+        return create_uri(uri)
+      rescue *URI_ERRORS => e
+        redacted = redact_uri_error(e)
+        log_retry_error(redacted, method, uri_origin(uri.to_s), Time.now,
+          count: 1, gave_up: :not_retryable)
+        raise_gateway_error(redacted, e)
+      end
+
       def redact_uri_error(error)
         return error unless URI_ERRORS.any? {|klass| error.is_a?(klass)}
         redacted = error.class.new(redact_uri_message(error.message))
