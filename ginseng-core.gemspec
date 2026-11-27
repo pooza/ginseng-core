@@ -27,11 +27,17 @@ Gem::Specification.new do |spec|
   # 既に 8.1.3.1 で、実害は無いことを実測した）。
   # CVE-2023-38037, CVE-2026-33176, CVE-2026-33170, CVE-2026-33169
   spec.add_dependency 'activesupport', '>=8.1.2.1'
-  # ⚠⚠ **2.10.0 を床にするのは CVE ではなく、ログの平文を塞ぐため (#774)。** 2.9 系は読めない URL
-  # （`https://[SECRET]/x` など）を `create_uri` で通してしまい、`repeat` の中で stdlib が落ちて
-  # 撃ち直すたびに、行の `url:` へ平文で出ていた。2.10.0 は入口で弾き、#770 が包む。
-  # ⚠ CVE-2026-35611 の床（2.9.0）は 2.10.0 で満たす。
-  spec.add_dependency 'addressable', '>=2.10.0' # CVE-2026-35611 / #774
+  # ⚠⚠ **床の理由は 2 つ。** ⚠ 片方だけ読んで戻すと、もう片方が外れる。
+  # - 🔴 **2.10.0: ログの平文を塞ぐ (#774)。** 2.9 系は読めない URL（`https://[SECRET]/x` など）を
+  #   `create_uri` で通してしまい、`repeat` の中で stdlib が落ちて撃ち直すたびに、行の `url:` へ
+  #   平文で出ていた。2.10.0 は入口で弾き、#770 が包む。⚠ スラッシュの無い URL（`https:SECRET@h`）は
+  #   床では塞がらない（#774 で受け入れた範囲）
+  # - **2.9.1: GHSA 7 件（2026-10-30 公開）。** テンプレートの ReDoS 3 件・パスの正規化の DoS 1 件・
+  #   ドットのセグメントの誤った正規化 1 件・`display_uri` の誤表示 2 件。古い床の 2.9.0 では届いていなかった
+  # ⚠ CVE-2026-35611 の床（2.9.0）も 2.10.0 で満たす。
+  # CVE-2026-35611, GHSA-4w5q-wg7v-w6gp, GHSA-539f-xcgw-2gjg, GHSA-8gmh-2hhj-2hv9,
+  # GHSA-9crm-g4mf-wc5j, GHSA-9f42-57jx-vpp3, GHSA-j82w-28jv-3pmj, GHSA-qq38-m9mg-xjj5
+  spec.add_dependency 'addressable', '>=2.10.0' # #774
   spec.add_dependency 'cgi', '>=0.4.2' # CVE-2025-27219, CVE-2025-27220
   spec.add_dependency 'csv'
   spec.add_dependency 'date', '>=3.2.1' # CVE-2021-41817
@@ -47,11 +53,13 @@ Gem::Specification.new do |spec|
   # 出ているが、この上限に阻まれている。
   spec.add_dependency 'fileutils', '~>1.7.0'
   spec.add_dependency 'find'
-  # ⚠⚠ **0.25.1 は security の修正版 (#767)。** リダイレクト先が別オリジンなら、`headers:` /
-  # `cookies:` / 前のホストの `Set-Cookie` を送らなくなった（jnunemaker/httparty#916）。
-  # ⚠ この gem はホップを自前で追い資格情報を落としている（#655）ので振る舞いは変わらないが、
-  # HTTParty を直接呼ぶ利用側に届かせるために上げる。⚠ 0.25.0 の破壊的変更（相対 `Location` の
-  # 解決・空パスの扱い）は、自前で追う・`normalize` で `/` が付くため、この gem には当たらない（実測）。
+  # ⚠⚠ **0.25.1 は security の修正版 (#767)。** リダイレクト先が別オリジンなら **Cookie を送らなくなった**
+  # （`headers:` に書いた `Cookie`・`cookies:`・前のホストの `Set-Cookie`。jnunemaker/httparty#916）。
+  # 🔴 **落とすのは Cookie と `Authorization` だけ** — `X-Api-Key` のような名前のヘッダは今も別オリジンへ
+  # 届く（実測）。自前の追い方（#655）が要らなくなったわけではない。
+  # ⚠ この gem はホップを自前で追い資格情報を落としているので振る舞いは変わらないが、HTTParty を
+  # 直接呼ぶ利用側に届かせるために上げる。⚠ 0.25.0 の破壊的変更（相対 `Location` の解決・空パスの扱い）は、
+  # 自前で追う・`normalize` で `/` が付くため、この gem には当たらない（実測）。
   spec.add_dependency 'httparty', '>=0.25.1' # CVE-2025-68696 / #767
   spec.add_dependency 'json-schema'
   spec.add_dependency 'mail', '>=2.5.5' # CVE-2011-0739, CVE-2012-2139, CVE-2012-2140, CVE-2015-9097
