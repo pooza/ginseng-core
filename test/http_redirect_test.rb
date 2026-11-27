@@ -47,28 +47,24 @@ module Ginseng
       assert_not_requested(:get, ELSEWHERE, headers: {'Cookie' => 'sid=SECRET'})
     end
 
-    # 🔴 **対照: HTTParty に追わせると、0.25.1 より前は届く。** ⚠⚠ これが落ちたら、上のテストは
-    # 「直したから」ではなく「上流がもともと送らないから」緑になっている（「緑は守っている証拠に
-    # ならない」）。
+    # 🔴 **対照: HTTParty に追わせたときに何が届くか。** ⚠⚠ これが変わったら、上と下のテストは
+    # 「直したから」ではなく「上流がもともと送らないから」緑になっているかもしれない（「緑は
+    # 守っている証拠にならない」）。
     #
-    # ⚠⚠ **0.25.1 で上流が直した (#767)。** 別オリジンへのリダイレクトでは Cookie を一切送らない
-    # （jnunemaker/httparty#916）。⚠⚠ **その版の上では、上のテストは上流の修正でも緑になる** —
-    # 自前の追い方を HTTParty 任せへ戻しても気づけない。床（`>= 0.24.0`）が 0.24 系を許す限り、
-    # 自前の守りは 0.24 系の利用側のために要る。ここでは、どちらの版で走っているかを固定する。
-    def test_cookie_forwarding_of_httparty_alone_depends_on_its_version
+    # ⚠⚠ **床は 0.25.1（#767）で、上流も別オリジンへ Cookie を送らない**（jnunemaker/httparty#916）。
+    # そのため上の Cookie のテストは、自前の追い方を HTTParty 任せへ戻しても緑のまま。
+    # 🔴 **戻したことに気づけるのは `X-Api-Key` のほう** — 上流は名前で選ばないので、いまも届く。
+    # → `test_credentials_are_dropped_across_origins`
+    def test_httparty_alone_drops_the_cookie_but_not_other_credentials
       stub_request(:get, @url).to_return(
         status: 302, headers: {'Location' => ELSEWHERE, 'Set-Cookie' => 'sid=SECRET; Path=/'},
       )
       stub_request(:get, ELSEWHERE).to_return(status: 200)
 
-      HTTParty.get(@url)
+      HTTParty.get(@url, headers: {'X-Api-Key' => 'SECRET'})
 
-      if Gem::Version.new(HTTParty::VERSION) < Gem::Version.new('0.25.1')
-        assert_requested(:get, ELSEWHERE, headers: {'Cookie' => 'sid=SECRET'})
-      else
-        assert_requested(:get, ELSEWHERE)
-        assert_not_requested(:get, ELSEWHERE, headers: {'Cookie' => /SECRET/})
-      end
+      assert_not_requested(:get, ELSEWHERE, headers: {'Cookie' => /SECRET/})
+      assert_requested(:get, ELSEWHERE, headers: {'X-Api-Key' => 'SECRET'})
     end
 
     # ⚠ **同じオリジンでも、途中の `Set-Cookie` は持ち越さない。** validator を渡した経路と同じ
