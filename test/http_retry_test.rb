@@ -524,6 +524,7 @@ module Ginseng
         end
 
         assert_equal(1, logged.size, label)
+        assert_equal([1, :not_retryable], logged.first.values_at(:count, :gave_up), label)
         [chain.join("\n"), logged.map {|v| @http.instance_variable_get(:@logger).create_message(v).to_json}.join].each do |text|
           assert_not_include(text, 'SECRET', label)
           assert_not_include(text, 'ho st', label)
