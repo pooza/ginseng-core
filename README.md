@@ -17,9 +17,10 @@ MIT ライセンスで公開していますが、GitHub に置いている以上
 ## 導入
 
 rubygems.org には無いので、`Gemfile` で GitHub のタグを指定して参照します。
+最新のタグは [Releases](https://github.com/pooza/ginseng-core/releases) を見てください。
 
 ```ruby
-gem 'ginseng-core', github: 'pooza/ginseng-core', tag: 'v7.2.0', require: 'ginseng'
+gem 'ginseng-core', github: 'pooza/ginseng-core', tag: 'vX.Y.Z', require: 'ginseng'
 ```
 
 Ruby 3.3 以上が必要です。
